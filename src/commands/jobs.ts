@@ -70,6 +70,8 @@ USAGE
   gbrain jobs stats
   gbrain jobs smoke
   gbrain jobs work [--queue Q] [--concurrency N]
+  gbrain jobs supervisor [--concurrency N] [--queue Q] [--pid-file PATH]
+                         [--max-crashes N] [--health-interval N]
 
 HANDLER TYPES (built in)
   sync              Pull and embed new pages from the repo
@@ -478,6 +480,44 @@ HANDLER TYPES (built in)
       console.log(`Minion worker started (queue: ${queueName}, concurrency: ${concurrency})`);
       console.log(`Registered handlers: ${worker.registeredNames.join(', ')}`);
       await worker.start();
+      break;
+    }
+
+    case 'supervisor': {
+      const config = (await import('../core/config.ts')).loadConfig();
+      if (config?.engine === 'pglite') {
+        console.error('Error: Supervisor requires Postgres. PGLite uses an exclusive file lock that blocks other processes.');
+        process.exit(1);
+      }
+
+      const { MinionSupervisor } = await import('../core/minions/supervisor.ts');
+      const { resolveGbrainCliPath } = await import('./autopilot.ts');
+
+      const concurrency = parseInt(parseFlag(args, '--concurrency') ?? '2', 10);
+      const queueName = parseFlag(args, '--queue') ?? 'default';
+      const pidFile = parseFlag(args, '--pid-file') ?? '/tmp/gbrain-supervisor.pid';
+      const maxCrashes = parseInt(parseFlag(args, '--max-crashes') ?? '10', 10);
+      const healthInterval = parseInt(parseFlag(args, '--health-interval') ?? '60000', 10);
+
+      let cliPath: string;
+      try {
+        cliPath = resolveGbrainCliPath();
+      } catch {
+        // Fallback: use the same invocation path as the current process
+        cliPath = process.argv[1] ?? 'gbrain';
+      }
+
+      const supervisor = new MinionSupervisor(engine, {
+        concurrency,
+        queue: queueName,
+        pidFile,
+        maxCrashes,
+        healthInterval,
+        cliPath,
+        allowShellJobs: !!process.env.GBRAIN_ALLOW_SHELL_JOBS,
+      });
+
+      await supervisor.start();
       break;
     }
 
