@@ -1,4 +1,9 @@
 import { describe, test, expect } from 'bun:test';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+
+const REPO_ROOT = join(import.meta.dir, '..');
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
@@ -91,6 +96,39 @@ describe('doctor command', () => {
     expect(source).toContain('jsonb_integrity');
     expect(source).toContain('markdown_body_completeness');
     expect(source).toContain('gbrain repair-jsonb');
+  });
+
+  test('doctor CLI graph coverage hint uses current extraction command', () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-doctor-graph-hint-'));
+    try {
+      mkdirSync(join(home, '.gbrain'), { recursive: true });
+      writeFileSync(
+        join(home, '.gbrain', 'config.json'),
+        JSON.stringify({ engine: 'pglite', database_path: join(home, 'brain.pglite') }, null, 2) + '\n',
+      );
+
+      const result = Bun.spawnSync({
+        cmd: [process.execPath, 'run', 'src/cli.ts', 'doctor', '--json'],
+        cwd: REPO_ROOT,
+        env: {
+          ...process.env,
+          GBRAIN_HOME: home,
+          GBRAIN_DATABASE_URL: '',
+          DATABASE_URL: '',
+          OPENAI_API_KEY: '',
+          ANTHROPIC_API_KEY: '',
+          NO_COLOR: '1',
+        },
+      });
+
+      const output = new TextDecoder().decode(result.stdout) + new TextDecoder().decode(result.stderr);
+      expect(result.exitCode).toBe(0);
+      expect(output).not.toContain(['link', 'extract'].join('-'));
+      expect(output).not.toContain(['timeline', 'extract'].join('-'));
+      expect(output).toContain('gbrain extract all');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test('jsonb_integrity check covers the four JSONB sites fixed in v0.12.1', async () => {
