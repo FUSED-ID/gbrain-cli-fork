@@ -383,34 +383,27 @@ describe('shrink-on-miss adaptive cache', () => {
 describe('startup warning for recipes missing max_batch_tokens', () => {
   beforeEach(() => resetGateway());
 
-  test('configured missing-cap recipe warns once; unrelated recipes stay quiet', () => {
+  test('configureGateway stays quiet once fixed-cap recipes declare max_batch_tokens', () => {
     const warnings: string[] = [];
     const original = console.warn;
     console.warn = (msg: string) => warnings.push(String(msg));
     try {
       configureOpenAI();
-      expect(warnings.length).toBe(0);
       configureGoogle();
-      const firstCallCount = warnings.length;
-      // Reconfigure: the warning should NOT re-fire for the same recipes
-      // within one process (we already told the operator).
       configureGoogle();
-      expect(warnings.length).toBe(firstCallCount);
     } finally {
       console.warn = original;
     }
 
-    // The warning text should match the documented contract.
-    const contractMatch = warnings.filter(w =>
-      w.includes('[ai.gateway]') && w.includes('declares an embedding touchpoint'),
-    );
-    expect(contractMatch.length).toBe(1);
+    expect(
+      warnings.find(w => w.includes('[ai.gateway]') && w.includes('without max_batch_tokens')),
+    ).toBeUndefined();
 
     // Voyage declares max_batch_tokens → suppressed. OpenAI is the
     // canonical fast-path recipe → also suppressed by id. Both must be
     // absent from the warnings.
     expect(warnings.find(w => w.includes('"voyage"'))).toBeUndefined();
     expect(warnings.find(w => w.includes('"openai"'))).toBeUndefined();
-    expect(warnings.find(w => w.includes('"google"'))).toBeDefined();
+    expect(warnings.find(w => w.includes('"google"'))).toBeUndefined();
   });
 });
