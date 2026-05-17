@@ -917,6 +917,30 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         : (safeParamsSummary || null);
       const broadcastParams = logFullParams ? (params || {}) : safeParamsSummary;
 
+      // MERGE-INTENT §3.5 — per-token takes-holders allow-list (privacy gate).
+      // Checks oauth_clients.permissions first (OAuth path), then falls back
+      // to access_tokens.permissions (legacy bearer path). Default-deny: ["world"].
+      let takesHoldersAllowList: string[] = ["world"];
+      try {
+        const [oauthRow] = await sql`
+          SELECT permissions FROM oauth_clients
+          WHERE client_id = ${authInfo.clientId} AND deleted_at IS NULL
+          LIMIT 1
+        `;
+        if (oauthRow && Array.isArray((oauthRow as any).permissions?.takes_holders)) {
+          takesHoldersAllowList = (oauthRow as any).permissions.takes_holders as string[];
+        } else {
+          const [legacyRow] = await sql`
+            SELECT permissions FROM access_tokens
+            WHERE name = ${authInfo.clientName ?? authInfo.clientId} AND revoked_at IS NULL
+            LIMIT 1
+          `;
+          if (legacyRow && Array.isArray((legacyRow as any).permissions?.takes_holders)) {
+            takesHoldersAllowList = (legacyRow as any).permissions.takes_holders as string[];
+          }
+        }
+      } catch { /* default-deny on error */ }
+
       // v0.31 (D12 / eE1): refactor the inlined op.handler call to go through
       // src/mcp/dispatch.ts so HTTP MCP shares the same dispatch path as
       // stdio MCP. The dispatcher does param validation, OperationContext
@@ -924,8 +948,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // injection via the metaHook. HTTP-specific concerns (mcp_request_log
       // persistence + SSE broadcast) stay here; the dispatcher returns the
       // ToolResult and we read isError + _meta to pick the right branch.
-      const tokenAllowList = (authInfo as AuthInfo & { takesHoldersAllowList?: string[] }).takesHoldersAllowList
-        ?? ['world'];
+      const tokenAllowList = takesHoldersAllowList;
       const tokenSourceId = (authInfo as AuthInfo & { sourceId?: string }).sourceId
         ?? process.env.GBRAIN_SOURCE
         ?? 'default';
