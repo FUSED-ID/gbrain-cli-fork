@@ -5120,6 +5120,19 @@ export const MIGRATIONS: Migration[] = [
       `,
     },
   },
+  {
+    version: 114,
+    name: 'oauth_clients_permissions',
+    // Fork privacy gate: OAuth clients may carry per-client permissions,
+    // including `takes_holders`, matching the legacy access_tokens surface.
+    // Fresh installs include the column in schema.sql / pglite-schema.ts;
+    // this migration covers upgrade brains.
+    idempotent: true,
+    sql: `
+      ALTER TABLE oauth_clients
+        ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{}'::jsonb;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

@@ -602,6 +602,7 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   deleted_at              TIMESTAMPTZ,
   source_id               TEXT REFERENCES sources(id) ON DELETE RESTRICT,
   federated_read          TEXT[] NOT NULL DEFAULT '{}',
+  permissions             JSONB DEFAULT '{}'::jsonb,
   -- v0.38 Slice 2 + 3: per-client daily budget cap (v84) + agent binding (v85).
   budget_usd_per_day      NUMERIC(10, 2) NULL,
   bound_tools             TEXT[] NULL,
