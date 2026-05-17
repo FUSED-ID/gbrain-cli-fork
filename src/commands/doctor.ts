@@ -551,6 +551,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   const doFix = args.includes('--fix');
   const dryRun = args.includes('--dry-run');
   const locksMode = args.includes('--locks');
+  const allPages = args.includes('--all-pages');
 
   // --locks is a focused diagnostic: it runs the same pg_stat_activity
   // query that `runMigrations` pre-flight uses, prints any idle-in-tx
@@ -1244,7 +1245,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // 8. Embedding health
   progress.heartbeat('embeddings');
   try {
-    const health = await engine.getHealth();
+    const health = await engine.getHealth(allPages);
     const pct = (health.embed_coverage * 100).toFixed(0);
     if (health.embed_coverage >= 0.9) {
       checks.push({ name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${health.missing_embeddings} missing` });
@@ -1373,14 +1374,15 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // condition is a false positive. Closes #530.
   progress.heartbeat('graph_coverage');
   try {
-    const health = await engine.getHealth();
+    const health = await engine.getHealth(allPages);
     const entityCount = (await engine.executeRaw<{ count: number }>(
       "SELECT COUNT(*)::int AS count FROM pages WHERE type IN ('entity', 'person', 'company', 'organization')",
     ))[0]?.count ?? 0;
 
     const linkPct = ((health.link_coverage ?? 0) * 100).toFixed(0);
     const timelinePct = ((health.timeline_coverage ?? 0) * 100).toFixed(0);
-    if (entityCount === 0) {
+    const scope = allPages ? 'all-pages' : 'entity';
+    if (entityCount === 0 && !allPages) {
       // Markdown-only / journal / wiki brain — no entity pages to compute
       // coverage against. Coverage formula is structurally inapplicable.
       checks.push({
@@ -1389,12 +1391,12 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
         message: 'No entity pages — graph_coverage not applicable (markdown-only brain)',
       });
     } else if ((health.link_coverage ?? 0) >= 0.5 && (health.timeline_coverage ?? 0) >= 0.5) {
-      checks.push({ name: 'graph_coverage', status: 'ok', message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%` });
+      checks.push({ name: 'graph_coverage', status: 'ok', message: `${scope} link coverage ${linkPct}%, timeline ${timelinePct}%` });
     } else {
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}% (${entityCount} entity pages). Run: gbrain extract all`,
+        message: `${scope} link coverage ${linkPct}%, timeline ${timelinePct}%. Run: gbrain extract all`,
       });
     }
 
