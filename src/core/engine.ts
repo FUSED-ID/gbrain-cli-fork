@@ -1735,7 +1735,7 @@ export interface BrainEngine {
 
   // Stats + health
   getStats(): Promise<BrainStats>;
-  getHealth(): Promise<BrainHealth>;
+  getHealth(allPages?: boolean): Promise<BrainHealth>;
 
   // Ingest log
   logIngest(entry: IngestLogInput): Promise<void>;

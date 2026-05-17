@@ -4454,11 +4454,18 @@ export class PGLiteEngine implements BrainEngine {
     };
   }
 
-  async getHealth(): Promise<BrainHealth> {
+  async getHealth(allPages: boolean = false): Promise<BrainHealth> {
     // Combined metrics from master (brain_score components: dead_links, link_count,
     // pages_with_timeline) and v0.10.3 graph layer (link_coverage, timeline_coverage,
     // most_connected). Both coexist: master's brain_score is the composite
     // dashboard, v0.10.3 metrics give entity-page-level granularity.
+    const timelineCoverageSql = allPages
+      ? `(SELECT count(DISTINCT page_id) FROM timeline_entries)::float /
+          GREATEST((SELECT count(DISTINCT page_id) FROM timeline_entries), 1)::float`
+      : `(SELECT count(*) FROM entity_pages e
+         WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = e.id))::float /
+          GREATEST((SELECT count(*) FROM entity_pages), 1)::float`;
+
     const { rows: [h] } = await this.db.query(`
       WITH entity_pages AS (
         SELECT id, slug FROM pages WHERE type IN ('person', 'company')
@@ -4485,9 +4492,7 @@ export class PGLiteEngine implements BrainEngine {
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
-        (SELECT count(*) FROM entity_pages e
-         WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = e.id))::float /
-          GREATEST((SELECT count(*) FROM entity_pages), 1)::float as timeline_coverage
+        ${timelineCoverageSql} as timeline_coverage
     `);
 
     // Top 5 most connected entities by total link count (in + out).
