@@ -52,6 +52,7 @@ function scratchRepo(): string {
   created.push(root);
   git(root, 'init', '-q', '--initial-branch=main');
   git(root, 'config', 'commit.gpgsign', 'false');
+  git(root, 'config', 'tag.gpgsign', 'false');  // hermetic: LGV global config signs tags by default
   mkdirSync(join(root, 'skills', 'alpha'), { recursive: true });
   writeFileSync(join(root, 'skills', 'alpha', 'SKILL.md'), '---\nname: alpha\n---\n');
   mkdirSync(join(root, 'skills', 'beta'), { recursive: true });
