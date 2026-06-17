@@ -344,7 +344,7 @@ async function main() {
   // Install an unref'd setTimeout hard-exit fallback BEFORE entering the
   // try/catch/finally so a hung disconnect cannot defeat the force-exit
   // contract. Daemons (`serve`) are excluded so they stay alive.
-  const DISCONNECT_HARD_DEADLINE_MS = 10_000;
+  const DISCONNECT_HARD_DEADLINE_MS = 2_500; // P2 (LGV 2026-06-18): was 10_000 — CLAW remote read-pool socket close stalls; force-exit-after-flush sooner
   let forceExitTimer: ReturnType<typeof setTimeout> | undefined;
   if (shouldForceExitAfterMain()) {
     forceExitTimer = setTimeout(() => {
