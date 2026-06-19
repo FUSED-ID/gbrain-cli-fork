@@ -42,6 +42,18 @@ import {
   type PhantomPassResult,
 } from './phantom-redirect.ts';
 import { embed, isAvailable } from '../ai/gateway.ts';
+import {
+  clearOpCheckpoint,
+  fingerprint,
+  loadOpCheckpoint,
+  recordCompleted,
+  resumeFilter,
+  type OpCheckpointKey,
+} from '../op-checkpoint.ts';
+
+const CHECKPOINT_OP = 'extract_facts';
+const DEFAULT_MAX_PAGES_PER_FULL_RUN = 100;
+const CHECKPOINT_WRITE_EVERY = 10;
 
 export interface ExtractFactsOpts {
   /** Subset of slugs to reconcile. undefined = walk every page in the brain. */
@@ -50,6 +62,12 @@ export interface ExtractFactsOpts {
   dryRun?: boolean;
   /** Optional source_id override for multi-source brains. Default 'default'. */
   sourceId?: string;
+  /**
+   * Bound full-source reconciliation so one cycle stays inside the worker
+   * timeout budget. Applies only when `slugs` is undefined. Explicit slug
+   * lists are exact work from an incremental caller and are not capped.
+   */
+  maxPages?: number;
   /**
    * v0.35.5 (codex #10): brain directory for the phantom-redirect pre-pass.
    * The phantom handler needs disk access to append migrated fence rows
@@ -76,6 +94,23 @@ export interface ExtractFactsResult {
   phantomsSkippedDrift: number;
   phantomsLockBusy: boolean;
   phantomsMorePending: boolean;
+  /** True when a bounded full walk left pages for the next run. */
+  morePending: boolean;
+  /** Remaining full-walk pages after this invocation's bounded slice. */
+  pagesRemaining: number;
+}
+
+export function extractFactsCheckpointKey(sourceId: string): OpCheckpointKey {
+  return {
+    op: CHECKPOINT_OP,
+    fingerprint: fingerprint({ sourceId }),
+  };
+}
+
+function resolveMaxPages(raw: number | undefined, env = process.env.GBRAIN_EXTRACT_FACTS_MAX_PAGES): number {
+  const candidate = raw ?? (env ? Number.parseInt(env, 10) : DEFAULT_MAX_PAGES_PER_FULL_RUN);
+  if (!Number.isFinite(candidate) || candidate <= 0) return DEFAULT_MAX_PAGES_PER_FULL_RUN;
+  return Math.floor(candidate);
 }
 
 /**
@@ -102,6 +137,8 @@ export async function runExtractFacts(
     phantomsSkippedDrift: 0,
     phantomsLockBusy: false,
     phantomsMorePending: false,
+    morePending: false,
+    pagesRemaining: 0,
   };
 
   // ── Empty-fence guard (Codex R2-#7) ────────────────────────────
@@ -165,6 +202,9 @@ export async function runExtractFacts(
   // multi-thousand-page brain the unintended full walk exceeds the
   // autopilot-cycle timeout (~600s) and dead-letters the job.
   let slugs: string[];
+  let fullWalkCheckpoint: OpCheckpointKey | null = null;
+  let completedFullWalk = new Set<string>();
+  let completedSinceWrite = 0;
   if (opts.slugs !== undefined) {
     // Caller explicitly passed a list (possibly empty). Empty array is a
     // real incremental no-op; don't escalate to full-brain walk.
@@ -173,7 +213,16 @@ export async function runExtractFacts(
     // Full walk: every page in the brain. Bounded by engine.getAllSlugs
     // which is already the precedent for full-extract paths.
     const allSlugs = await engine.getAllSlugs();
-    slugs = Array.from(allSlugs);
+    const all = Array.from(allSlugs);
+    if (!opts.dryRun) {
+      fullWalkCheckpoint = extractFactsCheckpointKey(sourceId);
+      completedFullWalk = new Set(await loadOpCheckpoint(engine, fullWalkCheckpoint));
+    }
+    const pending = opts.dryRun ? all : resumeFilter(all, Array.from(completedFullWalk));
+    const maxPages = resolveMaxPages(opts.maxPages);
+    slugs = pending.slice(0, maxPages);
+    result.pagesRemaining = Math.max(0, pending.length - slugs.length);
+    result.morePending = result.pagesRemaining > 0;
   }
   // v0.35.5: union the canonicals touched by the phantom-redirect pass
   // so their DB facts get reconciled from the just-merged disk fence.
@@ -194,6 +243,10 @@ export async function runExtractFacts(
     if (!page) {
       // Slug listed but not in DB — skip silently. The next cycle
       // will pick it up if it exists.
+      if (fullWalkCheckpoint && !opts.dryRun) {
+        completedFullWalk.add(slug);
+        completedSinceWrite++;
+      }
       continue;
     }
 
@@ -215,7 +268,17 @@ export async function runExtractFacts(
     const deleted = await engine.deleteFactsForPage(slug, sourceId);
     result.factsDeleted += deleted.deleted;
 
-    if (parsed.facts.length === 0) continue;
+    if (parsed.facts.length === 0) {
+      if (fullWalkCheckpoint && !opts.dryRun) {
+        completedFullWalk.add(slug);
+        completedSinceWrite++;
+        if (completedSinceWrite >= CHECKPOINT_WRITE_EVERY) {
+          await recordCompleted(engine, fullWalkCheckpoint, Array.from(completedFullWalk));
+          completedSinceWrite = 0;
+        }
+      }
+      continue;
+    }
 
     // v0.35.4 (D-ENG-1) — thread page.effective_date as the fallback
     // valid_from. Without this, fence rows without explicit `validFrom:`
@@ -253,12 +316,35 @@ export async function runExtractFacts(
 
     const inserted = await engine.insertFacts(extracted, { source_id: sourceId }); // gbrain-allow-direct-insert: extract_facts cycle phase reconciles fence → DB
     result.factsInserted += inserted.inserted;
+
+    if (fullWalkCheckpoint && !opts.dryRun) {
+      completedFullWalk.add(slug);
+      completedSinceWrite++;
+      if (completedSinceWrite >= CHECKPOINT_WRITE_EVERY) {
+        await recordCompleted(engine, fullWalkCheckpoint, Array.from(completedFullWalk));
+        completedSinceWrite = 0;
+      }
+    }
+  }
+
+  if (fullWalkCheckpoint && !opts.dryRun) {
+    if (result.morePending) {
+      if (completedSinceWrite > 0 || completedFullWalk.size > 0) {
+        await recordCompleted(engine, fullWalkCheckpoint, Array.from(completedFullWalk));
+      }
+      result.warnings.push(
+        `extract_facts bounded after ${result.pagesScanned} page(s); ` +
+        `${result.pagesRemaining} page(s) remain for the next cycle.`,
+      );
+    } else {
+      await clearOpCheckpoint(engine, fullWalkCheckpoint);
+    }
   }
 
   // v0.42 Wave B3: receipt + rollup. extract_facts is deterministic
   // (fence reconcile, no LLM cost); receipt only when facts were
   // actually inserted; rollup always fires.
-  if (!opts.dryRun && result.factsInserted > 0) {
+  if (!opts.dryRun && result.factsInserted > 0 && !result.morePending) {
     const runId = `efacts-${Date.now().toString(36)}-${sourceId.slice(0, 4)}`;
     try {
       await writeReceipt(engine, {
@@ -282,8 +368,8 @@ export async function runExtractFacts(
       kind: 'facts.fence',
       source_id: sourceId,
       cost_delta: 0,
-      round_completed_delta: result.guardTriggered ? 0 : 1,
-      halt_delta: result.guardTriggered ? 1 : 0,
+      round_completed_delta: result.guardTriggered || result.morePending ? 0 : 1,
+      halt_delta: result.guardTriggered || result.morePending ? 1 : 0,
     });
   }
 

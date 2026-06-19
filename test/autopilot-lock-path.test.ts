@@ -13,12 +13,14 @@
  * in a unit test.
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { withEnv } from './helpers/with-env.ts';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { gbrainPath } from '../src/core/config.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { acquireAutopilotWriterLock, shouldSubmitFreshnessSync } from '../src/commands/autopilot.ts';
 
 describe('autopilot lock path scoped to GBRAIN_HOME (#1226)', () => {
   test('one GBRAIN_HOME produces one canonical lock path', async () => {
@@ -63,5 +65,81 @@ describe('autopilot lock path scoped to GBRAIN_HOME (#1226)', () => {
       expect(lockPath.endsWith('autopilot.lock')).toBe(true);
       expect(lockPath.length).toBeGreaterThan('autopilot.lock'.length);
     });
+  });
+});
+
+describe('autopilot mesh-wide writer lock', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await engine.executeRaw('DELETE FROM gbrain_cycle_locks');
+  });
+
+  test('only one autopilot daemon acquires the mesh-wide producer lock', async () => {
+    const first = await acquireAutopilotWriterLock(engine);
+    expect(first.acquired).toBe(true);
+    if (!first.acquired) throw new Error('expected first lock acquire to succeed');
+
+    const second = await acquireAutopilotWriterLock(engine);
+    expect(second.acquired).toBe(false);
+    if (second.acquired) throw new Error('expected second lock acquire to be busy');
+    expect(second.reason).toBe('autopilot_already_running');
+
+    await first.handle.release();
+    const third = await acquireAutopilotWriterLock(engine);
+    expect(third.acquired).toBe(true);
+    if (!third.acquired) throw new Error('expected third lock acquire to succeed after release');
+    await third.handle.release();
+  });
+});
+
+describe('autopilot stale-source freshness throttle', () => {
+  const hour = 60 * 60 * 1000;
+  const day = 24 * hour;
+  const now = Date.parse('2026-06-19T00:00:00.000Z');
+
+  test('fresh sources do not enqueue sync jobs', () => {
+    const result = shouldSubmitFreshnessSync(
+      { last_sync_at: new Date(now - 30 * 60 * 1000).toISOString() },
+      now,
+      hour,
+    );
+    expect(result.submit).toBe(false);
+    expect(result.reason).toBe('fresh');
+  });
+
+  test('very stale sources respect the cooldown after an autopilot sync submit', () => {
+    const result = shouldSubmitFreshnessSync(
+      {
+        last_sync_at: new Date(now - 10 * day).toISOString(),
+        config: { autopilot_last_freshness_sync_at: new Date(now - hour).toISOString() },
+      },
+      now,
+      hour,
+    );
+    expect(result.submit).toBe(false);
+    expect(result.reason).toBe('cooldown');
+  });
+
+  test('very stale sources can enqueue again after the cooldown expires', () => {
+    const result = shouldSubmitFreshnessSync(
+      {
+        last_sync_at: new Date(now - 10 * day).toISOString(),
+        config: { autopilot_last_freshness_sync_at: new Date(now - 25 * hour).toISOString() },
+      },
+      now,
+      hour,
+    );
+    expect(result.submit).toBe(true);
   });
 });

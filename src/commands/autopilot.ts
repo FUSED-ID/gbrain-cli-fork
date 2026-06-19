@@ -36,7 +36,12 @@ import {
 import { logSelfUpgrade } from '../core/audit/self-upgrade-audit.ts';
 import { detectInstallMethod } from './upgrade.ts';
 import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
-import { inspectLock } from '../core/db-lock.ts';
+import { inspectLock, tryAcquireDbLock, type DbLockHandle } from '../core/db-lock.ts';
+
+export const AUTOPILOT_WRITER_LOCK_ID = 'gbrain-autopilot';
+const AUTOPILOT_WRITER_LOCK_TTL_MINUTES = 10;
+const VERY_STALE_SOURCE_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_VERY_STALE_SYNC_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 /**
  * v0.37.7.0 #1162 — classify autopilot reconnect-loop errors.
@@ -129,6 +134,59 @@ export function shouldSpawnAutopilotWorker(args: string[]): boolean {
   return !args.includes('--no-worker');
 }
 
+export type AutopilotWriterLockResult =
+  | { acquired: true; handle: DbLockHandle }
+  | { acquired: false; reason: 'autopilot_already_running' };
+
+export async function acquireAutopilotWriterLock(
+  engine: BrainEngine,
+): Promise<AutopilotWriterLockResult> {
+  const handle = await tryAcquireDbLock(engine, AUTOPILOT_WRITER_LOCK_ID, AUTOPILOT_WRITER_LOCK_TTL_MINUTES);
+  if (!handle) return { acquired: false, reason: 'autopilot_already_running' };
+  return { acquired: true, handle };
+}
+
+function parseMaybeDateMs(value: unknown): number | null {
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+  if (typeof value === 'string') {
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
+}
+
+function parseSourceConfigObject(config: unknown): Record<string, unknown> {
+  if (typeof config === 'string') {
+    try { return JSON.parse(config) as Record<string, unknown>; } catch { return {}; }
+  }
+  if (config && typeof config === 'object') return config as Record<string, unknown>;
+  return {};
+}
+
+export function shouldSubmitFreshnessSync(
+  src: { last_sync_at?: string | Date | null; config?: unknown },
+  now: number,
+  intervalMs: number,
+  veryStaleCooldownMs = DEFAULT_VERY_STALE_SYNC_COOLDOWN_MS,
+): { submit: boolean; ageMs: number; reason?: 'fresh' | 'cooldown' } {
+  const lastSyncMs = parseMaybeDateMs(src.last_sync_at) ?? 0;
+  const ageMs = now - lastSyncMs;
+  if (ageMs < intervalMs) return { submit: false, ageMs, reason: 'fresh' };
+
+  const cfg = parseSourceConfigObject(src.config);
+  const lastSubmitMs = parseMaybeDateMs(cfg.autopilot_last_freshness_sync_at);
+  if (lastSubmitMs !== null) {
+    const cooldownMs = ageMs >= VERY_STALE_SOURCE_MS ? veryStaleCooldownMs : intervalMs;
+    if (now - lastSubmitMs < cooldownMs) {
+      return { submit: false, ageMs, reason: 'cooldown' };
+    }
+  }
+  return { submit: true, ageMs };
+}
+
 // ── Self-upgrade silent channel (v0.42; opt-in, supervisor-relaunch) ─────────
 
 /**
@@ -196,6 +254,7 @@ async function attemptAutopilotSelfUpgrade(
   engine: BrainEngine,
   engineType: string,
   lockPath: string,
+  writerLock?: DbLockHandle | null,
 ): Promise<void> {
   try {
     const cfg = loadConfig();
@@ -297,6 +356,9 @@ async function attemptAutopilotSelfUpgrade(
     } catch {
       /* already gone */
     }
+    if (writerLock) {
+      try { await writerLock.release(); } catch { /* best-effort */ }
+    }
     process.exit(0);
   } catch {
     /* the self-upgrade channel must never break the tick */
@@ -372,6 +434,28 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   const engineType = cfg?.engine ?? 'pglite';
   const useMinionsDispatch = mode !== 'off' && engineType === 'postgres' && !forceInline;
   const spawnManagedWorker = useMinionsDispatch && !noWorker;
+  let writerLock: DbLockHandle | null = null;
+
+  if (useMinionsDispatch) {
+    try {
+      const lock = await acquireAutopilotWriterLock(engine);
+      if (!lock.acquired) {
+        const msg = '[autopilot] another mesh autopilot producer holds the DB lock; exiting without ticking.';
+        if (jsonMode) {
+          process.stderr.write(JSON.stringify({ event: 'producer_lock_busy', reason: lock.reason }) + '\n');
+        } else {
+          console.log(msg);
+        }
+        try { unlinkSync(lockPath); } catch { /* already gone */ }
+        process.exit(0);
+      }
+      writerLock = lock.handle;
+    } catch (e) {
+      logError('producer-lock', e);
+      try { unlinkSync(lockPath); } catch { /* already gone */ }
+      process.exit(1);
+    }
+  }
 
   // v0.42 self-upgrade: if a prior tick swapped the binary and exited for
   // relaunch, we're now the relaunched process — reconcile the breadcrumb so a
@@ -468,6 +552,10 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         childSupervisor.killChild('SIGKILL');
       }
     }
+    if (writerLock) {
+      try { await writerLock.release(); } catch { /* best-effort */ }
+      writerLock = null;
+    }
     try { unlinkSync(lockPath); } catch { /* already gone */ }
     process.exit(0);
   };
@@ -508,6 +596,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // Refresh the lock mtime so another cron-fired autopilot doesn't
     // declare the instance stale after 10 minutes (Codex C).
     try { utimesSync(lockPath, new Date(), new Date()); } catch { /* best-effort */ }
+    try { await writerLock?.refresh(); } catch (e) { logError('producer-lock-refresh', e); cycleOk = false; }
 
     // DB health check (reconnect if needed).
     //
@@ -560,7 +649,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // v0.42 self-upgrade silent channel (opt-in self_upgrade.mode=auto). Runs
     // each tick; cache TTL throttles the actual GitHub fetch. On apply it swaps
     // + exits for supervisor relaunch (never returns). No-op unless mode=auto.
-    await attemptAutopilotSelfUpgrade(engine, engineType, lockPath);
+    await attemptAutopilotSelfUpgrade(engine, engineType, lockPath, writerLock);
 
     // --no-worker peer-liveness probe (v0.19.1). Runs every cycle, cheap
     // (single SELECT). See NO_WORKER_WARN_TICKS comment above for caveats.
@@ -646,11 +735,26 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             const sources = await loadAllSources(engine);
             const intervalMs = baseInterval * 1000;
             const now = Date.now();
+            const cooldownRaw = await engine.getConfig('autopilot.very_stale_sync_cooldown_hours');
+            const cooldownHours = cooldownRaw ? Number.parseFloat(cooldownRaw) : 24;
+            const veryStaleCooldownMs =
+              Number.isFinite(cooldownHours) && cooldownHours > 0
+                ? cooldownHours * 60 * 60 * 1000
+                : DEFAULT_VERY_STALE_SYNC_COOLDOWN_MS;
             for (const src of sources) {
               if (!src.local_path) continue;
-              const lastSyncMs = src.last_sync_at ? new Date(src.last_sync_at).getTime() : 0;
-              const ageMs = now - lastSyncMs;
-              if (ageMs < intervalMs) continue; // fresh enough
+              const freshness = shouldSubmitFreshnessSync(src, now, intervalMs, veryStaleCooldownMs);
+              if (!freshness.submit) {
+                if (jsonMode && freshness.reason === 'cooldown') {
+                  process.stderr.write(JSON.stringify({
+                    event: 'freshness_skip',
+                    source_id: src.id,
+                    reason: 'cooldown',
+                    age_ms: freshness.ageMs,
+                  }) + '\n');
+                }
+                continue;
+              }
               try {
                 const job = await queue.add(
                   'sync',
@@ -665,16 +769,23 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                     idempotency_key: `autopilot-sync:${src.id}:${slot}`,
                     max_attempts: 2,
                     timeout_ms: timeoutMs,
-                    maxWaiting: 1,
                   },
                 );
+                try {
+                  await engine.updateSourceConfig(src.id, {
+                    autopilot_last_freshness_sync_at: new Date(now).toISOString(),
+                  });
+                } catch {
+                  // Best-effort: failure to write the cooldown marker must not
+                  // block the catch-up sync itself.
+                }
                 if (jsonMode) {
                   process.stderr.write(JSON.stringify({
                     event: 'dispatched', job_id: job.id, mode: 'freshness',
-                    source_id: src.id, age_ms: ageMs,
+                    source_id: src.id, age_ms: freshness.ageMs,
                   }) + '\n');
                 } else {
-                  console.log(`[dispatch] job #${job.id} sync (freshness: ${src.id}; age=${Math.floor(ageMs / 60000)}min)`);
+                  console.log(`[dispatch] job #${job.id} sync (freshness: ${src.id}; age=${Math.floor(freshness.ageMs / 60000)}min)`);
                 }
               } catch (e) {
                 logError('dispatch.freshness', e);

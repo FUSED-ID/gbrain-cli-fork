@@ -30,6 +30,8 @@ beforeEach(async () => {
   await (engine as any).db.query('DELETE FROM facts');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await (engine as any).db.query('DELETE FROM pages');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (engine as any).db.query('DELETE FROM op_checkpoints');
 });
 
 async function putPage(slug: string, body: string): Promise<void> {
@@ -174,6 +176,41 @@ describe('runExtractFacts — happy path', () => {
     const r = await runExtractFacts(engine);  // no slugs filter
     expect(r.pagesScanned).toBe(2);
     expect(r.factsInserted).toBe(2);
+  });
+
+  test('full walk can be bounded and resumes from DB checkpoint on the next run', async () => {
+    for (let i = 0; i < 5; i++) {
+      await putPage(`people/bounded-${i}`, FACT_FENCE(
+        `| 1 | Bounded ${i} | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+      ));
+    }
+
+    const first = await runExtractFacts(engine, { maxPages: 2 });
+    expect(first.pagesScanned).toBe(2);
+    expect(first.factsInserted).toBe(2);
+    expect(first.morePending).toBe(true);
+    expect(first.pagesRemaining).toBe(3);
+
+    const cpRows = await engine.executeRaw<{ completed_keys: unknown }>(
+      `SELECT completed_keys FROM op_checkpoints WHERE op = 'extract_facts'`,
+    );
+    expect(cpRows).toHaveLength(1);
+
+    const second = await runExtractFacts(engine, { maxPages: 10 });
+    expect(second.pagesScanned).toBe(3);
+    expect(second.factsInserted).toBe(3);
+    expect(second.morePending).toBe(false);
+    expect(second.pagesRemaining).toBe(0);
+
+    const remainingCp = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM op_checkpoints WHERE op = 'extract_facts'`,
+    );
+    expect(Number(remainingCp[0].n)).toBe(0);
+
+    const factRows = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM facts WHERE source_markdown_slug LIKE 'people/bounded-%'`,
+    );
+    expect(Number(factRows[0].n)).toBe(5);
   });
 });
 

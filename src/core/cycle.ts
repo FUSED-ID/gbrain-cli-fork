@@ -1020,6 +1020,8 @@ async function runPhaseExtractFacts(
         pagesWithFacts: result.pagesWithFacts,
         factsInserted: result.factsInserted,
         factsDeleted: result.factsDeleted,
+        more_pending: result.morePending,
+        pages_remaining: result.pagesRemaining,
         warnings: result.warnings.slice(0, 5),
         // v0.35.5: phantom counters surfaced so extractTotals() can lift
         // them to CycleReport.totals and the daily report makes the
@@ -2181,7 +2183,8 @@ export async function runCycle(
   // Best-effort: a write failure does NOT change the CycleReport status.
   // The cost of writing the wrong timestamp post-failure is higher than
   // the cost of missing a successful write (next cycle will redo work).
-  if (opts.sourceId && engine && !dryRun && (status === 'ok' || status === 'clean' || status === 'partial')) {
+  const hasPendingBoundedPhase = phaseResults.some((p) => p.details?.more_pending === true);
+  if (opts.sourceId && engine && !dryRun && !hasPendingBoundedPhase && (status === 'ok' || status === 'clean' || status === 'partial')) {
     try {
       await engine.updateSourceConfig(opts.sourceId, {
         last_full_cycle_at: new Date().toISOString(),

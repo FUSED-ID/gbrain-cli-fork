@@ -34,6 +34,7 @@ import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
 
 const FULL_CYCLE_FLOOR_MIN = 60;
+export const AUTOPILOT_CYCLE_BACKPRESSURE_THRESHOLD = 50;
 
 export interface FanoutOpts {
   repoPath: string;
@@ -61,6 +62,29 @@ export interface FanoutResult {
   /** True when this tick fell back to the legacy single-job path
    *  (no sources rows / engine empty). */
   legacy_fallback: boolean;
+  /** True when queue pressure suppressed dispatch for this tick. */
+  skipped_backpressure?: boolean;
+  /** waiting+dead `autopilot-cycle` rows observed for backpressure. */
+  backlog?: number;
+}
+
+export async function countAutopilotCycleBacklog(engine: BrainEngine): Promise<number | null> {
+  const raw = (engine as unknown as {
+    executeRaw?: <T = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<T[]>;
+  }).executeRaw;
+  if (typeof raw !== 'function') return null;
+  try {
+    const rows = await raw<{ backlog: number | string }>(
+      `SELECT count(*)::int AS backlog
+         FROM minion_jobs
+        WHERE name = 'autopilot-cycle'
+          AND status IN ('waiting', 'dead')`,
+    );
+    const n = Number(rows[0]?.backlog ?? 0);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -160,6 +184,29 @@ export async function dispatchPerSource(
 ): Promise<FanoutResult> {
   const emit = opts.emit ?? ((line) => process.stderr.write(line + '\n'));
   const log = opts.log ?? ((line) => console.log(line));
+  const backlog = await countAutopilotCycleBacklog(engine);
+  if (backlog !== null && backlog > AUTOPILOT_CYCLE_BACKPRESSURE_THRESHOLD) {
+    if (opts.jsonMode) {
+      emit(JSON.stringify({
+        event: 'fanout_backpressure',
+        backlog,
+        threshold: AUTOPILOT_CYCLE_BACKPRESSURE_THRESHOLD,
+      }));
+    } else {
+      log(
+        `[dispatch] autopilot-cycle backpressure: waiting+dead backlog=${backlog} ` +
+        `> ${AUTOPILOT_CYCLE_BACKPRESSURE_THRESHOLD}; skipping this tick`,
+      );
+    }
+    return {
+      dispatched: [],
+      skipped_fresh: [],
+      skipped_cap: [],
+      legacy_fallback: false,
+      skipped_backpressure: true,
+      backlog,
+    };
+  }
 
   let sources: SourceRow[];
   try {
@@ -193,7 +240,7 @@ export async function dispatchPerSource(
     } else {
       log(`[dispatch] job #${job.id} autopilot-cycle (legacy single-source)`);
     }
-    return { dispatched: [], skipped_fresh: [], skipped_cap: [], legacy_fallback: true };
+    return { dispatched: [], skipped_fresh: [], skipped_cap: [], legacy_fallback: true, backlog: backlog ?? undefined };
   }
 
   const { dispatch, skippedFresh, skippedCap } = selectSourcesForDispatch(sources, opts.fanoutMax);
@@ -266,5 +313,6 @@ export async function dispatchPerSource(
     skipped_fresh: skippedFresh.map(s => s.id),
     skipped_cap: skippedCap.map(s => s.id),
     legacy_fallback: false,
+    backlog: backlog ?? undefined,
   };
 }
