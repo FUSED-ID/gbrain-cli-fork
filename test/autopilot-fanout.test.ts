@@ -339,4 +339,36 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     expect(added).toEqual([]);
     expect(events.some(e => e.includes('fanout_backpressure') && e.includes('51'))).toBe(true);
   });
+
+  test('backpressure probe failure skips all autopilot-cycle dispatch fail-closed', async () => {
+    const added: AddedJob[] = [];
+    const logs: string[] = [];
+    const engine = {
+      kind: 'postgres' as const,
+      listAllSources: async () => [src('alpha'), src('beta')],
+      executeRaw: async () => {
+        throw new Error('queue unavailable');
+      },
+    } as unknown as BrainEngine;
+    const queue = {
+      add: async (name: string, data: unknown, opts: Record<string, unknown>) => {
+        added.push({ name, data, opts });
+        return { id: 1 };
+      },
+    } as unknown as Parameters<typeof dispatchPerSource>[1];
+
+    const result = await dispatchPerSource(engine, queue, {
+      repoPath: '/tmp/brain',
+      slot: '2026-05-22T12:00:00.000Z',
+      timeoutMs: 600_000,
+      fanoutMax: 4,
+      jsonMode: false,
+      log: (line) => logs.push(line),
+    });
+
+    expect(result.skipped_backpressure).toBe(true);
+    expect(result.dispatched).toEqual([]);
+    expect(added).toEqual([]);
+    expect(logs.join('\n')).toContain('backpressure probe failed');
+  });
 });

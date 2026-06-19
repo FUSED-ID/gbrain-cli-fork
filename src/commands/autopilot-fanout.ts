@@ -73,18 +73,14 @@ export async function countAutopilotCycleBacklog(engine: BrainEngine): Promise<n
     executeRaw?: <T = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<T[]>;
   }).executeRaw;
   if (typeof raw !== 'function') return null;
-  try {
-    const rows = await raw<{ backlog: number | string }>(
-      `SELECT count(*)::int AS backlog
-         FROM minion_jobs
-        WHERE name = 'autopilot-cycle'
-          AND status IN ('waiting', 'dead')`,
-    );
-    const n = Number(rows[0]?.backlog ?? 0);
-    return Number.isFinite(n) ? n : null;
-  } catch {
-    return null;
-  }
+  const rows = await raw<{ backlog: number | string }>(
+    `SELECT count(*) AS backlog
+       FROM minion_jobs
+      WHERE name = 'autopilot-cycle'
+        AND status IN ('waiting', 'dead')`,
+  );
+  const n = Number(rows[0]?.backlog ?? 0);
+  return Number.isFinite(n) ? n : null;
 }
 
 /**
@@ -184,7 +180,24 @@ export async function dispatchPerSource(
 ): Promise<FanoutResult> {
   const emit = opts.emit ?? ((line) => process.stderr.write(line + '\n'));
   const log = opts.log ?? ((line) => console.log(line));
-  const backlog = await countAutopilotCycleBacklog(engine);
+  let backlog: number | null = null;
+  try {
+    backlog = await countAutopilotCycleBacklog(engine);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (opts.jsonMode) {
+      emit(JSON.stringify({ event: 'fanout_backpressure_probe_failed', error: message }));
+    } else {
+      log(`[dispatch] autopilot-cycle backpressure probe failed; skipping this tick: ${message}`);
+    }
+    return {
+      dispatched: [],
+      skipped_fresh: [],
+      skipped_cap: [],
+      legacy_fallback: false,
+      skipped_backpressure: true,
+    };
+  }
   if (backlog !== null && backlog > AUTOPILOT_CYCLE_BACKPRESSURE_THRESHOLD) {
     if (opts.jsonMode) {
       emit(JSON.stringify({
