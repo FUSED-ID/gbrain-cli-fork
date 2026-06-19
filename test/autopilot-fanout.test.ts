@@ -313,8 +313,11 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     const events: string[] = [];
     const engine = {
       kind: 'postgres' as const,
+      backlog: 51,
       listAllSources: async () => [src('alpha'), src('beta')],
-      executeRaw: async () => [{ backlog: 51 }],
+      executeRaw: async function (this: { backlog: number }) {
+        return [{ backlog: this.backlog }];
+      },
     } as unknown as BrainEngine;
     const queue = {
       add: async (name: string, data: unknown, opts: Record<string, unknown>) => {

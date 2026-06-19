@@ -73,12 +73,13 @@ export async function countAutopilotCycleBacklog(engine: BrainEngine): Promise<n
     executeRaw?: <T = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<T[]>;
   }).executeRaw;
   if (typeof raw !== 'function') return null;
-  const rows = await raw<{ backlog: number | string }>(
+  const rows = await raw.call(
+    engine,
     `SELECT count(*) AS backlog
        FROM minion_jobs
       WHERE name = 'autopilot-cycle'
         AND status IN ('waiting', 'dead')`,
-  );
+  ) as Array<{ backlog: number | string }>;
   const n = Number(rows[0]?.backlog ?? 0);
   return Number.isFinite(n) ? n : null;
 }
