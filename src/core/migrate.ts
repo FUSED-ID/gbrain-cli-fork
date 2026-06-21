@@ -5618,6 +5618,24 @@ export const MIGRATIONS: Migration[] = [
         ON take_proposals (source_id, page_slug, content_hash, prompt_version, md5(claim_text));
     `,
   },
+  {
+    version: 126,
+    name: 'oauth_and_access_token_permissions',
+    // FUSED-ID privacy gate: OAuth clients and legacy bearer tokens may carry
+    // per-credential permissions, including `takes_holders`. This fork-local
+    // migration follows upstream v125 and remains unapplied on the live brain.
+    idempotent: true,
+    sql: `
+      ALTER TABLE oauth_clients
+        ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{}'::jsonb NOT NULL;
+      ALTER TABLE oauth_clients
+        ALTER COLUMN permissions SET DEFAULT '{}'::jsonb;
+      ALTER TABLE access_tokens
+        ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{}'::jsonb NOT NULL;
+      ALTER TABLE access_tokens
+        ALTER COLUMN permissions SET DEFAULT '{}'::jsonb;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
