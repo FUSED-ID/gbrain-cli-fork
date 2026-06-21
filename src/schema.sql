@@ -605,7 +605,8 @@ CREATE TABLE IF NOT EXISTS access_tokens (
   scopes       TEXT[],
   created_at   TIMESTAMPTZ DEFAULT now(),
   last_used_at TIMESTAMPTZ,
-  revoked_at   TIMESTAMPTZ
+  revoked_at   TIMESTAMPTZ,
+  permissions  JSONB DEFAULT '{}'::jsonb NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON access_tokens (token_hash) WHERE revoked_at IS NULL;
@@ -642,6 +643,7 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   deleted_at              TIMESTAMPTZ,
   source_id               TEXT REFERENCES sources(id) ON DELETE RESTRICT,
   federated_read          TEXT[] NOT NULL DEFAULT '{}',
+  permissions             JSONB DEFAULT '{}'::jsonb NOT NULL,
   -- v0.38 Slice 2 + 3: per-client daily budget cap (v84) + agent binding (v85).
   budget_usd_per_day      NUMERIC(10, 2) NULL,
   bound_tools             TEXT[] NULL,

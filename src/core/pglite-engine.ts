@@ -4696,7 +4696,7 @@ export class PGLiteEngine implements BrainEngine {
     };
   }
 
-  async getHealth(): Promise<BrainHealth> {
+  async getHealth(allPages: boolean = false): Promise<BrainHealth> {
     // Combined metrics from master (brain_score components: dead_links, link_count,
     // pages_with_timeline) and v0.10.3 graph layer (link_coverage, timeline_coverage,
     // most_connected). Both coexist: master's brain_score is the composite
@@ -4704,11 +4704,14 @@ export class PGLiteEngine implements BrainEngine {
     const { rows: [h] } = await this.db.query(`
       WITH entity_pages AS (
         SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+      ),
+      health_pages AS (
+        SELECT id FROM pages WHERE ${allPages ? 'TRUE' : 'FALSE'} OR type IN ('person', 'company')
       )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
-        (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
-          GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
+        (SELECT count(*) FROM content_chunks cc JOIN health_pages hp ON hp.id = cc.page_id WHERE cc.embedded_at IS NOT NULL)::float /
+          GREATEST((SELECT count(*) FROM content_chunks cc JOIN health_pages hp ON hp.id = cc.page_id), 1)::float as embed_coverage,
         (SELECT count(*) FROM pages p
          WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
         ) as stale_pages,
@@ -4724,12 +4727,12 @@ export class PGLiteEngine implements BrainEngine {
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
         (SELECT count(*) FROM links) as link_count,
         (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline,
-        (SELECT count(*) FROM entity_pages e
-         WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
-          GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
-        (SELECT count(*) FROM entity_pages e
-         WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = e.id))::float /
-          GREATEST((SELECT count(*) FROM entity_pages), 1)::float as timeline_coverage
+        (SELECT count(*) FROM health_pages hp
+         WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = hp.id))::float /
+          GREATEST((SELECT count(*) FROM health_pages), 1)::float as link_coverage,
+        (SELECT count(*) FROM health_pages hp
+         WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = hp.id))::float /
+          GREATEST((SELECT count(*) FROM health_pages), 1)::float as timeline_coverage
     `);
 
     // Top 5 most connected entities by total link count (in + out).
