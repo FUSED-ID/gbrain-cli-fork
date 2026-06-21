@@ -5026,6 +5026,7 @@ export async function buildChecks(
   const fastMode = args.includes('--fast');
   const doFix = args.includes('--fix');
   const dryRun = args.includes('--dry-run');
+  const allPages = args.includes('--all-pages');
   // v0.41.19.0 — `--scope=brain` SKIPS the SKILL check group (which walks the
   // filesystem `skills/` tree, the dominant non-DB cost). Defaults to `all`.
   // `runResolverChecks`-equivalent invocations are gated below; the same gate
@@ -6350,7 +6351,7 @@ export async function buildChecks(
   // 8. Embedding health
   progress.heartbeat('embeddings');
   try {
-    const health = await engine.getHealth();
+    const health = await engine.getHealth(allPages);
     const pct = (health.embed_coverage * 100).toFixed(0);
     if (health.embed_coverage >= 0.9) {
       checks.push({ name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${health.missing_embeddings} missing` });
@@ -6710,35 +6711,43 @@ export async function buildChecks(
   // condition is a false positive. Closes #530.
   progress.heartbeat('graph_coverage');
   try {
-    const health = await engine.getHealth();
+    const health = await engine.getHealth(allPages);
     const entityCount = (await engine.executeRaw<{ count: number }>(
       "SELECT COUNT(*)::int AS count FROM pages WHERE type IN ('entity', 'person', 'company', 'organization')",
     ))[0]?.count ?? 0;
 
-    // Compute coverage against eligible entities only — exclude test fixtures
-    // (`tools/gbrain/test/*`) and template stubs (`templates/new-person`) so
-    // that brains seeded only with code sources don't get spurious warnings
-    // about missing link/timeline coverage on pages that are test fixtures, not
-    // real knowledge entities.
-    const eligibleStats = (await engine.executeRaw<{ entities: number; linked_from: number; timeline: number }>(
-      `WITH eligible AS (
-        SELECT id FROM pages
-        WHERE type IN ('entity','person','company','organization')
-          AND slug NOT LIKE 'tools/gbrain/test/%'
-          AND slug <> 'templates/new-person'
-      )
-      SELECT
-        (SELECT count(*)::int FROM eligible) AS entities,
-        (SELECT count(DISTINCT from_page_id)::int FROM links WHERE from_page_id IN (SELECT id FROM eligible)) AS linked_from,
-        (SELECT count(DISTINCT page_id)::int FROM timeline_entries WHERE page_id IN (SELECT id FROM eligible)) AS timeline`,
-    ))[0] ?? { entities: entityCount, linked_from: 0, timeline: 0 };
+    // Compute coverage against the selected scope. Default mode uses eligible
+    // entities only and excludes test fixtures (`tools/gbrain/test/*`) and
+    // template stubs (`templates/new-person`). `--all-pages` intentionally
+    // expands to the whole pages table.
+    const coverageStats = (await engine.executeRaw<{ pages: number; linked_from: number; timeline: number }>(
+      allPages
+        ? `WITH eligible AS (
+            SELECT id FROM pages
+          )
+          SELECT
+            (SELECT count(*)::int FROM eligible) AS pages,
+            (SELECT count(DISTINCT from_page_id)::int FROM links WHERE from_page_id IN (SELECT id FROM eligible)) AS linked_from,
+            (SELECT count(DISTINCT page_id)::int FROM timeline_entries WHERE page_id IN (SELECT id FROM eligible)) AS timeline`
+        : `WITH eligible AS (
+            SELECT id FROM pages
+            WHERE type IN ('entity','person','company','organization')
+              AND slug NOT LIKE 'tools/gbrain/test/%'
+              AND slug <> 'templates/new-person'
+          )
+          SELECT
+            (SELECT count(*)::int FROM eligible) AS pages,
+            (SELECT count(DISTINCT from_page_id)::int FROM links WHERE from_page_id IN (SELECT id FROM eligible)) AS linked_from,
+            (SELECT count(DISTINCT page_id)::int FROM timeline_entries WHERE page_id IN (SELECT id FROM eligible)) AS timeline`,
+    ))[0] ?? { pages: entityCount, linked_from: 0, timeline: 0 };
 
-    const eligibleEntityCount = Number(eligibleStats.entities ?? entityCount);
-    const linkCoverage = eligibleEntityCount > 0 ? Number(eligibleStats.linked_from ?? 0) / eligibleEntityCount : 0;
-    const timelineCoverage = eligibleEntityCount > 0 ? Number(eligibleStats.timeline ?? 0) / eligibleEntityCount : 0;
+    const coveragePageCount = Number(coverageStats.pages ?? entityCount);
+    const linkCoverage = coveragePageCount > 0 ? Number(coverageStats.linked_from ?? 0) / coveragePageCount : 0;
+    const timelineCoverage = coveragePageCount > 0 ? Number(coverageStats.timeline ?? 0) / coveragePageCount : 0;
     const linkPct = (linkCoverage * 100).toFixed(0);
     const timelinePct = (timelineCoverage * 100).toFixed(0);
-    if (entityCount === 0) {
+    const scope = allPages ? 'all-pages' : 'entity';
+    if (!allPages && entityCount === 0) {
       // Markdown-only / journal / wiki brain — no entity pages to compute
       // coverage against. Coverage formula is structurally inapplicable.
       checks.push({
@@ -6746,19 +6755,21 @@ export async function buildChecks(
         status: 'ok',
         message: 'No entity pages — graph_coverage not applicable (markdown-only brain)',
       });
-    } else if (eligibleEntityCount === 0) {
+    } else if (coveragePageCount === 0) {
       checks.push({
         name: 'graph_coverage',
         status: 'ok',
-        message: `Only code/test fixture entity pages found (${entityCount}); graph_coverage not applicable`,
+        message: allPages
+          ? 'No pages — graph_coverage not applicable'
+          : `Only code/test fixture entity pages found (${entityCount}); graph_coverage not applicable`,
       });
     } else if (linkCoverage >= 0.5 && timelineCoverage >= 0.5) {
-      checks.push({ name: 'graph_coverage', status: 'ok', message: `Entity link coverage ${linkPct}%, entity timeline coverage ${timelinePct}%` });
+      checks.push({ name: 'graph_coverage', status: 'ok', message: `${scope} link coverage ${linkPct}%, timeline ${timelinePct}%` });
     } else {
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity link coverage ${linkPct}%, entity timeline coverage ${timelinePct}% (${eligibleEntityCount} entity pages). Run: gbrain extract all`,
+        message: `${scope} link coverage ${linkPct}%, timeline ${timelinePct}% (${coveragePageCount} ${scope} pages). Run: gbrain extract all`,
       });
     }
 
