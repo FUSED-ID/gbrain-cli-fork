@@ -5356,7 +5356,7 @@ export class PostgresEngine implements BrainEngine {
     };
   }
 
-  async getHealth(): Promise<BrainHealth> {
+  async getHealth(allPages: boolean = false): Promise<BrainHealth> {
     const sql = this.sql;
     // Bug 11 doc-drift fix — orphan_pages means "islanded" (no inbound AND
     // no outbound links). The raw islanded list is filtered through the same
@@ -5365,24 +5365,33 @@ export class PostgresEngine implements BrainEngine {
     const [h] = await sql`
       WITH entity_pages AS (
         SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+      ),
+      health_pages AS (
+        SELECT id FROM pages WHERE ${allPages}::boolean OR type IN ('person', 'company')
       )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
-        (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
-          GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
-        0 as stale_pages,
-        0 as orphan_pages,
+        (SELECT count(*) FROM content_chunks cc JOIN health_pages hp ON hp.id = cc.page_id WHERE cc.embedded_at IS NOT NULL)::float /
+          GREATEST((SELECT count(*) FROM content_chunks cc JOIN health_pages hp ON hp.id = cc.page_id), 1)::float as embed_coverage,
+        (SELECT count(*) FROM pages p
+         WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
+        ) as stale_pages,
+        (SELECT count(*) FROM pages p
+         WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+           AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
+        ) as orphan_pages,
         (SELECT count(*) FROM links l
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
         ) as dead_links,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
         (SELECT count(*) FROM links) as link_count,
-        (SELECT count(*) FROM entity_pages e
-         WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
-          GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
-        (SELECT count(*) FROM entity_pages e
-         WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = e.id))::float /
-          GREATEST((SELECT count(*) FROM entity_pages), 1)::float as timeline_coverage
+        (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline,
+        (SELECT count(*) FROM health_pages hp
+         WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = hp.id))::float /
+          GREATEST((SELECT count(*) FROM health_pages), 1)::float as link_coverage,
+        (SELECT count(*) FROM health_pages hp
+         WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = hp.id))::float /
+          GREATEST((SELECT count(*) FROM health_pages), 1)::float as timeline_coverage
     `;
 
     const connected = await sql`
