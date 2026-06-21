@@ -5505,6 +5505,23 @@ export const MIGRATIONS: Migration[] = [
         WHERE dimension IS NOT NULL;
     `,
   },
+  {
+    version: 123,
+    name: 'oauth_and_access_token_permissions',
+    // FUSED-ID privacy gate: OAuth clients and legacy bearer tokens may carry
+    // per-credential permissions, including `takes_holders`.
+    idempotent: true,
+    sql: `
+      ALTER TABLE oauth_clients
+        ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{}'::jsonb NOT NULL;
+      ALTER TABLE oauth_clients
+        ALTER COLUMN permissions SET DEFAULT '{}'::jsonb;
+      ALTER TABLE access_tokens
+        ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{}'::jsonb NOT NULL;
+      ALTER TABLE access_tokens
+        ALTER COLUMN permissions SET DEFAULT '{}'::jsonb;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
