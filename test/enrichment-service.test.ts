@@ -1,4 +1,8 @@
 import { describe, test, expect } from 'bun:test';
+import { mkdtempSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import type { BrainEngine } from '../src/core/engine.ts';
 import { slugifyEntity, entityPagePath, extractEntities } from '../src/core/enrichment-service.ts';
 
 describe('enrichment-service', () => {
@@ -94,6 +98,60 @@ describe('enrichment-service', () => {
     test('module exports extractAndEnrich for text processing', async () => {
       const mod = await import('../src/core/enrichment-service.ts');
       expect(typeof mod.extractAndEnrich).toBe('function');
+    });
+
+    test('routes private-classified person writes to private source', async () => {
+      const privateDir = mkdtempSync(join(tmpdir(), 'gbrain-enrich-routing-'));
+      writeFileSync(join(privateDir, '_brain-filing-rules.md'), '# rules\n');
+      writeFileSync(join(privateDir, '_excluded-people.md'), `## Family deny-list
+| Slug pattern | Name | Relationship | DOB |
+|---|---|---|---|
+| \`private-person*\` | Private Person | Example | - |
+`);
+      const writes: Array<{ slug: string; sourceId?: string }> = [];
+      const links: Array<{ fromSourceId?: string; toSourceId?: string; originSourceId?: string }> = [];
+      const timelines: Array<{ sourceId?: string }> = [];
+      const engine = {
+        getConfig: async () => null,
+        executeRaw: async () => [
+          { id: 'default', name: 'Default', local_path: null, last_commit: null, last_sync_at: null, config: {}, created_at: new Date() },
+          { id: 'lg-private', name: 'Private', local_path: privateDir, last_commit: null, last_sync_at: null, config: { federated: false }, created_at: new Date() },
+        ],
+        searchKeyword: async () => [],
+        getPage: async () => null,
+        putPage: async (slug: string, _page: unknown, opts?: { sourceId?: string }) => {
+          writes.push({ slug, sourceId: opts?.sourceId });
+          return { slug, source_id: opts?.sourceId ?? 'default' };
+        },
+        addTimelineEntry: async (_slug: string, _entry: unknown, opts?: { sourceId?: string }) => {
+          timelines.push({ sourceId: opts?.sourceId });
+        },
+        addLink: async (
+          _from: string,
+          _to: string,
+          _context?: string,
+          _linkType?: string,
+          _linkSource?: string,
+          _originSlug?: string,
+          _originField?: string,
+          opts?: { fromSourceId?: string; toSourceId?: string; originSourceId?: string },
+        ) => {
+          links.push(opts ?? {});
+        },
+      } as unknown as BrainEngine;
+
+      const { enrichEntity } = await import('../src/core/enrichment-service.ts');
+      const result = await enrichEntity(engine, {
+        entityName: 'Private Person',
+        entityType: 'person',
+        context: 'mentioned in a source page',
+        sourceSlug: 'meetings/source',
+      });
+
+      expect(result.action).toBe('created');
+      expect(writes).toEqual([{ slug: 'people/private-person', sourceId: 'lg-private' }]);
+      expect(timelines).toEqual([{ sourceId: 'lg-private' }]);
+      expect(links).toEqual([{ fromSourceId: 'lg-private', toSourceId: 'default', originSourceId: 'default' }]);
     });
   });
 
