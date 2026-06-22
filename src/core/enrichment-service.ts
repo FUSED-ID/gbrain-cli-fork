@@ -16,6 +16,7 @@
 import type { BrainEngine } from './engine.ts';
 import { waitForCapacity } from './backoff.ts';
 import { quarantineMarkers } from './extraction-review.ts';
+import { resolvePrivateWriteSource } from './private-source-routing.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -26,6 +27,7 @@ export interface EnrichmentRequest {
   entityType: 'person' | 'company';
   context: string;
   sourceSlug: string;
+  sourceId?: string;
   tier?: 1 | 2 | 3;
 }
 
@@ -101,10 +103,17 @@ export async function enrichEntity(
   const slug = slugifyEntity(request.entityName, request.entityType);
   // Fail-closed: only an explicit `trusted: true` writes authoritative pages.
   const trusted = opts?.trusted === true;
-  const scope = opts?.sourceId ? { sourceId: opts.sourceId } : undefined;
+  const requestedSourceId = request.sourceId ?? opts?.sourceId ?? 'default';
+  const route = await resolvePrivateWriteSource(engine, {
+    requestedSourceId,
+    slug,
+    entityName: request.entityName,
+    entityType: request.entityType,
+  });
+  const entitySourceId = route.sourceId;
 
   // 1. Count existing mentions for tier auto-escalation
-  const { mentionCount, mentionSources } = await countMentions(engine, request.entityName, opts?.sourceId);
+  const { mentionCount, mentionSources } = await countMentions(engine, request.entityName, entitySourceId);
 
   // 2. Determine tier (auto-escalate based on mentions)
   const suggestedTier = suggestTier(mentionCount, mentionSources, request.context);
@@ -112,7 +121,7 @@ export async function enrichEntity(
   const tierEscalated = suggestedTier < (request.tier || 3); // lower tier number = higher importance
 
   // 3. Check if entity page exists
-  const existingPage = await engine.getPage(slug, scope);
+  const existingPage = await engine.getPage(slug, { sourceId: entitySourceId });
   let action: 'created' | 'updated' | 'skipped';
 
   if (existingPage) {
@@ -136,7 +145,7 @@ export async function enrichEntity(
         // carry provenance + unverified markers until the owner reviews them.
         ...(trusted ? {} : quarantineMarkers()),
       },
-    }, scope);
+    }, { sourceId: entitySourceId });
     action = 'created';
   }
 
@@ -147,7 +156,7 @@ export async function enrichEntity(
       date: new Date().toISOString().split('T')[0] ?? '',
       summary: `Referenced in [${request.sourceSlug}](${request.sourceSlug}) — ${request.context}`,
       source: request.sourceSlug,
-    }, scope);
+    }, { sourceId: entitySourceId });
     timelineAdded = true;
   } catch {
     // Timeline add failed (page might not support it)
@@ -156,7 +165,20 @@ export async function enrichEntity(
   // 5. Add backlink from entity to source
   let backlinkCreated = false;
   try {
-    await engine.addLink(slug, request.sourceSlug, `Entity mention from ${request.sourceSlug}`, undefined, undefined, undefined, undefined, opts?.sourceId ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId } : undefined); // gbrain-allow-direct-insert: auto-link reconciliation triggered by entity reference in source markdown
+    await engine.addLink( // gbrain-allow-direct-insert: auto-link reconciliation triggered by entity reference in source markdown
+      slug,
+      request.sourceSlug,
+      `Entity mention from ${request.sourceSlug}`,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        fromSourceId: entitySourceId,
+        toSourceId: requestedSourceId,
+        originSourceId: requestedSourceId,
+      },
+    );
     backlinkCreated = true;
   } catch {
     // Link might already exist
