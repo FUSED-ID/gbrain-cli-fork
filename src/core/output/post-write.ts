@@ -38,6 +38,8 @@ export interface PostWriteLintOpts {
   force?: boolean;
   /** Skip file writes; used by tests. */
   noLog?: boolean;
+  /** Source containing the freshly-written page. Defaults to engine default. */
+  sourceId?: string;
 }
 
 export interface PostWriteLintResult {
@@ -80,7 +82,7 @@ export async function runPostWriteLint(
     return { ran: false, slug, findings: [], skippedReason: 'flag_disabled' };
   }
 
-  const page = await engine.getPage(slug);
+  const page = await engine.getPage(slug, opts.sourceId ? { sourceId: opts.sourceId } : undefined);
   if (!page) {
     return { ran: false, slug, findings: [], skippedReason: 'page_not_found' };
   }
