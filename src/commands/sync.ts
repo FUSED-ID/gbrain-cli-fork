@@ -74,7 +74,6 @@ import { newestCommitMs, commitTimeMs, lagFromContentMs } from '../core/source-h
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
 import {
   loadOpCheckpoint,
-  recordCompleted,
   appendCompleted,
   appendCompletedOnce,
   clearOpCheckpoint,
@@ -1001,6 +1000,24 @@ async function writeSyncAnchor(
   await engine.setConfig(`sync.${which}`, value);
 }
 
+async function touchSyncFreshness(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+  repoPath: string,
+  headCommit: string,
+): Promise<void> {
+  if (sourceId) {
+    const newest = commitTimeMs(repoPath, headCommit);
+    const newestIso = newest === null ? null : new Date(newest).toISOString();
+    await engine.executeRaw(
+      `UPDATE sources SET last_sync_at = now(), newest_content_at = $2 WHERE id = $1`,
+      [sourceId, newestIso],
+    );
+    return;
+  }
+  await engine.setConfig('sync.last_run', new Date().toISOString());
+}
+
 /**
  * v0.20.0 Cathedral II Layer 12 (SP-1 fix) — read/write the chunker version
  * last used to sync a given source. When it mismatches CURRENT_CHUNKER_VERSION,
@@ -1786,6 +1803,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       detachedWorkingTreeManifest.renamed.length > 0);
 
   if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges) {
+    await touchSyncFreshness(engine, opts.sourceId, repoPath, headCommit);
+    await engine.setConfig('sync.last_run', new Date().toISOString());
+    await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,
@@ -1949,11 +1969,11 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   // v0.42.x (#1794): we have real work — persist the PIN now so a crash before
   // the first path-flush still resumes to THIS target (not re-pin to a newer
-  // HEAD). recordCompleted is durable (executeRawDirect + retry); a false return
+  // HEAD). appendCompleted is durable (executeRawDirect + retry); a false return
   // means the pool is genuinely dead. Nothing is imported yet, so we abort
   // cleanly (zero loss) rather than draining work we could never anchor — see
   // the !pinPersisted gate just after the partial() closure below.
-  const pinPersisted = await recordCompleted(engine, ckpt.target, [pin]);
+  const pinPersisted = await appendCompleted(engine, ckpt.target, [pin]);
 
   // v0.42.x (#1794): durable, race-safe, bankable checkpoint state.
   //  - `completed`: the cross-run skip set (seeded from the resume load).
