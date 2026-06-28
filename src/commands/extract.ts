@@ -55,7 +55,7 @@ export { withRetry };
 export type { WithRetryOpts } from '../core/retry.ts';
 import { buildGazetteer, findMentionedEntities } from '../core/by-mention.ts';
 import {
-  loadOpCheckpoint, recordCompleted, clearOpCheckpoint, mentionsFingerprint,
+  appendCompleted, loadOpCheckpoint, recordCompleted, clearOpCheckpoint, mentionsFingerprint,
 } from '../core/op-checkpoint.ts';
 import { createHash } from 'crypto';
 // v0.41.15.0 (T7, D9): --workers N for the fs-walk inner loops via the
@@ -83,6 +83,10 @@ const STALE_BATCH_SIZE = Math.max(1, Number(process.env.GBRAIN_EXTRACT_STALE_BAT
 // 30 min). `--catch-up` removes the cap (loops until 0 stale). Mirrors
 // embedAllStale's time-budget shape.
 const STALE_TIME_BUDGET_MS = Math.max(1000, Number(process.env.GBRAIN_EXTRACT_TIME_BUDGET_MS) || 30 * 60 * 1000);
+
+function maxIsoTimestamp(a: string, b: string): string {
+  return Date.parse(a) >= Date.parse(b) ? a : b;
+}
 
 /**
  * v0.42.7 (#1696): best-effort extraction stamp for the source-correct write
@@ -1734,16 +1738,21 @@ async function extractStaleFromDB(
         timelineRows.push({ slug: page.slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
       }
       // EVERY processed page is stamped (incl. zero-link pages). D4 race fix:
-      // stamp with the row's READ updated_at, NOT now() — a concurrent edit
-      // landing between this SELECT and the stamp advances updated_at past the
-      // stamped value, so the page stays stale and re-extracts next run instead
-      // of being marked fresh-with-stale-content.
+      // stamp with the row's READ updated_at rather than now() so a concurrent
+      // edit landing between this SELECT and the stamp advances updated_at past
+      // the stamped value and re-extracts next run. Also satisfy the extractor
+      // version gate for old pages whose updated_at predates the current
+      // LINK_EXTRACTOR_VERSION_TS.
       //
       // #1768: stamp the FULL-µs `updated_at_iso` (projected via to_char), NOT
       // `page.updated_at.toISOString()` — the JS Date is ms-truncated, so the
       // µs-precision DB updated_at stayed strictly greater and the page never
       // cleared on Postgres. Stamping the exact value makes them equal.
-      processedRefs.push({ slug: page.slug, source_id: page.source_id, extractedAt: page.updated_at_iso });
+      processedRefs.push({
+        slug: page.slug,
+        source_id: page.source_id,
+        extractedAt: maxIsoTimestamp(page.updated_at_iso, versionTs),
+      });
     }
 
     // Flush NON-swallowing (CDX-4): a throw here propagates out of the sweep so
@@ -1898,12 +1907,12 @@ async function extractMentionsFromDb(
 
   async function flushAndCheckpoint(force = false): Promise<void> {
     await flushBatch();
-    for (const key of pendingForFlush) completed.add(key);
-    pendingForFlush.length = 0;
+    const newlyCompleted = pendingForFlush.splice(0);
+    for (const key of newlyCompleted) completed.add(key);
     if (dryRun) return;
     const now = Date.now();
     if (force || unpersistedCount >= PERSIST_EVERY_N || (now - sinceLastPersistMs) >= PERSIST_EVERY_MS) {
-      await recordCompleted(engine, ckptKey, [...completed]);
+      await appendCompleted(engine, ckptKey, newlyCompleted);
       unpersistedCount = 0;
       sinceLastPersistMs = now;
     }
