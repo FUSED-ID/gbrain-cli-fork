@@ -96,9 +96,38 @@ function collectAttendees(fm: Record<string, unknown>): string[] {
   const out = new Set<string>();
   for (const key of ['attendees', 'people', 'who']) {
     const v = fm[key];
-    if (Array.isArray(v)) for (const x of v) if (typeof x === 'string' && x.trim()) out.add(x.trim());
+    if (Array.isArray(v)) {
+      for (const x of v) {
+        if (typeof x === 'string' && x.trim()) out.add(x.trim());
+        if (x && typeof x === 'object') {
+          const rec = x as Record<string, unknown>;
+          const label = typeof rec.slug === 'string' && rec.slug.trim()
+            ? rec.slug
+            : typeof rec.name === 'string' && rec.name.trim()
+              ? rec.name
+              : typeof rec.email === 'string' && rec.email.trim()
+                ? rec.email
+                : '';
+          if (label) out.add(label);
+        }
+      }
+    }
   }
   return [...out];
+}
+
+function deterministicMeetingEvent(input: ChronicleJudgeInput, attendees: string[]): ChronicleEventProposal | null {
+  if (!input.effectiveDate) return null;
+  if (!['meeting', 'meeting-transcript', 'conversation', 'calendar-event'].includes(input.type)) return null;
+  const title = input.title?.trim() || input.slug;
+  const noun = input.type === 'meeting-transcript' ? 'Meeting transcript' : 'Meeting';
+  const attendeeNote = attendees.length > 0 ? ` — ${attendees.length} attendee${attendees.length === 1 ? '' : 's'}` : '';
+  return {
+    when: input.effectiveDate,
+    who: attendees,
+    what: `${noun} held: ${title}${attendeeNote}`,
+    kind: 'meeting',
+  };
 }
 
 /**
@@ -142,7 +171,18 @@ export async function runChronicleExtract(
   if (result?.failure) {
     return { slug: opts.slug, status: 'skipped', events_written: 0, reason: `judge_${result.failure}` };
   }
-  const proposals = Array.isArray(result?.events) ? result.events : [];
+  let proposals = Array.isArray(result?.events) ? result.events : [];
+  if (proposals.length === 0) {
+    const fallback = deterministicMeetingEvent({
+      slug: opts.slug,
+      type: page.type,
+      title: page.title,
+      body: page.compiled_truth ?? '',
+      effectiveDate,
+      attendees,
+    }, attendees);
+    if (fallback) proposals = [fallback];
+  }
   if (proposals.length === 0) return { slug: opts.slug, status: 'no_events', events_written: 0 };
   // PARSE BARRIER — reject the WHOLE batch on any malformed proposal; no partial writes.
   if (!proposals.every(isValidProposal)) {
