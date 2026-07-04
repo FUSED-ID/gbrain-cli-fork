@@ -26,8 +26,8 @@
 
 api_version: gbrain-schema-pack-v1
 name: gbrain-base-v2
-version: 1.0.0
-description: 14-type DRY/MECE canonical taxonomy + `note` catch-all (15 total). Successor to gbrain-base. Issue #1479.
+version: 1.1.0
+description: 14-type DRY/MECE canonical taxonomy + `note` catch-all, document canonical, and chronicle event/diary types. Successor to gbrain-base. Issue #1479.
 gbrain_min_version: 0.42.0
 extends: null
 borrow_from: []
@@ -47,13 +47,7 @@ page_types:
     path_prefixes:
       - people/
       - person/
-    aliases:
-      - people
-      - contact
-      - individual
-      - founder
-      - partner
-      - partner-profile
+    aliases: []
     extractable: false
     expert_routing: true
 
@@ -74,28 +68,14 @@ page_types:
       - name: org
         when:
           path_pattern: "^orgs/"
-    aliases:
-      - yc-company
-      - product
-      - org
-      - people-org
-      - organization
-      - startup
-      - business
+    aliases: []
     extractable: false
     expert_routing: true
 
   - name: media
     primitive: media
     path_prefixes:
-      - media/
-      - videos/
       - articles/
-      - essays/
-      - books/
-      - podcasts/
-      - blog/
-      - posts/
     subtypes:
       - name: video
         when:
@@ -115,23 +95,13 @@ page_types:
       - name: blog
         when:
           path_pattern: "^(blog|posts)/"
-    aliases:
-      - article
-      - video
-      - essay
-      - book
-      - podcast
-      - blog-post
-      - youtube-video
-      - podcast-episode
+    aliases: []
     extractable: true
     expert_routing: false
 
   - name: tweet
     primitive: media
-    path_prefixes:
-      - tweets/
-      - twitter/
+    path_prefixes: []
     subtypes:
       - name: single
         when:
@@ -145,19 +115,13 @@ page_types:
         when:
           frontmatter_field: stub
           frontmatter_value: true
-    aliases:
-      - tweet-single
-      - tweet-thread
-      - tweet-bundle
-      - tweet-stub
-      - twitter-post
+    aliases: []
     extractable: true
     expert_routing: false
 
   - name: social-digest
     primitive: temporal
-    path_prefixes:
-      - digests/social/
+    path_prefixes: []
     subtypes:
       - name: daily
         when:
@@ -165,31 +129,20 @@ page_types:
       - name: monthly
         when:
           path_pattern: "/monthly/"
-    aliases:
-      - social-digest-daily
-      - social-digest-monthly
+    aliases: []
     extractable: false
     expert_routing: false
 
   - name: analysis
     primitive: media
-    path_prefixes:
-      - wiki/analysis/
-      - analysis/
-    aliases:
-      - pricing-analysis
-      - hiring-analysis
-      - market-analysis
-      - competitive-analysis
-      - research
-      - organization-research
+    path_prefixes: []
+    aliases: []
     extractable: true
     expert_routing: false
 
   - name: atom
     primitive: annotation
-    path_prefixes:
-      - atoms/
+    path_prefixes: []
     subtypes:
       - name: extraction
         when:
@@ -203,36 +156,21 @@ page_types:
         when:
           frontmatter_field: origin
           frontmatter_value: lore
-    aliases:
-      - atom-extraction
-      - atom-manual
-      - atom-lore
-      - content-atom
-      - lore
+    aliases: []
     extractable: false
     expert_routing: false
 
   - name: concept
     primitive: concept
-    path_prefixes:
-      - wiki/concepts/
-      - wiki/concept/
-    aliases:
-      - concept-stub
-      - definition
+    path_prefixes: []
+    aliases: []
     extractable: true
     expert_routing: false
 
   - name: source
     primitive: media
-    path_prefixes:
-      - sources/
-      - source/
-    aliases:
-      - sources/article
-      - source/article
-      - transcript
-      - ref
+    path_prefixes: []
+    aliases: []
     extractable: true
     expert_routing: false
 
@@ -241,39 +179,28 @@ page_types:
     path_prefixes:
       - deals/
       - deal/
-    aliases:
-      - investment
-      - term-sheet
+    aliases: []
     extractable: false
     expert_routing: false
 
   - name: email
     primitive: temporal
-    path_prefixes:
-      - emails/
-      - email/
-    aliases:
-      - email-thread
+    path_prefixes: []
+    aliases: []
     extractable: true
     expert_routing: false
 
   - name: slack
     primitive: temporal
-    path_prefixes:
-      - slack/
-    aliases:
-      - slack-message
-      - slack-thread
+    path_prefixes: []
+    aliases: []
     extractable: true
     expert_routing: false
 
   - name: writing
     primitive: media
-    path_prefixes:
-      - writing/
-    aliases:
-      - draft
-      - post-draft
+    path_prefixes: []
+    aliases: []
     extractable: true
     expert_routing: false
 
@@ -282,23 +209,23 @@ page_types:
     path_prefixes:
       - projects/
       - project/
-    aliases:
-      - initiative
-      - workstream
+    aliases: []
     extractable: false
     expert_routing: false
 
   - name: note
     primitive: concept
     path_prefixes:
-      - notes/
       - note/
-    aliases:
-      - memo
-      - anecdote
-      - insight
-      - principle
-      - framework
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+  - name: document
+    primitive: media
+    path_prefixes:
+      - document/
+    aliases: []
     extractable: true
     expert_routing: false
 
@@ -346,6 +273,19 @@ mapping_rules:
   # All retype rules write frontmatter.legacy_type per D8 (unless
   # subtype_field IS legacy_type, in which case it supplies legacy_type
   # directly via the cluster-8 pattern).
+
+  # v1.1: alias-cleanup realization for active brains that still carry
+  # pre-v2 type spellings after the broad unification pass.
+  - kind: retype
+    from_type: contact
+    to_type: person
+  - kind: retype
+    from_type: organisation
+    to_type: company
+    subtype: org
+  - kind: retype
+    from_type: doc
+    to_type: document
 
   # Cluster 1: tweet family (~106K pages, 7 types → 1 with subtype)
   - kind: retype
