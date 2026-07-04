@@ -5928,7 +5928,7 @@ const chronicle_backfill: Operation = {
   },
   handler: async (ctx, p) => {
     const { isChronicleEligible } = await import('./chronicle/eligibility.ts');
-    const TYPES = ['meeting', 'conversation', 'calendar-event'] as const;
+    const TYPES = ['meeting', 'meeting-transcript', 'conversation', 'calendar-event'] as const;
     const limit = typeof p.limit === 'number' ? p.limit : 1000;
     const updated_after = typeof p.since === 'string' ? p.since : undefined;
     const dryRun = p.dry_run === true;
