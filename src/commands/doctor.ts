@@ -53,9 +53,11 @@ import { isUndefinedColumnError } from '../core/utils.ts';
 import { resolveHardExcludes, DEFAULT_HARD_EXCLUDES } from '../core/search/source-boost.ts';
 import { escapeLikePattern, buildVisibilityClause } from '../core/search/sql-ranking.ts';
 
+export type CheckStatus = 'ok' | 'info' | 'warn' | 'fail';
+
 export interface Check {
   name: string;
-  status: 'ok' | 'warn' | 'fail';
+  status: CheckStatus;
   message: string;
   /**
    * v0.38: optional structured payload for checks that surface data
@@ -645,6 +647,59 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
       status: 'warn',
       message: `Could not compute: ${e instanceof Error ? e.message : String(e)}`,
     });
+  }
+
+  // TD-2: same two-tier brain health metric as local doctor. Scope the
+  // actionable orphan_ratio to curated sources and keep archive orphans
+  // visible as info-only.
+  try {
+    const {
+      getOrphansData,
+      HEALTH_EXCLUDED_SOURCE_PREFIXES,
+      HEALTH_EXCLUDED_SOURCE_IDS,
+      ARCHIVE_ORPHAN_SOURCE_PREFIXES,
+    } = await import('./orphans.ts');
+    const data = await getOrphansData(engine, {
+      includePseudo: false,
+      excludeSourcePrefixes: HEALTH_EXCLUDED_SOURCE_PREFIXES,
+      excludeSourceIds: HEALTH_EXCLUDED_SOURCE_IDS,
+    });
+    const ratio = data.total_linkable > 0 ? data.total_orphans / data.total_linkable : 0;
+    const pct = (ratio * 100).toFixed(0);
+    const hint =
+      'Ask the brain operator to run: gbrain extract links --by-mention ' +
+      '(auto-links entity mentions in body text).';
+    checks.push({
+      name: 'orphan_ratio',
+      status: ratio > 0.8 ? 'fail' : ratio > 0.5 ? 'warn' : 'ok',
+      message:
+        ratio > 0.5
+          ? `Orphan ratio ${pct}% (curated) (${data.total_orphans}/${data.total_linkable} linkable pages have no inbound links). ${hint}`
+          : `Orphan ratio ${pct}% (curated) (${data.total_orphans}/${data.total_linkable} linkable pages)`,
+    });
+
+    const archiveData = await getOrphansData(engine, {
+      includePseudo: false,
+      includeSourcePrefixes: ARCHIVE_ORPHAN_SOURCE_PREFIXES,
+    });
+    const archiveRatio =
+      archiveData.total_linkable > 0 ? archiveData.total_orphans / archiveData.total_linkable : 0;
+    checks.push({
+      name: 'archive_orphan_ratio',
+      status: 'info',
+      message:
+        `Archive orphan ratio ${(archiveRatio * 100).toFixed(1)}% ` +
+        `(${archiveData.total_orphans}/${archiveData.total_linkable} linkable pages, birdclaw, informational)`,
+    });
+  } catch {
+    checks.push({ name: 'orphan_ratio', status: 'warn', message: 'Could not check orphan ratio' });
+  }
+
+  try {
+    const { checkEntityLinkCoverage } = await import('../core/onboard/checks.ts');
+    checks.push((await checkEntityLinkCoverage(engine)).check);
+  } catch {
+    checks.push({ name: 'entity_link_coverage', status: 'warn', message: 'Could not check entity link coverage' });
   }
 
   // 3b. Migration wedge hint (v0.31.8 — D14 + D19). The brain server's
@@ -6160,7 +6215,12 @@ export async function buildChecks(
   // doctor (no --source) stays brain-wide.
   progress.heartbeat('orphan_ratio');
   try {
-    const { getOrphansData } = await import('./orphans.ts');
+    const {
+      getOrphansData,
+      HEALTH_EXCLUDED_SOURCE_PREFIXES,
+      HEALTH_EXCLUDED_SOURCE_IDS,
+      ARCHIVE_ORPHAN_SOURCE_PREFIXES,
+    } = await import('./orphans.ts');
     const srcId = orphanRatioSourceId;
     const inSource = srcId ? ` in source '${srcId}'` : '';
     const entityCount = (await engine.executeRaw<{ count: number }>(
@@ -6180,9 +6240,16 @@ export async function buildChecks(
       // about one source — answer it even below 100 entities, with a
       // low-scale caveat, instead of swallowing a real per-source failure
       // (e.g. 80 fully-orphaned entity pages) behind a vacuous "ok".
-      const data = await getOrphansData(engine, { includePseudo: false, sourceId: srcId });
+      const data = await getOrphansData(engine, srcId
+        ? { includePseudo: false, sourceId: srcId }
+        : {
+            includePseudo: false,
+            excludeSourcePrefixes: HEALTH_EXCLUDED_SOURCE_PREFIXES,
+            excludeSourceIds: HEALTH_EXCLUDED_SOURCE_IDS,
+          });
       const ratio = data.total_linkable > 0 ? data.total_orphans / data.total_linkable : 0;
       const pct = (ratio * 100).toFixed(0);
+      const scoped = srcId ? '' : ' (curated)';
       const caveat =
         entityCount < 100
           ? ` — low scale (${entityCount} entity pages <100), interpret with caution`
@@ -6194,21 +6261,36 @@ export async function buildChecks(
         checks.push({
           name: 'orphan_ratio',
           status: 'fail',
-          message: `Orphan ratio ${pct}%${inSource} (${data.total_orphans}/${data.total_linkable} linkable pages have no inbound links)${caveat}. ${hint}`,
+          message: `Orphan ratio ${pct}%${scoped}${inSource} (${data.total_orphans}/${data.total_linkable} linkable pages have no inbound links)${caveat}. ${hint}`,
         });
       } else if (ratio > 0.5) {
         checks.push({
           name: 'orphan_ratio',
           status: 'warn',
-          message: `Orphan ratio ${pct}%${inSource} (${data.total_orphans}/${data.total_linkable} linkable pages have no inbound links)${caveat}. ${hint}`,
+          message: `Orphan ratio ${pct}%${scoped}${inSource} (${data.total_orphans}/${data.total_linkable} linkable pages have no inbound links)${caveat}. ${hint}`,
         });
       } else {
         checks.push({
           name: 'orphan_ratio',
           status: 'ok',
-          message: `Orphan ratio ${pct}%${inSource} (${data.total_orphans}/${data.total_linkable} linkable pages)${caveat}`,
+          message: `Orphan ratio ${pct}%${scoped}${inSource} (${data.total_orphans}/${data.total_linkable} linkable pages)${caveat}`,
         });
       }
+    }
+    if (!srcId) {
+      const archiveData = await getOrphansData(engine, {
+        includePseudo: false,
+        includeSourcePrefixes: ARCHIVE_ORPHAN_SOURCE_PREFIXES,
+      });
+      const archiveRatio =
+        archiveData.total_linkable > 0 ? archiveData.total_orphans / archiveData.total_linkable : 0;
+      checks.push({
+        name: 'archive_orphan_ratio',
+        status: 'info',
+        message:
+          `Archive orphan ratio ${(archiveRatio * 100).toFixed(1)}% ` +
+          `(${archiveData.total_orphans}/${archiveData.total_linkable} linkable pages, birdclaw, informational)`,
+      });
     }
   } catch {
     checks.push({ name: 'orphan_ratio', status: 'warn', message: 'Could not check orphan ratio' });
@@ -7745,7 +7827,8 @@ function outputResults(checks: Check[], json: boolean): boolean {
   }
 
   for (const c of report.checks) {
-    const icon = c.status === 'ok' ? 'OK' : c.status === 'warn' ? 'WARN' : 'FAIL';
+    const icon =
+      c.status === 'ok' ? 'OK' : c.status === 'info' ? 'INFO' : c.status === 'warn' ? 'WARN' : 'FAIL';
     console.log(`  [${icon}] ${c.name}: ${c.message}`);
     if (c.issues) {
       for (const issue of c.issues) {

@@ -37,6 +37,41 @@ export interface OrphanResult {
   excluded: number;
 }
 
+export const HEALTH_EXCLUDED_SOURCE_PREFIXES = ['birdclaw', 'fused-id-', 'test/', 'atoms'];
+export const HEALTH_EXCLUDED_SOURCE_IDS = ['gbrain-infrastructure', 'mintbook-web'];
+export const ARCHIVE_ORPHAN_SOURCE_PREFIXES = ['birdclaw'];
+
+// --- Filter constants ---
+
+/** Slug suffixes that are always auto-generated root files */
+const AUTO_SUFFIX_PATTERNS = ['/_index', '/log'];
+
+/** Page slugs that are pseudo-pages by convention */
+const PSEUDO_SLUGS = new Set(['_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude']);
+
+/** Slug segment that marks raw sources */
+const RAW_SEGMENT = '/raw/';
+
+/** Slug prefixes where no inbound links is expected */
+const DENY_PREFIXES = [
+  'output/',
+  'dashboards/',
+  'scripts/',
+  'templates/',
+  'openclaw/config/',
+];
+
+/** First slug segments where no inbound links is expected */
+const FIRST_SEGMENT_EXCLUSIONS = new Set([
+  'scratch',
+  'thoughts',
+  'catalog',
+  'entities',
+  'raw',
+  'atoms',
+  'skills',
+]);
+
 // --- Filter logic ---
 
 /**
@@ -89,7 +124,14 @@ export async function queryOrphanPages(
  */
 export async function findOrphans(
   engine: BrainEngine,
-  opts: { includePseudo?: boolean; sourceId?: string; sourceIds?: string[] } = {},
+  opts: {
+    includePseudo?: boolean;
+    sourceId?: string;
+    sourceIds?: string[];
+    includeSourcePrefixes?: string[];
+    excludeSourcePrefixes?: string[];
+    excludeSourceIds?: string[];
+  } = {},
 ): Promise<OrphanResult> {
   const includePseudo = !!opts.includePseudo;
   // v0.41.29.0: `sourceId` (scalar, from `--source` + single-source MCP
@@ -99,6 +141,13 @@ export async function findOrphans(
   const sourceId = opts.sourceId;
   const sourceIds =
     opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : undefined;
+  const includeSourcePrefixes = opts.includeSourcePrefixes?.filter(Boolean) ?? [];
+  const excludeSourcePrefixes = opts.excludeSourcePrefixes?.filter(Boolean) ?? [];
+  const excludeSourceIds = opts.excludeSourceIds?.filter(Boolean) ?? [];
+  const hasPrefixScope =
+    includeSourcePrefixes.length > 0 ||
+    excludeSourcePrefixes.length > 0 ||
+    excludeSourceIds.length > 0;
   // The NOT EXISTS anti-join over pages × links can take seconds on 50K-page
   // brains. Heartbeat every second so agents see the scan is alive. Keyset
   // pagination was considered and rejected: without an index on
@@ -112,9 +161,63 @@ export async function findOrphans(
   let excludedAll: number;
   const overrides = includePseudo ? undefined : await loadOrphanPolicyOverrides(engine);
   try {
-    allOrphans = await engine.findOrphanPages(
-      sourceIds ? { sourceIds } : sourceId ? { sourceId } : undefined,
-    );
+    const buildSourceClause = (alias: string, params: unknown[]): string => {
+      const col = `${alias}.source_id`;
+      const clauses: string[] = [];
+      if (sourceIds) {
+        params.push(sourceIds);
+        clauses.push(`${col} = ANY($${params.length}::text[])`);
+      } else if (sourceId) {
+        params.push(sourceId);
+        clauses.push(`${col} = $${params.length}`);
+      }
+      if (includeSourcePrefixes.length > 0) {
+        const includeParts: string[] = [];
+        for (const prefix of includeSourcePrefixes) {
+          params.push(`${escapeLikePrefix(prefix)}%`);
+          includeParts.push(`${col} LIKE $${params.length} ESCAPE '\\'`);
+        }
+        clauses.push(`(${includeParts.join(' OR ')})`);
+      }
+      for (const prefix of excludeSourcePrefixes) {
+        params.push(`${escapeLikePrefix(prefix)}%`);
+        clauses.push(`${col} NOT LIKE $${params.length} ESCAPE '\\'`);
+      }
+      if (excludeSourceIds.length > 0) {
+        for (const id of excludeSourceIds) {
+          params.push(id);
+          clauses.push(`${col} <> $${params.length}`);
+        }
+      }
+      return clauses.length > 0 ? ` AND ${clauses.join(' AND ')}` : '';
+    };
+
+    if (hasPrefixScope) {
+      const orphanParams: unknown[] = [];
+      const orphanScope = buildSourceClause('p', orphanParams);
+      allOrphans = await engine.executeRaw<{ slug: string; title: string; domain: string | null }>(
+        `SELECT
+           p.slug,
+           COALESCE(p.title, p.slug) AS title,
+           p.frontmatter->>'domain' AS domain
+         FROM pages p
+         WHERE p.deleted_at IS NULL
+           ${orphanScope}
+           AND NOT EXISTS (
+             SELECT 1
+             FROM links l
+             JOIN pages src ON src.id = l.from_page_id
+             WHERE l.to_page_id = p.id
+               AND src.deleted_at IS NULL
+           )
+         ORDER BY p.slug`,
+        orphanParams,
+      );
+    } else {
+      allOrphans = await engine.findOrphanPages(
+        sourceIds ? { sourceIds } : sourceId ? { sourceId } : undefined,
+      );
+    }
     // v0.41.29.0 (Codex F6): correct the `total_linkable` denominator.
     // Enumerate ALL live pages (scoped) and count excluded-by-slug across
     // the WHOLE set — not just among orphans. The old
@@ -123,17 +226,10 @@ export async function findOrphans(
     // total_linkable and suppressing orphan warnings. `getAllSlugs` is NOT
     // used here because it does not filter soft-deleted rows; `total` must
     // match `findOrphanPages`'s `deleted_at IS NULL` candidate universe.
-    let scopeClause = '';
     const liveParams: unknown[] = [];
-    if (sourceIds) {
-      liveParams.push(sourceIds);
-      scopeClause = ` AND source_id = ANY($${liveParams.length}::text[])`;
-    } else if (sourceId) {
-      liveParams.push(sourceId);
-      scopeClause = ` AND source_id = $${liveParams.length}`;
-    }
+    const scopeClause = buildSourceClause('p', liveParams);
     const liveRows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages WHERE deleted_at IS NULL${scopeClause}`,
+      `SELECT p.slug FROM pages p WHERE p.deleted_at IS NULL${scopeClause}`,
       liveParams,
     );
     total = liveRows.length;
@@ -167,6 +263,10 @@ export async function findOrphans(
     total_pages: total,
     excluded,
   };
+}
+
+function escapeLikePrefix(prefix: string): string {
+  return prefix.replace(/[\\%_]/g, (m) => `\\${m}`);
 }
 
 /**

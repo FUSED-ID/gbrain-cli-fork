@@ -25,6 +25,7 @@ export interface OnboardCheckResult {
     name: string;
     status: 'ok' | 'warn' | 'fail';
     message: string;
+    details?: Record<string, unknown>;
   };
   remediations: RemediationStep[];
 }
@@ -125,7 +126,12 @@ export async function checkEntityLinkCoverage(
 
   if (totalEntities === 0) {
     return {
-      check: { name: 'entity_link_coverage', status: 'ok', message: 'No entity pages — coverage check vacuous' },
+      check: {
+        name: 'entity_link_coverage',
+        status: 'ok',
+        message: 'No entity pages — coverage check vacuous',
+        details: { coverage: 1, linked_count: 0, sample_size: 0, total_entities: 0 },
+      },
       remediations: [],
     };
   }
@@ -160,18 +166,13 @@ export async function checkEntityLinkCoverage(
   const sampleNote = useSample ? ` (sampled ${samplePct.toFixed(1)}%)` : '';
 
   const remediations: RemediationStep[] = [];
-  let status: 'ok' | 'warn' | 'fail' = 'ok';
+  let status = classifyEntityLinkCoverage(coverage);
   let message: string;
 
-  // v0.41.18.0: warn-only, never fail. Empty entity link coverage is "needs
-  // work" not "broken" — doctor's exit code should not flip from a fresh
-  // brain with entity pages but no auto-extracted links yet. Fail status
-  // would break `gbrain doctor exits 0` contract; the recommendation
-  // surfaces the same fix via the onboard plan either way.
+  // RED-eligible doctor gate: fail <60%, warn <70%, ok >=70%.
   if (coverage >= 0.7) {
     message = `Coverage ${pct}% ± ${ciPct}%${sampleNote}`;
-  } else if (coverage >= 0.4) {
-    status = 'warn';
+  } else if (coverage >= 0.6) {
     message = `Coverage ${pct}% ± ${ciPct}% (target 70%)${sampleNote}`;
     remediations.push(makeRemediationStep({
       id: 'onboard.extract_ner_links',
@@ -184,7 +185,6 @@ export async function checkEntityLinkCoverage(
       status: 'remediable',
     }));
   } else {
-    status = 'warn';
     message = `Coverage ${pct}% ± ${ciPct}% (target 70%)${sampleNote}`;
     remediations.push(makeRemediationStep({
       id: 'onboard.extract_ner_links',
@@ -198,9 +198,18 @@ export async function checkEntityLinkCoverage(
     }));
   }
   return {
-    check: { name: 'entity_link_coverage', status, message },
+    check: {
+      name: 'entity_link_coverage',
+      status,
+      message,
+      details: { coverage, linked_count: linkedCount, sample_size: sampleSize, total_entities: totalEntities },
+    },
     remediations,
   };
+}
+
+export function classifyEntityLinkCoverage(coverage: number): 'ok' | 'warn' | 'fail' {
+  return coverage >= 0.7 ? 'ok' : coverage >= 0.6 ? 'warn' : 'fail';
 }
 
 /**
