@@ -3789,10 +3789,23 @@ const find_orphans: Operation = {
       type: 'boolean',
       description: 'Include auto-generated and pseudo pages (default: false)',
     },
+    curated: {
+      type: 'boolean',
+      description: 'Exclude health_excluded archive/test/infrastructure source prefixes for health metrics',
+    },
+    archive: {
+      type: 'boolean',
+      description: 'Restrict to the birdclaw archive source family for informational health metrics',
+    },
   },
   scope: 'read',
   handler: async (ctx, p) => {
-    const { findOrphans } = await import('../commands/orphans.ts');
+    const {
+      findOrphans,
+      HEALTH_EXCLUDED_SOURCE_PREFIXES,
+      HEALTH_EXCLUDED_SOURCE_IDS,
+      ARCHIVE_ORPHAN_SOURCE_PREFIXES,
+    } = await import('../commands/orphans.ts');
     // v0.41.29.0 (Codex F8): scope by the caller's source (ctx.sourceId /
     // ctx.auth.allowedSources) via the canonical sourceScopeOpts ladder.
     // Pre-fix, find_orphans returned brain-wide orphans regardless of a
@@ -3801,10 +3814,31 @@ const find_orphans: Operation = {
     // orphans --source` instead (ctx.remote === false → empty scope here).
     return findOrphans(ctx.engine, {
       includePseudo: (p.include_pseudo as boolean) || false,
+      ...((p.curated as boolean)
+        ? {
+            excludeSourcePrefixes: HEALTH_EXCLUDED_SOURCE_PREFIXES,
+            excludeSourceIds: HEALTH_EXCLUDED_SOURCE_IDS,
+          }
+        : {}),
+      ...((p.archive as boolean)
+        ? { includeSourcePrefixes: ARCHIVE_ORPHAN_SOURCE_PREFIXES }
+        : {}),
       ...sourceScopeOpts(ctx),
     });
   },
   cliHints: { name: 'orphans', hidden: true },
+};
+
+const get_entity_link_coverage: Operation = {
+  name: 'get_entity_link_coverage',
+  description: 'Return the entity_link_coverage doctor check over inbound links.',
+  params: {},
+  scope: 'read',
+  handler: async (ctx) => {
+    const { checkEntityLinkCoverage } = await import('./onboard/checks.ts');
+    return (await checkEntityLinkCoverage(ctx.engine)).check;
+  },
+  cliHints: { hidden: true },
 };
 
 // --- v0.36.1.0 (T7): calibration profile read op ---
@@ -6199,7 +6233,7 @@ export const operations: Operation[] = [
   // v0.38 Slice 3: remote-callable agent dispatch with OAuth-bound trust boundary
   submit_agent,
   // Orphans
-  find_orphans,
+  find_orphans, get_entity_link_coverage,
   // v0.36.1.0 (T7) — Hindsight calibration wave: read profile via MCP
   get_calibration_profile,
   // v0.28: Takes + think
