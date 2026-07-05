@@ -20,7 +20,7 @@ import { VERSION } from '../version.ts';
 
 export interface RemoteCheck {
   name: string;
-  status: 'ok' | 'warn' | 'fail';
+  status: 'ok' | 'info' | 'warn' | 'fail';
   message: string;
   detail?: Record<string, unknown>;
 }
@@ -234,6 +234,8 @@ export async function collectRemoteDoctorReport(
   // is a `read` scope op so even minimal-scope thin-clients can call it.
   if (!skipProbe) {
     checks.push(await runOrphanRatioCheck(config));
+    checks.push(await runArchiveOrphanRatioCheck(config));
+    checks.push(await runEntityLinkCoverageCheck(config));
   }
 
   // 6. v0.31.11: thin-client version-drift check. Calls get_brain_identity
@@ -279,7 +281,7 @@ export async function runOrphanRatioCheck(config: GBrainConfig): Promise<RemoteC
     const raw = await callRemoteTool(
       config,
       'find_orphans',
-      { include_pseudo: false },
+      { include_pseudo: false, curated: true },
       { timeoutMs: 5000 },
     );
     data = unpackToolResult<OrphanData>(raw);
@@ -325,10 +327,67 @@ export async function runOrphanRatioCheck(config: GBrainConfig): Promise<RemoteC
     };
   }
   return {
-    name: 'orphan_ratio',
-    status: 'ok',
-    message: `Orphan ratio ${pct}% (${data.total_orphans}/${entityCount} linkable pages)`,
+      name: 'orphan_ratio',
+      status: 'ok',
+      message: `Orphan ratio ${pct}% (${data.total_orphans}/${entityCount} linkable pages)`,
   };
+}
+
+export async function runArchiveOrphanRatioCheck(config: GBrainConfig): Promise<RemoteCheck> {
+  type OrphanData = {
+    total_orphans: number;
+    total_linkable: number;
+  };
+  let data: OrphanData;
+  try {
+    const raw = await callRemoteTool(
+      config,
+      'find_orphans',
+      { include_pseudo: false, archive: true },
+      { timeoutMs: 5000 },
+    );
+    data = unpackToolResult<OrphanData>(raw);
+  } catch (e) {
+    return {
+      name: 'archive_orphan_ratio',
+      status: 'info',
+      message: 'archive_orphan_ratio: could not query remote (informational)',
+      detail: { network_error: e instanceof Error ? e.message : String(e) },
+    };
+  }
+  const ratio = data.total_linkable > 0 ? data.total_orphans / data.total_linkable : 0;
+  return {
+    name: 'archive_orphan_ratio',
+    status: 'info',
+    message:
+      `Archive orphan ratio ${(ratio * 100).toFixed(1)}% ` +
+      `(${data.total_orphans}/${data.total_linkable} linkable pages, birdclaw, informational)`,
+  };
+}
+
+export async function runEntityLinkCoverageCheck(config: GBrainConfig): Promise<RemoteCheck> {
+  try {
+    const raw = await callRemoteTool(
+      config,
+      'get_entity_link_coverage',
+      {},
+      { timeoutMs: 5000 },
+    );
+    const check = unpackToolResult<RemoteCheck & { details?: Record<string, unknown> }>(raw);
+    return {
+      name: 'entity_link_coverage',
+      status: check.status,
+      message: check.message,
+      ...(check.detail || check.details ? { detail: check.detail ?? check.details } : {}),
+    };
+  } catch (e) {
+    return {
+      name: 'entity_link_coverage',
+      status: 'ok',
+      message: 'entity_link_coverage: could not query remote (informational; not a doctor failure)',
+      detail: { network_error: e instanceof Error ? e.message : String(e) },
+    };
+  }
 }
 
 /**
@@ -558,7 +617,7 @@ function printHumanReport(report: RemoteDoctorReport): void {
   console.log('');
 
   for (const c of report.checks) {
-    const icon = c.status === 'ok' ? '✓' : c.status === 'warn' ? '!' : '✗';
+    const icon = c.status === 'ok' ? '✓' : c.status === 'info' ? 'i' : c.status === 'warn' ? '!' : '✗';
     console.log(`  [${icon}] ${c.name}: ${c.message}`);
   }
   console.log('');

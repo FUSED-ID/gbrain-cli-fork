@@ -23,6 +23,7 @@ import {
   categorizeCheck,
   _resetUnknownCheckWarningsForTest,
 } from '../src/core/doctor-categories.ts';
+import { classifyEntityLinkCoverage } from '../src/core/onboard/checks.ts';
 
 const DOCTOR_TS_PATH = join(import.meta.dir, '..', 'src', 'commands', 'doctor.ts');
 const ONBOARD_CHECKS_TS_PATH = join(import.meta.dir, '..', 'src', 'core', 'onboard', 'checks.ts');
@@ -124,8 +125,8 @@ describe('categorizeCheck', () => {
 
   test('returns the right category for a known brain name', () => {
     expect(categorizeCheck('embedding_provider')).toBe('brain');
-    expect(categorizeCheck('graph_coverage')).toBe('brain');
-    expect(categorizeCheck('sync_freshness')).toBe('brain');
+    expect(categorizeCheck('entity_link_coverage')).toBe('brain');
+    expect(categorizeCheck('archive_orphan_ratio')).toBe('brain');
   });
 
   test('returns the right category for onboard data-quality check names', () => {
@@ -144,12 +145,15 @@ describe('categorizeCheck', () => {
   test('returns the right category for a known ops name', () => {
     expect(categorizeCheck('connection')).toBe('ops');
     expect(categorizeCheck('rls')).toBe('ops');
+    expect(categorizeCheck('sync_freshness')).toBe('ops');
     expect(categorizeCheck('supervisor')).toBe('ops');
   });
 
   test('returns the right category for a known meta name', () => {
     expect(categorizeCheck('schema_version')).toBe('meta');
     expect(categorizeCheck('upgrade_errors')).toBe('meta');
+    expect(categorizeCheck('brain_score')).toBe('meta');
+    expect(categorizeCheck('graph_coverage')).toBe('meta');
   });
 
   test('returns the right category for onboard schema-pack check names without warning', () => {
@@ -187,5 +191,14 @@ describe('categorizeCheck', () => {
     } finally {
       (process.stderr as { write: typeof process.stderr.write }).write = originalWrite;
     }
+  });
+});
+
+describe('entity_link_coverage threshold', () => {
+  test('fails below 0.60, warns below 0.70, and passes at 0.70+', () => {
+    expect(classifyEntityLinkCoverage(0.59)).toBe('fail');
+    expect(classifyEntityLinkCoverage(0.60)).toBe('warn');
+    expect(classifyEntityLinkCoverage(0.69)).toBe('warn');
+    expect(classifyEntityLinkCoverage(0.70)).toBe('ok');
   });
 });
