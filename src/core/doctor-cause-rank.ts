@@ -32,7 +32,7 @@ import {
 /** Minimal structural shape of a doctor Check that ranking needs. */
 export interface RankableCheck {
   name: string;
-  status: 'ok' | 'warn' | 'fail';
+  status: 'ok' | 'info' | 'warn' | 'fail';
   message: string;
   details?: Record<string, unknown>;
 }
@@ -103,7 +103,7 @@ function tierOf(name: string): 'root' | 'symptom' {
  * (deterministic). Returns the full ranked list; the renderer caps to top-N.
  */
 export function rankIssues(checks: RankableCheck[]): RankedIssue[] {
-  const failing = checks.filter((c) => c.status !== 'ok');
+  const failing = checks.filter((c) => c.status === 'warn' || c.status === 'fail');
   const failingNames = new Set(failing.map((c) => c.name));
 
   const issues: RankedIssue[] = failing.map((c) => {
