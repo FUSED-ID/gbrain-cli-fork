@@ -23,6 +23,7 @@ import { zhipu } from './zhipu.ts';
 import { azureOpenAI } from './azure-openai.ts';
 import { zeroentropyai } from './zeroentropyai.ts';
 import { llamaServerReranker } from './llama-server-reranker.ts';
+import { supergrok } from './supergrok.ts'; // FUSED-ID local patch (SuperGrok mesh shim)
 
 const ALL: Recipe[] = [
   openai,
@@ -42,6 +43,7 @@ const ALL: Recipe[] = [
   zhipu,
   azureOpenAI,
   zeroentropyai,
+  supergrok, // FUSED-ID local patch (SuperGrok mesh shim)
 ];
 
 /** Map from `provider:id` key to recipe. */
