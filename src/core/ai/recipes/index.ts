@@ -27,6 +27,7 @@ import { moonshot } from './moonshot.ts';
 import { mistral } from './mistral.ts';
 import { nvidia } from './nvidia.ts';
 import { perplexity } from './perplexity.ts';
+import { supergrok } from './supergrok.ts'; // FUSED-ID local patch (SuperGrok mesh shim)
 
 const ALL: Recipe[] = [
   openai,
@@ -50,6 +51,7 @@ const ALL: Recipe[] = [
   mistral,
   nvidia,
   perplexity,
+  supergrok, // FUSED-ID local patch (SuperGrok mesh shim)
 ];
 
 /** Map from `provider:id` key to recipe. */
