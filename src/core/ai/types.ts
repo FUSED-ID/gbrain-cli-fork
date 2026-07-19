@@ -225,6 +225,11 @@ export interface RerankerTouchpoint {
 
 export interface ChatTouchpoint {
   models: string[];
+  /**
+   * This provider is a user-managed proxy and accepts arbitrary model IDs.
+   * The gateway bypasses the static model allowlist when this is true.
+   */
+  user_provided_models?: true;
   /** Provider returns native function/tool calling. */
   supports_tools: boolean;
   /**
