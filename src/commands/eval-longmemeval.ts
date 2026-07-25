@@ -1,7 +1,7 @@
 /**
  * v0.28.1: `gbrain eval longmemeval <dataset.jsonl>` — public LongMemEval
  * benchmark adapter. Spins up an in-memory PGLite, imports each question's
- * haystack, runs hybridSearch, optionally generates an answer via Anthropic,
+ * haystack, runs hybridSearch, optionally generates an answer via the AI gateway,
  * emits hypothesis JSONL on stdout for downstream `evaluate_qa.py`.
  *
  * Hermetic by design: cli.ts skips connectEngine() when this subcommand
@@ -10,7 +10,6 @@
  */
 
 import { readFileSync, existsSync, openSync, writeSync, closeSync, writeFileSync } from 'fs';
-import Anthropic from '@anthropic-ai/sdk';
 import { withBenchmarkBrain, resetTables } from '../eval/longmemeval/harness.ts';
 import { haystackToPages, type LongMemEvalQuestion } from '../eval/longmemeval/adapter.ts';
 import { renderChatBlock, type ChatSessionForPrompt } from '../eval/longmemeval/sanitize.ts';
@@ -18,7 +17,7 @@ import { importFromContent } from '../core/import-file.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
 import { expandQuery } from '../core/search/expansion.ts';
 import { resolveModel } from '../core/model-config.ts';
-import type { ThinkLLMClient } from '../core/think/index.ts';
+import { tryBuildGatewayClient, type ThinkLLMClient } from '../core/think/index.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { PGLiteEngine } from '../core/pglite-engine.ts';
@@ -33,7 +32,6 @@ import {
   type AliasMap,
 } from '../eval/longmemeval/extract.ts';
 import { extractCandidateEntities } from '../core/think/entity-extract.ts';
-import { splitProviderModelId } from '../core/model-id.ts';
 import { resolveEntitySlugWithSource, type ResolutionSource } from '../core/entities/resolve.ts';
 import { formatTrajectoryBlock } from '../core/trajectory-format.ts';
 
@@ -365,12 +363,12 @@ async function generateAnswer(
 }
 
 export interface RunOpts {
-  /** Inject an Anthropic client for tests; defaults to a fresh SDK client. */
+  /** Inject a ThinkLLMClient for tests; defaults to the provider-neutral gateway. */
   client?: ThinkLLMClient;
   /**
    * v0.40.2.0 — separate stub for the Haiku claim extractor. Tests can
    * isolate "extractor stubbed, answer-gen real" from "extractor real,
-   * answer-gen stubbed". Defaults to the same SDK client when omitted.
+   * answer-gen stubbed". Defaults to a gateway client for the extractor model.
    */
   extractorClient?: ThinkLLMClient;
   /**
@@ -469,24 +467,6 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     fallback: 'sonnet',
   });
 
-  // Wrap Anthropic SDK so its `.messages.create` shape matches ThinkLLMClient.
-  // Same pattern as src/core/think/index.ts:247-249 — EXCEPT think's default
-  // client routes through the gateway, which parses `provider:model` recipe
-  // ids. This eval's client is a raw SDK by design (hermetic, no gateway
-  // dependency), and resolveModel returns RECIPE ids (`anthropic:claude-…`);
-  // passing one through unstripped 404s every answer/extractor call, which
-  // surfaces downstream as all-upstream_error batches in the nightly probe.
-  const toSdkModel = (m: string): string => splitProviderModelId(m).model || m;
-  const realClient = new Anthropic();
-  const client: ThinkLLMClient = runOpts.client ?? {
-    create: (params, callOpts) =>
-      realClient.messages.create({ ...params, model: toSdkModel(params.model) }, callOpts),
-  };
-  // v0.40.2.0 — separate extractor client (defaults to same SDK).
-  const extractorClient: ThinkLLMClient = runOpts.extractorClient ?? {
-    create: (params, callOpts) =>
-      realClient.messages.create({ ...params, model: toSdkModel(params.model) }, callOpts),
-  };
   const trajectoryEnabled = !opts.noTrajectory;
   const extractorModel = trajectoryEnabled
     ? await resolveModel(null, {
@@ -495,6 +475,28 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
         fallback: 'haiku',
       })
     : '';
+
+  // Use the same provider-neutral gateway adapter as `gbrain think`. This is
+  // required for provider:model recipes such as `supergrok:grok-4.3`, whose
+  // OpenAI-compatible shim does not implement Anthropic's /v1/messages.
+  // Injected clients remain the hermetic test seam. A missing default provider
+  // produces an unavailable client so retrieval-only runs still work without
+  // credentials; real answer calls surface as per-question errors below.
+  const unavailableClient: ThinkLLMClient = {
+    create: async () => {
+      throw new Error('no LLM client available for LongMemEval answer generation');
+    },
+  };
+  const client: ThinkLLMClient = runOpts.client
+    ?? await tryBuildGatewayClient(model, { explicitModel: opts.model !== undefined })
+    ?? unavailableClient;
+  // The extractor may use a different model (normally the utility-tier
+  // Anthropic model), so it gets its own gateway-bound client. With trajectory
+  // disabled it is never called and can share the answer client.
+  const extractorClient: ThinkLLMClient = runOpts.extractorClient
+    ?? (trajectoryEnabled
+      ? await tryBuildGatewayClient(extractorModel, { explicitModel: runOpts.extractorModel !== undefined }) ?? unavailableClient
+      : client);
 
   process.stderr.write(`[longmemeval] estimated 20-60 minutes for ${questions.length} questions; use --limit N for shorter runs\n`);
   process.stderr.write(`[longmemeval] connecting in-memory brain...\n`);
