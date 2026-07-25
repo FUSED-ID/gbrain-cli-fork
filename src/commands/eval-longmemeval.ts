@@ -18,6 +18,8 @@ import { hybridSearch } from '../core/search/hybrid.ts';
 import { expandQuery } from '../core/search/expansion.ts';
 import { resolveModel } from '../core/model-config.ts';
 import { tryBuildGatewayClient, type ThinkLLMClient } from '../core/think/index.ts';
+import { BudgetTracker } from '../core/budget/budget-tracker.ts';
+import { withBudgetTracker } from '../core/ai/gateway.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { PGLiteEngine } from '../core/pglite-engine.ts';
@@ -567,14 +569,22 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     }
   };
 
-  if (runOpts.engine) {
-    // Caller owns engine lifecycle (typically a test beforeAll/afterAll).
-    // Do NOT disconnect on exit.
-    await work(runOpts.engine);
-  } else {
-    // Production / CLI path: fresh engine per invocation, disconnect on exit.
-    await withBenchmarkBrain(work);
-  }
+  // Keep the eval on the gateway's standard budget/audit seam. The tracker is
+  // intentionally uncapped here: subscription-routed recipes are unpriced by
+  // the legacy chat pricing table, so they must emit record_unpriced receipts
+  // instead of being rejected by the no-pricing cap gate. Operators can inspect
+  // the ledger and stop before any unexpected priced model is allowed to grow.
+  const tracker = new BudgetTracker({ label: 'eval:longmemeval' });
+  await withBudgetTracker(tracker, async () => {
+    if (runOpts.engine) {
+      // Caller owns engine lifecycle (typically a test beforeAll/afterAll).
+      // Do NOT disconnect on exit.
+      await work(runOpts.engine);
+    } else {
+      // Production / CLI path: fresh engine per invocation, disconnect on exit.
+      await withBenchmarkBrain(work);
+    }
+  });
 
   progress.finish();
   emitter.close();
