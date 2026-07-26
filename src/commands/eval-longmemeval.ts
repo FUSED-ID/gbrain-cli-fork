@@ -692,8 +692,11 @@ async function runOneQuestion(
   const retrievedSessionIds = uniqSessionIds(results);
   // Recall: did any retrieved session match ground-truth answer_session_ids?
   if (q.answer_session_ids && q.answer_session_ids.length > 0) {
-    const gt = new Set(q.answer_session_ids);
-    const hit = retrievedSessionIds.some(s => gt.has(s));
+    // [FUSED-ID local] canonicalize session ids: ingest slugifies `_`->`-` (and
+    // lowercases) so retrieved ids never string-match raw dataset answer_session_ids.
+    const canonSessionId = (x: string) => String(x).toLowerCase().replace(/_/g, "-");
+    const gt = new Set(q.answer_session_ids.map(canonSessionId));
+    const hit = retrievedSessionIds.some(s => gt.has(canonSessionId(s)));
     const bucket = recallByType[q.question_type] ?? (recallByType[q.question_type] = { hit: 0, total: 0 });
     bucket.total++;
     if (hit) bucket.hit++;
@@ -759,8 +762,10 @@ async function runOneQuestion(
   // the dataset has no ground-truth answer_session_ids for this question.
   let recallHit: boolean | undefined;
   if (q.answer_session_ids && q.answer_session_ids.length > 0) {
-    const gt = new Set(q.answer_session_ids);
-    recallHit = retrievedSessionIds.some(s => gt.has(s));
+    // [FUSED-ID local] canonicalize session ids (see recall block above).
+    const canonSessionId = (x: string) => String(x).toLowerCase().replace(/_/g, "-");
+    const gt = new Set(q.answer_session_ids.map(canonSessionId));
+    recallHit = retrievedSessionIds.some(s => gt.has(canonSessionId(s)));
   }
 
   emitter.emit({
