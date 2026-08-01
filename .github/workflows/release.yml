@@ -20,10 +20,10 @@ name: Release
 # src/core/binary-self-update.ts, pinned by test/release-workflow.test.ts.
 
 on:
-  push:
-    branches: [master]
-    paths: [VERSION]
-  workflow_dispatch: {}  # manual first run / backfill of the current VERSION
+  # FUSED-ID fork policy: upstream release automation must never run from a
+  # fork push. Keep an explicit manual dispatch surface for controlled tests
+  # or backfills only.
+  workflow_dispatch: {}
 
 permissions:
   contents: read
