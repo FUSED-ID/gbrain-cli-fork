@@ -2,6 +2,7 @@ import matter from 'gray-matter';
 import { safeLoad as yamlSafeLoad } from 'js-yaml';
 import type { Page, PageType } from './types.ts';
 import { slugifyPath } from './sync.ts';
+import { normalizePipelinePageType } from './pipeline-type-map.ts';
 
 export type ParseValidationCode =
   | 'MISSING_OPEN'
@@ -140,7 +141,7 @@ export function parseMarkdown(
   // `2024-06-01` is legitimate); the NON_STRING_FIELD lint finding below still
   // surfaces the un-quoted field so it can be cleaned up.
   const explicitType = coerceFrontmatterString(frontmatter.type);
-  const type = explicitType || (
+  const type = normalizePipelinePageType(explicitType) || (
     opts?.activePack ? inferTypeFromPack(filePath, opts.activePack) : inferType(filePath)
   );
   // #2446: title precedence is frontmatter `title:` > the body's first H1 >
