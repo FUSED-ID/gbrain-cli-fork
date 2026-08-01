@@ -77,6 +77,16 @@ Content
     expect(parsed.type).toBe('person');
   });
 
+  test.each([
+    ['research-note', 'analysis'],
+    ['contact', 'person'],
+    ['project-artifact', 'document'],
+  ])('canonicalizes retired pipeline type %s -> %s', (legacyType, canonicalType) => {
+    const parsed = parseMarkdown(`---\ntype: ${legacyType}\ntitle: Fixture\n---\nBody\n`);
+    expect(parsed.type).toBe(canonicalType);
+    expect(parsed.typeExplicit).toBe(true);
+  });
+
   test('infers slug from file path', () => {
     const md = `---
 type: concept
