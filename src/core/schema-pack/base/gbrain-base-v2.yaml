@@ -1,9 +1,12 @@
-# gbrain-base-v2 — 15-type DRY/MECE canonical taxonomy
+# gbrain-base-v2 — canonical taxonomy plus corpus compatibility declarations
 #
 # v0.42 (T22) — the response to issue #1479. A production gbrain brain
 # (186K pages) had accreted 94 distinct `pages.type` values in 9 clusters
 # of redundancy. This pack collapses them to 14 canonical types plus
-# `note` as the catch-all (15 total) using subtypes/aliases/mapping_rules.
+# `note` as the catch-all (15 canonical types) using
+# subtypes/aliases/mapping_rules. v1.2 additionally declares the current
+# corpus's intentional operational/document compatibility types so the
+# type-watermark gate measures new accretion rather than known inventory.
 #
 # STANDALONE pack (D11/F1): NO `extends:` field. Declaring inheritance
 # would compose gbrain-base's 24 types on top of the 15 declared here,
@@ -26,8 +29,8 @@
 
 api_version: gbrain-schema-pack-v1
 name: gbrain-base-v2
-version: 1.1.0
-description: 14-type DRY/MECE canonical taxonomy + `note` catch-all, document canonical, and chronicle event/diary types. Successor to gbrain-base. Issue #1479.
+version: 1.2.0
+description: 15 canonical types plus current corpus compatibility declarations; document canonical, chronicle event/diary types, and bounded legacy pipeline mapping. Successor to gbrain-base. Issue #1479.
 gbrain_min_version: 0.42.0
 extends: null
 borrow_from: []
@@ -245,6 +248,106 @@ page_types:
     aliases: []
     extractable: false
     expert_routing: false
+
+  # v1.2 corpus reconciliation (declaration-only). These types are present
+  # in live sources and are intentionally retained for now. This lane does
+  # not retype pages; any future cleanup must list the mapping and receive
+  # GF/LGV approval first. Retired producer spellings are normalized at the
+  # ingestion seam by src/core/pipeline-type-map.ts.
+  - name: thread
+    primitive: media
+  - name: meeting
+    primitive: temporal
+  - name: reference
+    primitive: media
+  - name: meeting-transcript
+    primitive: temporal
+  - name: guide
+    primitive: media
+  - name: architecture
+    primitive: concept
+  - name: topic
+    primitive: concept
+  - name: transcript
+    primitive: temporal
+  - name: article
+    primitive: media
+  - name: extract_receipt
+    primitive: annotation
+  - name: research-note
+    primitive: media
+  - name: index
+    primitive: annotation
+  - name: web-discovery
+    primitive: media
+  - name: author
+    primitive: entity
+  - name: company-brief
+    primitive: media
+  - name: state-checkpoint
+    primitive: temporal
+  - name: capability
+    primitive: concept
+  - name: entity
+    primitive: entity
+  - name: essay
+    primitive: media
+  - name: feedback
+    primitive: annotation
+  - name: policy
+    primitive: concept
+  - name: academic-paper
+    primitive: media
+  - name: codex-handoff
+    primitive: annotation
+  - name: competitive-analysis
+    primitive: media
+  - name: convention
+    primitive: concept
+  - name: decisions
+    primitive: annotation
+  - name: doc
+    primitive: media
+  - name: holding
+    primitive: temporal
+  - name: identity
+    primitive: concept
+  - name: meeting_transcript
+    primitive: temporal
+  - name: meetings
+    primitive: temporal
+  - name: operating-protocol
+    primitive: concept
+  - name: organisation
+    primitive: entity
+  - name: product
+    primitive: entity
+  - name: pipeline-state
+    primitive: temporal
+  - name: place
+    primitive: concept
+  - name: plan
+    primitive: concept
+  - name: project-artifact
+    primitive: media
+  - name: sitrep
+    primitive: temporal
+  - name: social-thread
+    primitive: media
+  - name: source-call
+    primitive: temporal
+  - name: source-document
+    primitive: media
+  - name: source-email
+    primitive: temporal
+  - name: source-meeting
+    primitive: temporal
+  - name: source-message
+    primitive: temporal
+  - name: synthesis
+    primitive: annotation
+  - name: contact
+    primitive: entity
 
 link_types:
   - name: partner_of
