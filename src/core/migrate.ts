@@ -5631,9 +5631,10 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE oauth_clients
         ALTER COLUMN permissions SET DEFAULT '{}'::jsonb;
       ALTER TABLE access_tokens
-        ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{}'::jsonb NOT NULL;
+        ADD COLUMN IF NOT EXISTS permissions JSONB
+          DEFAULT '{"takes_holders":["world"]}'::jsonb NOT NULL;
       ALTER TABLE access_tokens
-        ALTER COLUMN permissions SET DEFAULT '{}'::jsonb;
+        ALTER COLUMN permissions SET DEFAULT '{"takes_holders":["world"]}'::jsonb;
     `,
   },
 ];
