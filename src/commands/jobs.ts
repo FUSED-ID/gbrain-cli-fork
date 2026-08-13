@@ -143,6 +143,20 @@ export function resolveWorkerConcurrency(args: string[], env: NodeJS.ProcessEnv 
   return parsed;
 }
 
+/** Parse the worker job-name allow-list used by M4's bounded drainers. */
+export function parseWorkerOnlyNames(
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): string[] | undefined {
+  const raw = parseFlag(args, '--only') ?? env.GBRAIN_WORKER_ONLY_NAMES;
+  if (raw === undefined) return undefined;
+  const names = [...new Set(raw.split(',').map((name) => name.trim()).filter(Boolean))];
+  if (names.length === 0) {
+    throw new Error('--only must contain at least one comma-separated job name');
+  }
+  return names;
+}
+
 /**
  * #3026: the thin-client `list`/`get` branches receive jobs as parsed JSON
  * off the MCP wire, where every timestamp is an ISO string — but formatJob /
@@ -944,6 +958,7 @@ HANDLER TYPES (built in)
 
       const queueName = parseFlag(args, '--queue') ?? 'default';
       const concurrency = resolveWorkerConcurrency(args);
+      const onlyNames = parseWorkerOnlyNames(args);
       // --max-rss: explicit value wins (including 0 to disable the watchdog).
       // Absent → cgroup-aware auto-size (issue #1678): the flat 2048MB default
       // killed legit embed work (~10GB) on every cycle and produced a silent
@@ -1000,6 +1015,13 @@ HANDLER TYPES (built in)
         queue: queueName, concurrency, maxRssMb, healthCheckInterval,
       });
       await registerBuiltinHandlers(worker, engine);
+      if (onlyNames) {
+        const unknown = onlyNames.filter((name) => !worker.registeredNames.includes(name));
+        if (unknown.length > 0) {
+          throw new Error(`Unknown worker job name(s): ${unknown.join(', ')}`);
+        }
+        worker.keepOnly(onlyNames);
+      }
 
       // Subscribe to self-health failures emitted by the worker. Library code
       // (worker.ts) never calls process.exit directly so it stays embeddable;
@@ -1038,7 +1060,8 @@ HANDLER TYPES (built in)
             : `, health-check: ${Math.round(healthCheckInterval / 1000)}s`)
         : '';
       const niceNote = niceResult ? `, nice: ${formatNice(niceResult.effective ?? niceVal!)}` : '';
-      console.log(`Minion worker started (queue: ${queueName}, concurrency: ${concurrency}${watchdogNote}${healthNote}${niceNote})`);
+      const onlyNote = onlyNames ? `, only: ${onlyNames.join(',')}` : '';
+      console.log(`Minion worker started (queue: ${queueName}, concurrency: ${concurrency}${onlyNote}${watchdogNote}${healthNote}${niceNote})`);
       console.log(`Registered handlers: ${worker.registeredNames.join(', ')}`);
 
       // Register in the live worker registry (issue #1815) so jobs stats / doctor
