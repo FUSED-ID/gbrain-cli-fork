@@ -231,6 +231,19 @@ export class MinionWorker extends EventEmitter {
     this.handlers.set(name, handler);
   }
 
+  /** Remove one handler from this worker's claim set. */
+  unregister(name: string): boolean {
+    return this.handlers.delete(name);
+  }
+
+  /** Restrict this worker to an explicit allow-list of registered handlers. */
+  keepOnly(names: readonly string[]): void {
+    const allowed = new Set(names);
+    for (const name of this.handlers.keys()) {
+      if (!allowed.has(name)) this.handlers.delete(name);
+    }
+  }
+
   /** Get registered handler names (used by claim query). */
   get registeredNames(): string[] {
     return Array.from(this.handlers.keys());
