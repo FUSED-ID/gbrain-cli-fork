@@ -349,6 +349,21 @@ page_types:
   - name: contact
     primitive: entity
 
+  # v-next census additions (2026-08-14). These values are backed by live
+  # pages in the M4 corpus and remain declaration-only in this lane.
+  - name: correspondence
+    primitive: temporal
+  - name: feat
+    primitive: concept
+  - name: hub
+    primitive: concept
+  - name: ingest
+    primitive: annotation
+  - name: meeting-summary
+    primitive: temporal
+  - name: research
+    primitive: media
+
 link_types:
   - name: partner_of
     inverse: partner_of
