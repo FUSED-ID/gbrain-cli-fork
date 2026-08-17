@@ -66,7 +66,7 @@ export interface FactsBackstopCtx {
   remote?: boolean;
   /** Optional entity hints (extract_facts MCP op forwards these). */
   entityHints?: string[];
-  /** Optional visibility tier (default 'private'). extract_facts forwards `world` when caller asks. */
+  /** Optional visibility tier. Absent: resolved from sources.config.facts_visibility (fail-closed to 'private', see resolveFactsVisibility). extract_facts forwards `world` when caller asks; clamped to 'private' for non-federated sources. */
   visibility?: 'private' | 'world';
   /** Override the chat model (extract_facts forwards user's model param when set). */
   model?: string;
@@ -132,6 +132,45 @@ export function __resetBackstopWarningsForTests(): void {
  * `skipped: '...'` envelope (operator visibility lands via PR1 commit 13's
  * ingest_log writer).
  */
+/**
+ * Fused-id 2026-08-17 (L6 recall P1): resolve the visibility tier for facts
+ * absorbed from a source. Remote `recall` is hard-filtered to `world`
+ * (operations.ts recall handler), so facts left `private` are invisible to
+ * every remote MCP caller. Policy lives on the source row, next to the
+ * `federated` flag it depends on:
+ *
+ *   sources.config.facts_visibility = 'world' | 'private'
+ *
+ * FAIL-CLOSED. `world` is honoured only when the source is ALSO
+ * `config.federated === true`. lg-private (federated unset) can never emit
+ * world facts even if someone sets the key on it by mistake. Absent key,
+ * absent source, or any read error resolves to `private` (the pre-patch
+ * behaviour). An explicit `ctx.visibility` from the caller (extract_facts)
+ * still wins, but is clamped to `private` for non-federated sources.
+ */
+export async function resolveFactsVisibility(
+  engine: BrainEngine,
+  sourceId: string,
+  requested?: 'private' | 'world',
+): Promise<'private' | 'world'> {
+  let federated = false;
+  let policy: 'private' | 'world' | undefined;
+  try {
+    const rows = await engine.listAllSources({ includeArchived: true });
+    const row = rows.find((r) => r.id === sourceId);
+    const cfg = (row?.config ?? {}) as Record<string, unknown>;
+    federated = cfg.federated === true;
+    if (cfg.facts_visibility === 'world' || cfg.facts_visibility === 'private') {
+      policy = cfg.facts_visibility;
+    }
+  } catch {
+    return 'private';
+  }
+  if (!federated) return 'private';
+  if (requested) return requested;
+  return policy ?? 'private';
+}
+
 export async function runFactsBackstop(
   parsedPage: ParsedPageInput,
   ctx: FactsBackstopCtx,
@@ -182,7 +221,7 @@ export async function runFactsBackstop(
             source: ctx.source,
             sessionId: ctx.sessionId,
             notabilityFilter: ctx.notabilityFilter ?? 'all',
-            visibility: ctx.visibility ?? 'private',
+            visibility: await resolveFactsVisibility(ctx.engine, ctx.sourceId, ctx.visibility),
             ...(ctx.model ? { model: ctx.model } : {}),
           },
           {
@@ -349,7 +388,7 @@ async function runPipelineWithBody(
   });
 
   const filter = ctx.notabilityFilter ?? 'all';
-  const visibility = ctx.visibility ?? 'private';
+  const visibility = await resolveFactsVisibility(ctx.engine, ctx.sourceId, ctx.visibility);
 
   let inserted = 0;
   let duplicate = 0;
