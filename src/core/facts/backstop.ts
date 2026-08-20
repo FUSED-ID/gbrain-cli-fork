@@ -367,7 +367,7 @@ async function runPipelineWithBody(
   ctx: FactsBackstopCtx,
   abortSignal?: AbortSignal,
 ): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[] }> {
-  const { extractFactsFromTurn } = await import('./extract.ts');
+  const { extractFactsFromTurnWithOutcome } = await import('./extract.ts');
   const { resolveEntitySlug } = await import('../entities/resolve.ts');
   const { cosineSimilarity } = await import('./classify.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
@@ -376,7 +376,21 @@ async function runPipelineWithBody(
     return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [] };
   }
 
-  const facts = await extractFactsFromTurn({
+  // L6-1, 2026-08-20 (LGV ruling: record the reason ONLY).
+  //
+  // This used to call extractFactsFromTurn, a three-line shim that collapses
+  // `{ok:false, reason}` to `[]`. The refusal reason was thrown away here, so a
+  // provider that refused every call still produced a job row reading
+  // `inserted:0, error_text:null, status:completed`. That is exactly how fact
+  // extraction stayed dead from 2026-08-08 to 08-17 without anything noticing:
+  // nine days of "success" over an API key with no credit.
+  //
+  // The typed API already existed. Nothing about job status or retry behaviour
+  // changes here: a refusal still yields zero facts and the job still completes.
+  // The only difference is that the reason is now written where a human or a
+  // gate can find it. Making the job `failed` and therefore retryable against a
+  // paid API is a separate decision and was deliberately NOT taken.
+  const outcome = await extractFactsFromTurnWithOutcome({
     turnText: input.turnText,
     sessionId: ctx.sessionId,
     entityHints: ctx.entityHints,
@@ -386,6 +400,22 @@ async function runPipelineWithBody(
     abortSignal,
     model: ctx.model,
   });
+
+  if (!outcome.ok) {
+    const { writeFactsAbsorbLog } = await import('./absorb-log.ts');
+    const detail = `extract refused: ${outcome.reason}` +
+      ('message' in outcome && outcome.message ? ` (${String(outcome.message)})` : '');
+    console.error(`[facts] ${detail} (source=${ctx.sourceId}, session=${ctx.sessionId})`);
+    await writeFactsAbsorbLog(
+      ctx.engine,
+      ctx.sessionId ?? 'unknown-session',
+      'gateway_error',
+      detail,
+      ctx.sourceId,
+    );
+  }
+
+  const facts = outcome.ok ? outcome.facts : [];
 
   const filter = ctx.notabilityFilter ?? 'all';
   const visibility = await resolveFactsVisibility(ctx.engine, ctx.sourceId, ctx.visibility);
