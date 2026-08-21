@@ -27,6 +27,10 @@ function getConfigPath() { return configPath(); }
 
 export interface GBrainConfig {
   engine: 'postgres' | 'pglite';
+  /** File-plane hook-lane keys (read by engine-free hook/push children).
+   * `gbrain config set` routes these two dotted keys here, not to the DB. */
+  push?: { allow_unverified_remote?: boolean };
+  hooks?: { stop_push_debounce_min?: number | string };
   database_url?: string;
   database_path?: string;
   openai_api_key?: string;
@@ -114,6 +118,17 @@ export interface GBrainConfig {
   provider_base_urls?: Record<string, string>;
   /** Optional chat request providerOptions overrides keyed by recipe id or "recipe:modelId". */
   provider_chat_options?: Record<string, Record<string, unknown>>;
+  /**
+   * MEMORY_VERBS v1 (Cathedral 1): default MCP tool surface for `gbrain serve`.
+   * 'verbs' = exactly the 5 protocol verbs (the quickstart surface);
+   * 'full' (default) = every operation. The `--surface` flag overrides per-run.
+   */
+  mcp_surface?: 'verbs' | 'full';
+  /**
+   * MEMORY_VERBS v1 [D6C]: ISO timestamp stamped by `gbrain init` so
+   * `gbrain protocol stats` can derive real TTHW (install → first verb call).
+   */
+  protocol_installed_at?: string;
   /**
    * Optional storage backend config (S3/Supabase/local). Shape matches
    * `StorageConfig` in `./storage.ts`. Typed as `unknown` here to avoid
@@ -948,6 +963,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'chat_model',
   'chat_fallback_chain',
   'provider_base_urls',
+  // MEMORY_VERBS v1 (Cathedral 1)
+  'mcp_surface',
+  'protocol_installed_at',
   'provider_chat_options',
   'storage',
   'eval',
@@ -970,6 +988,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'agent.use_gateway_loop',
   // #2778: per-turn output-token cap for the subagent loop (default 8192).
   'agent.max_output_tokens',
+  // File-plane bootstrap hook-lane keys (routed to ~/.gbrain/config.json by
+  // `config set` — engine-free hook/push children read loadConfigFileOnly).
+  'push.allow_unverified_remote',
+  'hooks.stop_push_debounce_min',
   // DB-plane (v0.32.3 search modes + related)
   'search.mode',
   'search.cache.enabled',
@@ -1010,6 +1032,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'facts.extraction_model',
   // #2113: output-token cap for the per-turn facts extractor (default 4000).
   'facts.extraction_max_tokens',
+  // [ENG-8] Brain-level default visibility for facts writes when the caller
+  // didn't specify one: 'private' (default) | 'world'. Resolved by
+  // src/core/facts/visibility.ts; explicit caller values always win.
+  'facts.default_visibility',
   // Conversation parser LLM fallback. Deliberately register the exact key,
   // not a conversation_parser.* prefix: fallback is the only live opt-in
   // consumer, while the polish scaffold remains unwired.
@@ -1079,6 +1105,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // operator had to discover --force by reading source. Same class as the
   // spend-controls registration above.
   'auto_chronicle',
+  // Auto-link toggle read by the put_page post-hook (link-extraction.ts),
+  // reconcile-links, and sweep. The documented off-switch is `gbrain config
+  // set auto_link false` — same unregistered-key class as auto_chronicle.
+  'auto_link',
   // #2606: chronicle judge output-token cap (default 4000). Event-dense
   // pages overflowed the old hardcoded 1500 and were misrecorded as
   // no_events; the cap is now configurable and truncation is surfaced.
@@ -1093,9 +1123,20 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'orphans.exclude_slugs',
   'sync.cost_gate_min_usd',
   'sync.federated_v2',
+  // #2179: clamp window for DCR-requested per-client token TTLs. Read by
+  // `gbrain serve --http` at startup; unset min defaults to 300s, unset max
+  // defaults fail-closed to max(--token-ttl, min).
+  'oauth.dcr_ttl_min_seconds',
+  'oauth.dcr_ttl_max_seconds',
   'embed.backfill_cooldown_min',
   'embed.backfill_max_usd_per_source_24h',
   'embed.backfill_max_usd',
+  // Brain-level default source. Read by source-resolver.ts tier 5
+  // (`engine.getConfig('sources.default')`) and written by
+  // `gbrain sources default <id>`. Listed here so `gbrain config set`
+  // stops claiming "Nothing in gbrain reads this" for a key the resolver
+  // reads on every unqualified call.
+  'sources.default',
 ];
 
 /**

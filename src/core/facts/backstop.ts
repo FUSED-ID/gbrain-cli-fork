@@ -213,6 +213,10 @@ export async function runFactsBackstop(
           .digest('hex')
           .slice(0, 16);
         const minions = new MinionQueue(ctx.engine);
+        // [ENG-8] Caller-unset visibility resolves the brain default HERE
+        // (not in the long-lived worker) so the durable payload carries the
+        // visibility that was in force at write time.
+        const { resolveDefaultVisibility } = await import('./visibility.ts');
         await minions.add(
           'facts-absorb',
           {
