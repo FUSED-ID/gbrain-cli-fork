@@ -294,6 +294,15 @@ export interface PageFilters {
   /** ISO date string (YYYY-MM-DD or full ISO timestamp). Filter to pages updated_at > value. */
   updated_after?: string;
   /**
+   * v0.45.7 — keyset cursor for deterministic pagination through pages sharing
+   * one `updated_at`. `WHERE p.updated_at > ts OR (p.updated_at = ts AND
+   * p.slug > slug)`. Supersedes `updated_after` when set; pair with
+   * `sort: 'updated_asc'` (total order). Used by the `delta` verb's session
+   * cursor so a >limit same-timestamp cluster pages cleanly instead of
+   * livelocking. `slug` empty ⇒ start of the `ts` bucket.
+   */
+  updatedAfterKeyset?: { updatedAt: string; slug: string };
+  /**
    * Prefix-match filter on slug. Implemented as `WHERE slug LIKE prefix || '%'`
    * in both engines so it uses the (source_id, slug) UNIQUE constraint's btree
    * index for efficient range scans on large brains. Used by storage-tiering
@@ -349,7 +358,12 @@ export interface GetPageOpts {
 /** v0.29: literal ORDER BY fragments for the PageFilters.sort enum. Whitelisted. */
 export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
   updated_desc: 'p.updated_at DESC',
-  updated_asc:  'p.updated_at ASC',
+  // v0.45.7: slug tiebreaker makes updated_asc a TOTAL order, so keyset
+  // pagination (updatedAfterKeyset) can page deterministically through a
+  // cluster of pages sharing one updated_at (bulk syncs stamp identical
+  // now() across a transaction). Without the tiebreaker, rows at the same
+  // timestamp order arbitrarily and a >limit tie cluster is unpageable.
+  updated_asc:  'p.updated_at ASC, p.slug ASC',
   created_desc: 'p.created_at DESC',
   slug:         'p.slug ASC',
 };
@@ -607,6 +621,29 @@ export interface StaleChunkRow {
   source_id: string;
   /** v0.33.3: page_id for cursor pagination in listStaleChunks. */
   page_id: number;
+}
+
+/**
+ * A page with non-empty `compiled_truth` and/or `timeline` (both are
+ * chunked independently by the healer) but ZERO `content_chunks` rows,
+ * returned by `listChunklessPagesWithContent`. `embed --stale` scans
+ * `content_chunks` (embedding IS NULL) — a page written directly via
+ * `putPage` that never went through the chunking step (e.g. an
+ * enrichment-generated entity stub) has no chunk row to go stale, so it is
+ * invisible to that scan forever. This is the safety-net detection: find
+ * such pages so `embed --stale` can chunk them and fold the resulting
+ * NULL-embedding chunks into the same run.
+ *
+ * Quarantined and `embed_skip` pages are excluded by the underlying query
+ * (`src/core/quarantine.ts` / `src/core/embed-skip.ts`) — both are
+ * INTENTIONALLY chunkless by design (content-quality gate), not drift.
+ */
+export interface ChunklessPageRow {
+  id: number;
+  slug: string;
+  source_id: string;
+  compiled_truth: string;
+  timeline: string;
 }
 
 /**
