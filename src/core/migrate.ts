@@ -5620,6 +5620,27 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 126,
+    name: 'session_context_state',
+    // Upstream v0.45.7 / v0.45.12 ambient recall state. Keep this upstream
+    // slot intact so fork-local migrations remain append-only after rebase.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS session_context_state (
+        source_id         TEXT NOT NULL,
+        client_id         TEXT NOT NULL DEFAULT 'local',
+        session_id        TEXT NOT NULL,
+        standing_entities JSONB NOT NULL DEFAULT '[]'::jsonb,
+        surfaced_slugs    JSONB NOT NULL DEFAULT '[]'::jsonb,
+        last_wake_at      TIMESTAMPTZ,
+        updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (source_id, client_id, session_id)
+      );
+      CREATE INDEX IF NOT EXISTS session_context_state_updated_idx
+        ON session_context_state (updated_at);
+    `,
+  },
+  {
+    version: 127,
     name: 'oauth_and_access_token_permissions',
     // FUSED-ID privacy gate: OAuth clients and legacy bearer tokens may carry
     // per-credential permissions, including `takes_holders`. This fork-local
