@@ -47,3 +47,26 @@ describe('migration v126/v127 schema coverage', () => {
     ]);
   });
 });
+
+// #D10-live drift case: a brain stamped past v126 without the table gets the
+// table back on the next runMigrations pass, even when nothing is pending.
+import { runMigrations } from '../src/core/migrate.ts';
+
+describe('session_context_state self-heal (#D10-live)', () => {
+  test('recreates the table on a stamped-ahead brain with no pending migrations', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    // Simulate the live M4 drift: version counter ahead, table missing.
+    await engine.executeRaw(`DROP TABLE IF EXISTS session_context_state`, []);
+    const before = await engine.executeRaw<{ reg: string | null }>(
+      `SELECT to_regclass('session_context_state')::text AS reg`, []);
+    expect(before[0]?.reg).toBeNull();
+    const res = await runMigrations(engine);
+    expect(res.applied).toBe(0); // nothing pending — self-heal path only
+    const after = await engine.executeRaw<{ reg: string | null }>(
+      `SELECT to_regclass('session_context_state')::text AS reg`, []);
+    expect(after[0]?.reg).toBe('session_context_state');
+    await engine.disconnect();
+  }, 120_000);
+});
