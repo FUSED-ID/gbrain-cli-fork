@@ -9,6 +9,7 @@ import {
   isRetryableConnError,
 } from './retry-matcher.ts';
 import { repairTimelineDedupIndex } from './timeline-dedup-repair.ts';
+import { repairSessionContextState } from './session-context-selfheal.ts';
 
 /**
  * Schema migrations — run automatically on initSchema().
@@ -6011,6 +6012,16 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
         `→ page_id,date,summary,source` +
         (r.collapsedDuplicates > 0 ? ` (collapsed ${r.collapsedDuplicates} duplicate row(s))` : ''),
       );
+    }
+  } catch { /* best-effort; doctor reports the drift if this couldn't run */ }
+
+  // #D10-live: session_context_state self-heal (same disease as #2038 —
+  // fork/upstream slot collision left brains stamped past v126 without the
+  // table). Keyed off the artifact, runs on every pass, idempotent DDL.
+  try {
+    const s = await repairSessionContextState(engine);
+    if (s.repaired) {
+      console.error('[migrate] healed session_context_state drift (#D10-live): table created (upstream v126 body)');
     }
   } catch { /* best-effort; doctor reports the drift if this couldn't run */ }
 
