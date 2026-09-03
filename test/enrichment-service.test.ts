@@ -1,5 +1,9 @@
 import { describe, test, expect } from 'bun:test';
 import { slugifyEntity, entityPagePath, extractEntities } from '../src/core/enrichment-service.ts';
+import { resolvePrivateWriteSource } from '../src/core/private-source-routing.ts';
+import { mkdtempSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
 describe('enrichment-service', () => {
   describe('slugifyEntity', () => {
@@ -122,6 +126,26 @@ describe('enrichment-service', () => {
   });
 
   describe('enrichEntity (mock)', () => {
+    test('private-classified person routes to the private source', async () => {
+      const privateDir = mkdtempSync(join(tmpdir(), 'gbrain-enrich-routing-'));
+      writeFileSync(join(privateDir, '_brain-filing-rules.md'), '# rules\n');
+      writeFileSync(join(privateDir, '_excluded-people.md'), '## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `private-person*` | Private Person |\n');
+      const route = await resolvePrivateWriteSource({
+        getConfig: async () => null,
+        executeRaw: async () => [
+          { id: 'default', name: 'Default', local_path: null, last_commit: null, last_sync_at: null, config: {}, created_at: new Date() },
+          { id: 'lg-private', name: 'Private', local_path: privateDir, last_commit: null, last_sync_at: null, config: {}, created_at: new Date() },
+        ],
+        getPage: async () => null,
+      } as any, {
+        requestedSourceId: 'default',
+        slug: 'people/private-person',
+        entityName: 'Private Person',
+        entityType: 'person',
+      });
+      expect(route.sourceId).toBe('lg-private');
+    });
+
     test('module exports enrichEntity function', async () => {
       const mod = await import('../src/core/enrichment-service.ts');
       expect(typeof mod.enrichEntity).toBe('function');
