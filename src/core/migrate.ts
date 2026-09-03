@@ -10,6 +10,7 @@ import {
 } from './retry-matcher.ts';
 import { repairTimelineDedupIndex, repairLegacyTimelineSourceRows } from './timeline-dedup-repair.ts';
 import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
+import { repairOauthV127Artifacts } from './oauth-v127-selfheal.ts';
 
 /**
  * When true, per-migration explanatory notices (e.g. the v123/v124 "here is
@@ -6501,6 +6502,43 @@ export const MIGRATIONS: Migration[] = [
         WHERE tombstoned;
     `,
   },
+  {
+    // RENUMBERED 2026-09-09, from 146 to 147.
+    //
+    // This migration has now collided TWICE. It began at fork v127, moved to
+    // 146 to escape upstream's oauth surface migration, and upstream then
+    // shipped its own 146 (extract_atoms_transcript_state_table) four days
+    // later. The live brain was stamped 146 with THIS DDL applied, so a bump
+    // that left both at 146 would have made the runner skip upstream's 146
+    // silently: runMigrations takes `m.version > current`, and current was
+    // already 146. The transcript fix would never have run and nothing would
+    // have reported an error.
+    //
+    // The durable fix is a fork-reserved number band so a fork migration can
+    // never take a number upstream will use. That is a separate change and it
+    // is deliberately not made here.
+    //
+    // Safe to re-run: every statement is ADD COLUMN IF NOT EXISTS or a DEFAULT
+    // reassertion, so applying it again on a brain that already has the columns
+    // is a no-op. That is what lets the live stamp roll back to 145 and both
+    // 146 and 147 run in order.
+    version: 147,
+    name: 'oauth_and_access_token_permissions',
+    // FUSED-ID permissions formerly occupied fork v127, colliding with
+    // upstream's oauth surface and minion queue index migration.
+    idempotent: true,
+    sql: `
+      ALTER TABLE oauth_clients
+        ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{}'::jsonb NOT NULL;
+      ALTER TABLE oauth_clients
+        ALTER COLUMN permissions SET DEFAULT '{}'::jsonb;
+      ALTER TABLE access_tokens
+        ADD COLUMN IF NOT EXISTS permissions JSONB
+          DEFAULT '{"takes_holders":["world"]}'::jsonb NOT NULL;
+      ALTER TABLE access_tokens
+        ALTER COLUMN permissions SET DEFAULT '{"takes_holders":["world"]}'::jsonb;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -6872,6 +6910,15 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
         `(source_id, slug) group(s) exist — page upserts will keep failing until the ` +
         `duplicates are resolved (#550). See \`gbrain doctor\`.`,
       );
+    }
+  } catch { /* best-effort; doctor reports the drift if this couldn't run */ }
+
+  // A fork-era v127 stamp can skip upstream v127's surface/index artifacts.
+  // Probe and repair by artifact presence, including when no versions are pending.
+  try {
+    const r = await repairOauthV127Artifacts(engine);
+    if (r.repaired) {
+      console.error('[migrate] healed upstream v127 oauth surface/minion queue artifacts');
     }
   } catch { /* best-effort; doctor reports the drift if this couldn't run */ }
 

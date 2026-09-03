@@ -64,6 +64,9 @@ const probeRows = await conn<{
   oauth_clients_federated_read_exists: boolean;
   oauth_clients_surface_exists: boolean;
   oauth_clients_surface_set_by_exists: boolean;
+  oauth_clients_permissions_exists: boolean;
+  access_tokens_exists: boolean;
+  access_tokens_permissions_exists: boolean;
   sources_exists: boolean;
   sources_archived_exists: boolean;
   sources_archived_at_exists: boolean;
@@ -124,6 +127,12 @@ const probeRows = await conn<{
             WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'surface') AS oauth_clients_surface_exists,
     EXISTS (SELECT 1 FROM information_schema.columns
             WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'surface_set_by') AS oauth_clients_surface_set_by_exists,
+    EXISTS (SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'permissions') AS oauth_clients_permissions_exists,
+    EXISTS (SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = 'access_tokens') AS access_tokens_exists,
+    EXISTS (SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'access_tokens' AND column_name = 'permissions') AS access_tokens_permissions_exists,
     EXISTS (SELECT 1 FROM information_schema.tables
             WHERE table_schema = current_schema() AND table_name = 'sources') AS sources_exists,
     EXISTS (SELECT 1 FROM information_schema.columns
@@ -225,6 +234,8 @@ const probeSurface = probe as {
 };
 const needsOauthClientsSurface = probe.oauth_clients_exists
   && (!probeSurface.oauth_clients_surface_exists || !probeSurface.oauth_clients_surface_set_by_exists);
+const needsOauthPermissions = (probe.oauth_clients_exists && !probe.oauth_clients_permissions_exists)
+  || (probe.access_tokens_exists && !probe.access_tokens_permissions_exists);
 // v0.26.5 (v34): sources.archived + archived_at + archive_expires_at added
 // for soft-delete lifecycle. SCHEMA_SQL's `CREATE TABLE IF NOT EXISTS sources`
 // is a no-op on pre-existing sources tables (won't add columns), so the
@@ -319,6 +330,7 @@ if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
     && !needsChunksEmbeddingImage && !needsPagesRecency
     && !needsIngestLogSourceId && !needsFilesBootstrap
     && !needsOauthClientsBootstrap && !needsOauthClientsSurface
+    && !needsOauthPermissions
     && !needsSourcesArchive
     && !needsPagesLastRetrievedAt
     && !needsPagesProvenance
@@ -501,6 +513,13 @@ if (needsOauthClientsSurface) {
   await conn.unsafe(`
     ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS surface TEXT;
     ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS surface_set_by TEXT;
+  `);
+}
+
+if (needsOauthPermissions) {
+  await conn.unsafe(`
+    ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'::jsonb;
+    ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{"takes_holders":["world"]}'::jsonb;
   `);
 }
 
