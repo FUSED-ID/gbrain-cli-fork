@@ -1126,6 +1126,12 @@ export class PGLiteEngine implements BrainEngine {
                 WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='surface') AS oauth_clients_surface_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='surface_set_by') AS oauth_clients_surface_set_by_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='permissions') AS oauth_clients_permissions_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='access_tokens') AS access_tokens_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='access_tokens' AND column_name='permissions') AS access_tokens_permissions_exists,
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema='public' AND table_name='sources') AS sources_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
@@ -1202,6 +1208,9 @@ export class PGLiteEngine implements BrainEngine {
       oauth_clients_federated_read_exists: boolean;
       oauth_clients_surface_exists: boolean;
       oauth_clients_surface_set_by_exists: boolean;
+      oauth_clients_permissions_exists: boolean;
+      access_tokens_exists: boolean;
+      access_tokens_permissions_exists: boolean;
       sources_exists: boolean;
       sources_archived_exists: boolean;
       sources_archived_at_exists: boolean;
@@ -1265,6 +1274,10 @@ export class PGLiteEngine implements BrainEngine {
     // coverage gate). They ship in one migration and go missing together.
     const needsOauthClientsSurface = probe.oauth_clients_exists
       && (!probe.oauth_clients_surface_exists || !probe.oauth_clients_surface_set_by_exists);
+    // v146: fork permission columns must exist before schema replay on a
+    // pre-v146 brain whose existing tables make CREATE TABLE a no-op.
+    const needsOauthPermissions = (probe.oauth_clients_exists && !probe.oauth_clients_permissions_exists)
+      || (probe.access_tokens_exists && !probe.access_tokens_permissions_exists);
     // v0.26.5 (v34): sources.archived + archived_at + archive_expires_at added
     // for soft-delete lifecycle. Not directly referenced by indexes BUT
     // PGLITE_SCHEMA_SQL's `CREATE TABLE IF NOT EXISTS sources` is a no-op on
@@ -1330,6 +1343,7 @@ export class PGLiteEngine implements BrainEngine {
         && !needsPagesRecency && !needsIngestLogSourceId
         && !needsFilesBootstrap && !needsOauthClientsBootstrap
         && !needsOauthClientsSurface
+        && !needsOauthPermissions
         && !needsSourcesArchive && !needsPagesLastRetrievedAt
         && !needsPagesProvenance
         && !needsContextualRetrievalColumns && !needsPagesGeneration
@@ -1510,6 +1524,13 @@ export class PGLiteEngine implements BrainEngine {
       await this.db.exec(`
         ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS surface TEXT;
         ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS surface_set_by TEXT;
+      `);
+    }
+
+    if (needsOauthPermissions) {
+      await this.db.exec(`
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'::jsonb;
+        ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{"takes_holders":["world"]}'::jsonb;
       `);
     }
 
