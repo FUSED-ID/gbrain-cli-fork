@@ -129,4 +129,68 @@ export async function resolvePrivateWriteSource(
   return { sourceId: requested, routed: false, privateSourceId: privateSource.id };
 }
 
-export const __privateSourceRoutingTest = { parseExcludedPeople, normalizeSlugish, candidateKeys };
+/**
+ * Import pre-flight: assert that private-write routing is ARMED.
+ *
+ * Why this exists. `resolvePrivateWriteSource` degrades to "no routing" in
+ * three places, all silent: no private source resolves, `_excluded-people.md`
+ * cannot be read, or the `## Family deny-list` heading is missing or renamed.
+ * In every case the write proceeds to the requested source, which defaults to
+ * `default`, which is the one source configured `federated: true` with
+ * `facts_visibility: world`.
+ *
+ * That is fail-OPEN on a privacy control, and the routing decision is taken at
+ * IMPORT time. A corpus rebuild with the policy files absent would route every
+ * family and person page to the federated, world-visible source, raise no
+ * error, and leave nothing in the logs to find afterwards.
+ *
+ * So the import must assert rather than assume. This throws; it does not warn.
+ * Call it immediately before a bulk import and treat a throw as a hard stop.
+ */
+export interface PrivateRoutingArmedReport {
+  privateSourceId: string;
+  localPath: string;
+  excludedEntryCount: number;
+}
+
+export async function assertPrivateRoutingArmed(
+  engine: BrainEngine,
+): Promise<PrivateRoutingArmedReport> {
+  const source = await findPrivateSource(engine);
+  if (!source || !source.local_path) {
+    throw new Error(
+      'private-write routing is NOT ARMED: no source has both ' +
+      `${EXCLUDED_PEOPLE_FILE} and ${FILING_RULES_FILE} present under its local_path. ` +
+      'Person-shaped writes would route to the default source, which is federated and world-visible. ' +
+      'Refusing to import. Fix the private source local_path or restore the policy files.',
+    );
+  }
+
+  let raw: string;
+  try {
+    raw = readFileSync(join(source.local_path, EXCLUDED_PEOPLE_FILE), 'utf8');
+  } catch (err) {
+    throw new Error(
+      `private-write routing is NOT ARMED: ${EXCLUDED_PEOPLE_FILE} under ` +
+      `'${source.local_path}' could not be read (${(err as Error).message}). Refusing to import.`,
+    );
+  }
+
+  const entries = parseExcludedPeople(raw);
+  if (entries.length === 0) {
+    throw new Error(
+      `private-write routing is NOT ARMED: ${EXCLUDED_PEOPLE_FILE} under ` +
+      `'${source.local_path}' parsed to ZERO deny-list entries. The parser keys on a ` +
+      "'## Family deny-list' heading followed by a markdown table; a renamed heading " +
+      'or reformatted table yields an empty list and silently disables routing. Refusing to import.',
+    );
+  }
+
+  return {
+    privateSourceId: source.id,
+    localPath: source.local_path,
+    excludedEntryCount: entries.length,
+  };
+}
+
+export const __privateSourceRoutingTest = { parseExcludedPeople, normalizeSlugish, candidateKeys, findPrivateSource };
