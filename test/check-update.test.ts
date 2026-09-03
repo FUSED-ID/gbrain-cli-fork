@@ -24,6 +24,10 @@ describe('parseSemver', () => {
   test('preserves the 4th micro segment', () => {
     expect(parseSemver('0.2.0.1')).toEqual([0, 2, 0, 1]);
   });
+
+  test('accepts the fused local channel suffix by its numeric base', () => {
+    expect(parseSemver('0.48.1.0-fused-id.1')).toEqual([0, 48, 1, 0]);
+  });
 });
 
 describe('isNewerVersion', () => {

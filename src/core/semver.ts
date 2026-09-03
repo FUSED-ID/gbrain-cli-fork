@@ -8,7 +8,8 @@
  *
  * Supports both 3-segment (`0.41.38`) and 4-segment (`0.42.3.0`) gbrain
  * version strings. The 4th `.MICRO` segment is gbrain's dot-suffix
- * follow-up channel; comparisons use it as a 4th ordering key.
+ * follow-up channel; comparisons use it as a 4th ordering key. Local build
+ * labels such as `-fused-id.1` are accepted and compare by their numeric base.
  */
 
 /** A parsed gbrain version tuple (major, minor, patch, micro). Historical
@@ -16,8 +17,9 @@
 export type SemverTuple = [number, number, number, number];
 
 /** Strict shape gate for a remote version string before it reaches the agent.
- * Accepts both 3-segment (`0.41.38`) and 4-segment (`0.42.3.0`) gbrain versions. */
-export const VERSION_RE = /^\d+\.\d+(?:\.\d+){0,2}$/;
+ * Accepts both 3-segment (`0.41.38`) and 4-segment (`0.42.3.0`) gbrain versions,
+ * with an optional local channel suffix. */
+export const VERSION_RE = /^\d+\.\d+(?:\.\d+){0,2}(?:[-+][0-9A-Za-z.-]+)?$/;
 
 /** True iff `v` (optionally `v`-prefixed) is a plain numeric dotted version. */
 export function isValidVersionString(v: string): boolean {
@@ -32,7 +34,7 @@ export function isValidVersionString(v: string): boolean {
 export function parseSemver(v: string): SemverTuple | null {
   const clean = v.replace(/^v/, '');
   if (!VERSION_RE.test(clean)) return null;
-  const parts = clean.split('.');
+  const parts = clean.split(/[-+]/, 1)[0].split('.');
   if (parts.length < 3) return null;
   const nums = parts.map(Number);
   if (nums.some((n) => !Number.isFinite(n))) return null;
