@@ -11,6 +11,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import {
   resolveDefaultVisibility,
   resolveVisibilityParam,
+  resolveSourceVisibility,
   FACTS_DEFAULT_VISIBILITY_KEY,
 } from '../src/core/facts/visibility.ts';
 import { runFactsBackstop } from '../src/core/facts/backstop.ts';
@@ -148,6 +149,39 @@ describe('resolveVisibilityParam — explicit caller value ALWAYS wins [ENG-8]',
     await engine.setConfig(FACTS_DEFAULT_VISIBILITY_KEY, 'world');
     expect(await resolveVisibilityParam(engine, 'banana')).toBe('private');
     expect(await resolveVisibilityParam(engine, 42)).toBe('private');
+  });
+});
+
+describe('resolveSourceVisibility — per-source policy above ENG-8', () => {
+  afterEach(async () => {
+    await engine.unsetConfig(FACTS_DEFAULT_VISIBILITY_KEY);
+    await engine.executeRaw(`UPDATE sources SET config = config - 'facts_visibility' WHERE id = 'default'`);
+    await engine.executeRaw(`DELETE FROM sources WHERE id = 'visibility-private-source'`);
+  });
+
+  test('source world policy beats a private brain default', async () => {
+    await engine.setConfig(FACTS_DEFAULT_VISIBILITY_KEY, 'private');
+    await engine.updateSourceConfig('default', { facts_visibility: 'world' });
+    expect(await resolveSourceVisibility(engine, 'default')).toBe('world');
+  });
+
+  test('source private policy beats a world brain default', async () => {
+    await engine.setConfig(FACTS_DEFAULT_VISIBILITY_KEY, 'world');
+    await engine.updateSourceConfig('default', { facts_visibility: 'private' });
+    expect(await resolveSourceVisibility(engine, 'default')).toBe('private');
+  });
+
+  test('missing source policy falls through to the ENG-8 brain default', async () => {
+    await engine.setConfig(FACTS_DEFAULT_VISIBILITY_KEY, 'world');
+    expect(await resolveSourceVisibility(engine, 'default')).toBe('world');
+  });
+
+  test('world policy is clamped on a non-federated source', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('visibility-private-source', 'visibility-private-source', $1::jsonb)`,
+      [JSON.stringify({ federated: false, facts_visibility: 'world' })],
+    );
+    expect(await resolveSourceVisibility(engine, 'visibility-private-source')).toBe('private');
   });
 });
 
