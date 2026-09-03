@@ -15,7 +15,7 @@
 import type { GBrainConfig } from './config.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from './remote-mcp-probe.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult } from './mcp-client.ts';
-import { safeCompare, driftLevel, loadPromptState } from './thin-client-upgrade-prompt.ts';
+import { safeCompareRelease, driftLevelRelease, loadPromptState } from './thin-client-upgrade-prompt.ts';
 import { VERSION } from '../version.ts';
 
 export interface RemoteCheck {
@@ -355,7 +355,7 @@ export async function runUpgradeDriftCheck(config: GBrainConfig): Promise<Remote
     };
   }
 
-  const cmp = safeCompare(VERSION, remoteVersion);
+  const cmp = safeCompareRelease(VERSION, remoteVersion);
   if (cmp === null) {
     return {
       name: 'thin_client_upgrade_drift',
@@ -372,7 +372,7 @@ export async function runUpgradeDriftCheck(config: GBrainConfig): Promise<Remote
       detail: { local: VERSION, remote: remoteVersion },
     };
   }
-  const level = driftLevel(VERSION, remoteVersion);
+  const level = driftLevelRelease(VERSION, remoteVersion);
   if (level === 'patch') {
     return {
       name: 'thin_client_upgrade_drift',
