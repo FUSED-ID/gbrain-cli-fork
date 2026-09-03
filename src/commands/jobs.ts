@@ -223,6 +223,20 @@ export function resolveWorkerConcurrency(args: string[], env: NodeJS.ProcessEnv 
   return parsed;
 }
 
+/** Parse the worker job-name allow-list used by bounded drainers. */
+export function parseWorkerOnlyNames(
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): string[] | undefined {
+  const raw = parseFlag(args, '--only') ?? env.GBRAIN_WORKER_ONLY_NAMES;
+  if (raw === undefined) return undefined;
+  const names = [...new Set(raw.split(',').map((name) => name.trim()).filter(Boolean))];
+  if (names.length === 0) {
+    throw new Error('--only must contain at least one comma-separated job name');
+  }
+  return names;
+}
+
 export type JobIsolationMode = 'inline' | 'process';
 
 /**
@@ -1521,6 +1535,7 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
 
       const queueName = parseFlag(args, '--queue') ?? 'default';
       const concurrency = resolveWorkerConcurrency(args);
+      const onlyNames = parseWorkerOnlyNames(args);
       // --max-rss: explicit value wins (including 0 to disable the watchdog).
       // Absent → cgroup-aware auto-size (issue #1678): the flat 2048MB default
       // killed legit embed work (~10GB) on every cycle and produced a silent
@@ -1646,6 +1661,13 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
         jobIsolation, childCliInvocation, childTiniPath,
       });
       await registerBuiltinHandlers(worker, engine);
+      if (onlyNames) {
+        const unknown = onlyNames.filter((name) => !worker.registeredNames.includes(name));
+        if (unknown.length > 0) {
+          throw new Error(`Unknown worker job name(s): ${unknown.join(', ')}`);
+        }
+        worker.keepOnly(onlyNames);
+      }
 
       // Subscribe to self-health failures emitted by the worker. Library code
       // (worker.ts) never calls process.exit directly so it stays embeddable;
@@ -1715,7 +1737,8 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
       const isolationNote = jobIsolation === 'process'
         ? `, isolation: process (child cli: ${childCliInvocation?.cmd}${childTiniPath ? ', tini' : ''})`
         : '';
-      console.log(`Minion worker started (queue: ${queueName}, concurrency: ${concurrency}${watchdogNote}${healthNote}${niceNote}${isolationNote})`);
+      const onlyNote = onlyNames ? `, only: ${onlyNames.join(',')}` : '';
+      console.log(`Minion worker started (queue: ${queueName}, concurrency: ${concurrency}${onlyNote}${watchdogNote}${healthNote}${niceNote}${isolationNote})`);
       console.log(`Registered handlers: ${worker.registeredNames.join(', ')}`);
 
       // Register in the live worker registry (issue #1815) so jobs stats / doctor
