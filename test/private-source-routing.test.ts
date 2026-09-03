@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { Page } from '../src/core/types.ts';
-import { resolvePrivateWriteSource, __privateSourceRoutingTest } from '../src/core/private-source-routing.ts';
+import { resolvePrivateWriteSource, assertPrivateRoutingArmed, __privateSourceRoutingTest } from '../src/core/private-source-routing.ts';
 
 function writePolicy(dir: string): void {
   writeFileSync(join(dir, '_brain-filing-rules.md'), '# private filing rules\n');
@@ -88,5 +88,51 @@ describe('private source routing', () => {
     });
     expect(route.sourceId).toBe('lg-private');
     expect(route.reason).toBe('existing_private_page');
+  });
+});
+
+/**
+ * G2 condition: the import pre-flight. `resolvePrivateWriteSource` fails OPEN
+ * in three silent ways, and the routing decision is taken at import time, so a
+ * corpus rebuild with the policy files missing would route every person page
+ * to the federated world-visible default source with no error. These pin the
+ * assertion that refuses the import instead.
+ */
+describe('assertPrivateRoutingArmed (import pre-flight)', () => {
+  test('passes and reports the deny-list size when fully armed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-armed-'));
+    writePolicy(dir);
+    const report = await assertPrivateRoutingArmed(fakeEngine(dir));
+    expect(report.privateSourceId).toBe('lg-private');
+    expect(report.localPath).toBe(dir);
+    expect(report.excludedEntryCount).toBeGreaterThan(0);
+  });
+
+  test('THROWS when no source carries the policy files', async () => {
+    const empty = mkdtempSync(join(tmpdir(), 'gbrain-unarmed-'));
+    // no writePolicy: findPrivateSource cannot resolve
+    await expect(assertPrivateRoutingArmed(fakeEngine(empty))).rejects.toThrow(/NOT ARMED/);
+  });
+
+  test('THROWS when the deny-list heading is renamed (parses to zero entries)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-renamed-'));
+    writeFileSync(join(dir, '_brain-filing-rules.md'), '# rules\n');
+    writeFileSync(join(dir, '_excluded-people.md'), `# Excluded People
+
+## Household deny-list
+
+| Slug pattern | Name |
+|---|---|
+| \`private-person*\` | Private Person |
+`);
+    await expect(assertPrivateRoutingArmed(fakeEngine(dir))).rejects.toThrow(/ZERO deny-list entries/);
+  });
+
+  test('the throw names the failure so an operator can act on it', async () => {
+    const empty = mkdtempSync(join(tmpdir(), 'gbrain-msg-'));
+    let msg = '';
+    try { await assertPrivateRoutingArmed(fakeEngine(empty)); } catch (e) { msg = (e as Error).message; }
+    expect(msg).toContain('_excluded-people.md');
+    expect(msg).toContain('Refusing to import');
   });
 });
