@@ -41,11 +41,7 @@ import type { BrainEngine, FactInsertStatus, NewFact } from '../engine.ts';
 import type { ResolutionSource } from '../entities/resolve.ts';
 import { isFactsBackstopEligible } from './eligibility.ts';
 import type { PageType } from '../types.ts';
-import type { OperationContext } from '../ops/contract.ts';
-import type { WriteReceipt } from '../persistence/types.ts';
-import type { GBrainConfig } from '../config.ts';
-import { isAvailable } from '../ai/gateway.ts';
-import { withAIInvocationPreflight } from '../ai/invocation-guard.ts';
+import { resolveSourceVisibility } from './visibility.ts';
 
 /**
  * Notability-filter vocabulary shared by the durable facts-absorb payload
@@ -340,7 +336,6 @@ export async function runFactsBackstop(
         // [ENG-8] Caller-unset visibility resolves the brain default HERE
         // (not in the long-lived worker) so the durable payload carries the
         // visibility that was in force at write time.
-        const { resolveDefaultVisibility } = await import('./visibility.ts');
         await minions.add(
           'facts-absorb',
           {
@@ -349,7 +344,7 @@ export async function runFactsBackstop(
             source: ctx.source,
             sessionId: ctx.sessionId,
             notabilityFilter: ctx.notabilityFilter ?? 'all',
-            visibility: ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine)),
+            visibility: await resolveSourceVisibility(ctx.engine, ctx.sourceId, ctx.visibility),
             ...(ctx.model ? { model: ctx.model } : {}),
           },
           {
@@ -635,9 +630,7 @@ async function runPipelineBodyInner(
 
   // [ENG-8] Explicit ctx.visibility wins; unset resolves the operator-set
   // facts.default_visibility (fail-closed to 'private').
-  const { resolveDefaultVisibility } = await import('./visibility.ts');
-  const visibility = ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine));
-  if (managed) return publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, input.pageSlug);
+  const visibility = await resolveSourceVisibility(ctx.engine, ctx.sourceId, ctx.visibility);
 
   let inserted = 0;
   let duplicate = 0;
