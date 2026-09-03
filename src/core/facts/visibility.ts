@@ -62,12 +62,54 @@ export async function resolveVisibilityParam(
 }
 
 /**
- * Resolve a source-scoped facts visibility using the ENG-8 ladder:
- * explicit caller value → source `facts_visibility` policy → brain default
- * → private. A source may opt into `world` only when it is federated; this
- * preserves the fail-closed boundary for private sources while keeping the
- * existing brain-level default behavior when no source policy is set.
+ * Resolve a source-scoped facts visibility.
+ *
+ * NOTE: this NARROWS the upstream ENG-8 contract documented at the top of this
+ * module, which states that an explicit caller value always wins. Here it does
+ * not. An explicit `world` against a NON-FEDERATED source is overridden to
+ * `private`, and so is any explicit value when the source cannot be resolved.
+ * The earlier version of this docstring claimed the upstream ladder and was
+ * wrong about its own code; that is corrected here.
+ *
+ * The actual ladder:
+ *
+ *   explicit 'private'                  → 'private'
+ *   explicit 'world', federated source  → 'world'
+ *   explicit 'world', NON-federated     → 'private'   (override, warned once)
+ *   unset, source policy 'private'      → 'private'
+ *   unset, source policy 'world'        → federated ? 'world' : 'private'
+ *   unset, no source policy             → brain default
+ *   source missing, or lookup threw     → 'private'   (override, warned once)
+ *
+ * Why the override is kept rather than honoured: `facts/meta-hook.ts` filters
+ * facts for remote callers on the visibility label ALONE, with no independent
+ * `source.federated` check at that layer. Honouring an explicit `world` here
+ * would therefore write a remote-visible label onto a source the operator never
+ * federated. The durable fix is to validate at the CLI/MCP boundary and have
+ * the export path check both the label and `source.federated`; until then this
+ * function is the backstop and it announces itself.
  */
+// G2 ruling (LGV, 2026-09-03): the clamp stays as a fail-closed backstop, but
+// it must never be silent. A downgrade of an EXPLICIT caller value is said
+// once per (source, reason) per process, mirroring the background-work.ts
+// warnedOnce idiom. Once, not per write: the corpus import calls this ~248k
+// times and a per-write warn would be its own outage.
+const clampWarnedOnce = new Set<string>();
+
+function warnVisibilityClamp(
+  sourceId: string,
+  requested: FactVisibility,
+  reason: 'source_not_federated' | 'source_not_found' | 'resolution_failed',
+): void {
+  const key = `visibility-clamp:${sourceId}:${reason}`;
+  if (clampWarnedOnce.has(key)) return;
+  clampWarnedOnce.add(key);
+  console.error(
+    `[facts:visibility] explicit visibility '${requested}' was OVERRIDDEN to 'private' for source '${sourceId}' (${reason}). ` +
+    `This is a fork-local narrowing of the upstream ENG-8 contract; see FUSED-ID-LOCAL-PATCHES.md P4. Said once per source+reason per process.`,
+  );
+}
+
 export async function resolveSourceVisibility(
   engine: BrainEngine,
   sourceId: string,
@@ -76,15 +118,30 @@ export async function resolveSourceVisibility(
   try {
     const rows = await engine.listAllSources({ includeArchived: true });
     const source = rows.find((row) => row.id === sourceId);
-    if (!source) return 'private';
+    if (!source) {
+      if (requested) warnVisibilityClamp(sourceId, requested, 'source_not_found');
+      return 'private';
+    }
     const config = source.config as Record<string, unknown>;
     const federated = config.federated === true;
     const policy = config.facts_visibility;
-    if (requested) return requested === 'world' && !federated ? 'private' : requested;
+    if (requested) {
+      if (requested === 'world' && !federated) {
+        warnVisibilityClamp(sourceId, requested, 'source_not_federated');
+        return 'private';
+      }
+      return requested;
+    }
     if (policy === 'private') return 'private';
     if (policy === 'world') return federated ? 'world' : 'private';
     return resolveDefaultVisibility(engine);
   } catch {
+    if (requested) warnVisibilityClamp(sourceId, requested, 'resolution_failed');
     return 'private';
   }
+}
+
+/** Test seam: the clamp warns once per process, so tests must reset it. */
+export function __resetVisibilityClampWarnings(): void {
+  clampWarnedOnce.clear();
 }
