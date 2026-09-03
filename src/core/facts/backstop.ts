@@ -41,6 +41,7 @@ import type { BrainEngine, FactInsertStatus, NewFact } from '../engine.ts';
 import type { ResolutionSource } from '../entities/resolve.ts';
 import { isFactsBackstopEligible } from './eligibility.ts';
 import type { PageType } from '../types.ts';
+import { resolveSourceVisibility } from './visibility.ts';
 
 export interface FactsBackstopCtx {
   engine: BrainEngine;
@@ -308,7 +309,6 @@ export async function runFactsBackstop(
         // [ENG-8] Caller-unset visibility resolves the brain default HERE
         // (not in the long-lived worker) so the durable payload carries the
         // visibility that was in force at write time.
-        const { resolveDefaultVisibility } = await import('./visibility.ts');
         await minions.add(
           'facts-absorb',
           {
@@ -317,7 +317,7 @@ export async function runFactsBackstop(
             source: ctx.source,
             sessionId: ctx.sessionId,
             notabilityFilter: ctx.notabilityFilter ?? 'all',
-            visibility: ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine)),
+            visibility: await resolveSourceVisibility(ctx.engine, ctx.sourceId, ctx.visibility),
             ...(ctx.model ? { model: ctx.model } : {}),
           },
           {
@@ -584,8 +584,7 @@ async function runPipelineBodyInner(
 
   // [ENG-8] Explicit ctx.visibility wins; unset resolves the operator-set
   // facts.default_visibility (fail-closed to 'private').
-  const { resolveDefaultVisibility } = await import('./visibility.ts');
-  const visibility = ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine));
+  const visibility = await resolveSourceVisibility(ctx.engine, ctx.sourceId, ctx.visibility);
 
   let inserted = 0;
   let duplicate = 0;

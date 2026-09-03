@@ -60,3 +60,31 @@ export async function resolveVisibilityParam(
   if (value == null) return resolveDefaultVisibility(engine);
   return 'private';
 }
+
+/**
+ * Resolve a source-scoped facts visibility using the ENG-8 ladder:
+ * explicit caller value → source `facts_visibility` policy → brain default
+ * → private. A source may opt into `world` only when it is federated; this
+ * preserves the fail-closed boundary for private sources while keeping the
+ * existing brain-level default behavior when no source policy is set.
+ */
+export async function resolveSourceVisibility(
+  engine: BrainEngine,
+  sourceId: string,
+  requested?: FactVisibility,
+): Promise<FactVisibility> {
+  try {
+    const rows = await engine.listAllSources({ includeArchived: true });
+    const source = rows.find((row) => row.id === sourceId);
+    if (!source) return 'private';
+    const config = source.config as Record<string, unknown>;
+    const federated = config.federated === true;
+    const policy = config.facts_visibility;
+    if (requested) return requested === 'world' && !federated ? 'private' : requested;
+    if (policy === 'private') return 'private';
+    if (policy === 'world') return federated ? 'world' : 'private';
+    return resolveDefaultVisibility(engine);
+  } catch {
+    return 'private';
+  }
+}
