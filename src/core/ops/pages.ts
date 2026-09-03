@@ -23,6 +23,7 @@ import { stripFactsFence } from '../facts-fence.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from '../search/private-visibility.ts';
+import { resolvePrivateWriteSource } from '../private-source-routing.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { OperationError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
@@ -417,6 +418,19 @@ const put_page: Operation = {
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
 
+    const route = await resolvePrivateWriteSource(ctx.engine, {
+      requestedSourceId: ctx.sourceId ?? 'default',
+      slug,
+      content: p.content as string,
+    });
+    if (route.routed && ctx.remote !== false) {
+      throw new OperationError(
+        'permission_denied',
+        `put_page slug '${slug}' is routed to private source '${route.privateSourceId}' and cannot be written by a remote caller`,
+      );
+    }
+    const writeSourceId = route.sourceId;
+
     // Empty-overwrite guard: empty/whitespace-only content over an existing
     // non-empty page is almost always an input-plumbing failure (e.g. a
     // caller that meant file input — put has no --file flag — so the missing
@@ -464,7 +478,7 @@ const put_page: Operation = {
       const resolved = await loadActivePack({
         cfg: loadConfig(),
         remote: ctx.remote === false ? false : true,
-        sourceId: ctx.sourceId,
+        sourceId: writeSourceId,
       });
       activePack = { page_types: resolved.manifest.page_types };
     } catch {
@@ -477,7 +491,7 @@ const put_page: Operation = {
       // markers (quarantine/content_flag/embed_skip). Fail-closed — anything
       // not strictly local is remote (matches CV6 / v0.26.9 F7b posture).
       remote: ctx.remote !== false,
-      ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}),
+      sourceId: writeSourceId,
       // v0.39.0.0 T1.5: pack-aware type inference (loaded above; legacy
       // inferType behavior when undefined).
       ...(activePack ? { activePack } : {}),
@@ -570,13 +584,12 @@ const put_page: Operation = {
     const isSandboxSubagent = ctx.viaSubagent === true
       && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
     if (!ctx.dryRun && result.status !== 'error' && !isSandboxSubagent) {
-      const sourceId = ctx.sourceId ?? 'default';
       const provenanceVia = ctx.remote === false ? 'put_page' : 'mcp:put_page';
       // Shared canonical write-through (also used by `gbrain brainstorm/lsd
       // --save`). Renders the file from the saved DB row and writes it
       // atomically; never throws (failures land in skipped/error).
       writeThrough = await writePageThrough(ctx.engine, result.slug, {
-        sourceId,
+        sourceId: writeSourceId,
         frontmatterOverrides: {
           ingested_via: provenanceVia,
           ingested_at: new Date().toISOString(),
@@ -612,9 +625,9 @@ const put_page: Operation = {
       // An update (or a dedup hit resolved to a pre-existing page) is left
       // alone — the prior file on disk still matches the prior DB content.
       try {
-        const row = await ctx.engine.getPage(result.slug, { sourceId: ctx.sourceId ?? 'default' });
+        const row = await ctx.engine.getPage(result.slug, { sourceId: writeSourceId });
         if (row && row.created_at.getTime() === row.updated_at.getTime()) {
-          await ctx.engine.deletePage(result.slug, { sourceId: ctx.sourceId ?? 'default' });
+          await ctx.engine.deletePage(result.slug, { sourceId: writeSourceId });
         }
       } catch {
         // best-effort; the error thrown below still surfaces the failure
@@ -668,7 +681,7 @@ const put_page: Operation = {
           // ctx.sourceId is REQUIRED on OperationContext (v0.34 D4) — always
           // pass it so the reconciliation reads/writes AND the advisory lock
           // key stay scoped to the source this put_page targets.
-          autoLinks = await runAutoLink(ctx.engine, slug, result.parsedPage, { sourceId: ctx.sourceId });
+          autoLinks = await runAutoLink(ctx.engine, slug, result.parsedPage, { sourceId: writeSourceId });
         }
       } catch (e) {
         autoLinks = { error: e instanceof Error ? e.message : String(e) };
@@ -751,7 +764,7 @@ const put_page: Operation = {
         },
         {
           engine: ctx.engine,
-          sourceId: ctx.sourceId ?? 'default',
+          sourceId: writeSourceId,
           sessionId: (ctx as { source_session?: string }).source_session ?? null,
           source: 'mcp:put_page',
           mode: 'queue',
@@ -794,7 +807,7 @@ const put_page: Operation = {
             compiled_truth: result.parsedPage.compiled_truth,
             frontmatter: result.parsedPage.frontmatter,
           },
-          { engine: ctx.engine, sourceId: ctx.sourceId ?? 'default' },
+          { engine: ctx.engine, sourceId: writeSourceId },
         );
         chronicleQueued = r.enqueued ? { queued: true } : { skipped: r.skipped ?? 'skipped' };
       } catch {
@@ -815,7 +828,7 @@ const put_page: Operation = {
     try {
       const { writerLintForPutPage } = await import('../output/post-write.ts');
       writerLint = await writerLintForPutPage(ctx.engine, result.slug, {
-        sourceId: ctx.sourceId ?? 'default',
+        sourceId: writeSourceId,
       });
     } catch {
       // Module-load failure gets the same crash marker; never blocks put_page.

@@ -26,6 +26,7 @@ import { isAvailable } from './ai/gateway.ts';
 // #4222: shared generic-token reject list — same list gates the by-mention
 // gazetteer and drives the junk_entity_hubs doctor check.
 import { isJunkEntityName } from './entity-name-quality.ts';
+import { resolvePrivateWriteSource } from './private-source-routing.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -36,6 +37,7 @@ export interface EnrichmentRequest {
   entityType: 'person' | 'company';
   context: string;
   sourceSlug: string;
+  sourceId?: string;
   tier?: 1 | 2 | 3;
 }
 
@@ -109,14 +111,21 @@ export async function enrichEntity(
   opts?: EnrichmentTrustOptions,
 ): Promise<EnrichmentResult> {
   const candidateSlug = slugifyEntity(request.entityName, request.entityType);
-  const sourceId = opts?.sourceId ?? 'default';
-  const slug = await engine.resolveSlugWithAlias(candidateSlug, sourceId);
+  const requestedSourceId = request.sourceId ?? opts?.sourceId ?? 'default';
+  const route = await resolvePrivateWriteSource(engine, {
+    requestedSourceId,
+    slug: candidateSlug,
+    entityName: request.entityName,
+    entityType: request.entityType,
+  });
+  const entitySourceId = route.sourceId;
+  const slug = await engine.resolveSlugWithAlias(candidateSlug, entitySourceId);
   // Fail-closed: only an explicit `trusted: true` writes authoritative pages.
   const trusted = opts?.trusted === true;
-  const scope = opts?.sourceId ? { sourceId: opts.sourceId } : undefined;
+  const scope = { sourceId: entitySourceId };
 
   // 1. Count existing mentions for tier auto-escalation
-  const { mentionCount, mentionSources } = await countMentions(engine, request.entityName, opts?.sourceId);
+  const { mentionCount, mentionSources } = await countMentions(engine, request.entityName, entitySourceId);
 
   // 2. Determine tier (auto-escalate based on mentions)
   const suggestedTier = suggestTier(mentionCount, mentionSources, request.context);
@@ -168,7 +177,7 @@ export async function enrichEntity(
       const md = serializeMarkdown(frontmatter, content, '', { type, title, tags: [] });
       await importFromContent(engine, slug, md, {
         noEmbed: !isAvailable('embedding'),
-        ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
+        sourceId: entitySourceId,
       });
     } catch (e) {
       // Fail-open fallback: a pipeline error (parse edge case, size guard)
@@ -207,7 +216,7 @@ export async function enrichEntity(
   // 5. Add backlink from entity to source
   let backlinkCreated = false;
   try {
-    await engine.addLink(slug, request.sourceSlug, `Entity mention from ${request.sourceSlug}`, undefined, undefined, undefined, undefined, opts?.sourceId ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId } : undefined); // gbrain-allow-direct-insert: auto-link reconciliation triggered by entity reference in source markdown
+    await engine.addLink(slug, request.sourceSlug, `Entity mention from ${request.sourceSlug}`, undefined, undefined, undefined, undefined, { fromSourceId: entitySourceId, toSourceId: requestedSourceId, originSourceId: requestedSourceId }); // gbrain-allow-direct-insert: auto-link reconciliation triggered by entity reference in source markdown
     backlinkCreated = true;
   } catch {
     // Link might already exist
