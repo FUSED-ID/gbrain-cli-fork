@@ -44,6 +44,13 @@ const EXTRA_FLAGS: Record<string, string[]> = {
   sync: ['--pace', '--pace-max-concurrency'],
 };
 
+/** CLI_ONLY subcommands dispatched by a special pre-engine branch rather than
+ * the generic `case` block. Their flags still belong to the parent command. */
+const SPECIAL_COMMAND_MODULES: Record<string, string[]> = {
+  // `gbrain eval longmemeval ...` is dispatched before the generic eval case.
+  eval: ['src/commands/eval-longmemeval.ts'],
+};
+
 /**
  * Modules the import scan must SKIP. thin-client-routing.ts is a pure router —
  * its flag literals belong to the commands it routes (takes/search/jobs/cache/
@@ -227,6 +234,14 @@ export function buildFlagRegistry(): Record<string, string[]> {
           for (const f of flagsInText(readSrc(dep))) flags.add(f);
         }
       }
+    }
+
+    for (const relativePath of SPECIAL_COMMAND_MODULES[command] ?? []) {
+      const modPath = resolvePath(ROOT, relativePath);
+      if (!existsSync(modPath) || isExcludedModule(modPath)) continue;
+      const modSrc = readSrc(modPath);
+      depthZeroText += modSrc;
+      for (const f of flagsInText(modSrc)) { flags.add(f); depthZero.add(f); }
     }
 
     for (const f of EXTRA_FLAGS[command] ?? []) { flags.add(f); depthZero.add(f); }
