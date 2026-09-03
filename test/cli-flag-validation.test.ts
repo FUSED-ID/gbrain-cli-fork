@@ -107,6 +107,12 @@ describe('#2185 acceptance — real usage stays legal', () => {
     expect(validateCommandFlags('sync', ['--full'])).toBeNull();
   });
 
+  test('longmemeval flags are accepted on the eval dispatch surface', () => {
+    for (const flag of ['--by-type', '--by-type-floor', '--retrieval-only', '--no-trajectory', '--keyword-only']) {
+      expect(validateCommandFlags('eval', ['longmemeval', flag])).toBeNull();
+    }
+  });
+
   test('scope flags require direct consumption on upgrade surfaces', () => {
     expect(validateCommandFlags('reindex', ['--markdown', '--type', 'atom'])).toBeNull();
     expect(validateCommandFlags('upgrade', ['--type', 'atom'])).toBe('--type');
