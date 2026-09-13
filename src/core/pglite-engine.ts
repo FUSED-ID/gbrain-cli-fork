@@ -1770,8 +1770,9 @@ export class PGLiteEngine implements BrainEngine {
 
   private async _putPage(slug: string, page: PageInput, opts?: PageWriteOptions): Promise<Page> {
     slug = validateSlug(slug);
-    if (isPersonishPageWrite(slug, page) && await shouldAssertPrivateRouting(this, opts?.sourceId ?? 'default')) {
-      await assertPrivateRoutingArmed(this);
+    if (await shouldAssertPrivateRouting(this, opts?.sourceId ?? 'default')) {
+      const personish = await isPersonishPageWrite(this, slug, page);
+      if (personish) await assertPrivateRoutingArmed(this);
     }
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
+import { assertPrivateRoutingArmed, resolvePrivateWriteSource } from '../src/core/private-source-routing.ts';
 
 const putPage = operationsByName.put_page;
 const PERSON_CONTENT = '---\ntype: person\ntitle: Private Test Person\n---\n\nPerson body.\n';
@@ -22,6 +23,21 @@ async function pointPrivateSource(localPath: string): Promise<void> {
      VALUES ('lg-private', 'LG private', $1, '{}'::jsonb)
      ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
     [localPath],
+  );
+}
+
+async function pointDatabasePrivateSource(): Promise<void> {
+  const policy = JSON.stringify({
+    private_routing: {
+      excluded_people_markdown: '## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `peer-person` | Peer Person |\n',
+      filing_rules_markdown: '# filing rules\n',
+    },
+  });
+  await engine.executeRaw(
+    `INSERT INTO sources (id, name, local_path, config)
+     VALUES ('lg-private', 'LG private', $1, $2::jsonb)
+     ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path, config = EXCLUDED.config`,
+    [null, policy],
   );
 }
 
@@ -102,5 +118,63 @@ describe('private routing armed guard at the put_page write path', () => {
       timeline: '',
       frontmatter: {},
     })).rejects.toThrow(/ZERO deny-list entries/);
+  });
+
+  test('throws for the leaked singular person slug even when its type is concept', async () => {
+    await pointPrivateSource(policyDir);
+    await engine.putPage('person/lgv', {
+      type: 'concept',
+      title: 'LGV',
+      compiled_truth: 'Private copy.',
+      timeline: '',
+      frontmatter: {},
+    }, { sourceId: 'lg-private' });
+
+    await expect(engine.putPage('person/lgv', {
+      type: 'concept',
+      title: 'LGV',
+      compiled_truth: 'Leaked shape.',
+      timeline: '',
+      frontmatter: {},
+    }, { sourceId: 'default' })).rejects.toThrow(/NOT ARMED/);
+  });
+
+  test('rechecks the private source row after a successful arm', async () => {
+    await pointPrivateSource(policyDir);
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `after-delete` | After Delete |\n');
+    await engine.putPage('people/arm-writepath-after-delete', {
+      type: 'person',
+      title: 'After Delete',
+      compiled_truth: 'First write.',
+      timeline: '',
+      frontmatter: {},
+    }, { sourceId: 'default' });
+
+    await engine.executeRaw(`DELETE FROM sources WHERE id = 'lg-private'`);
+    await expect(engine.putPage('people/arm-writepath-after-delete', {
+      type: 'person',
+      title: 'After Delete',
+      compiled_truth: 'Second write.',
+      timeline: '',
+      frontmatter: {},
+    }, { sourceId: 'default' })).rejects.toThrow(/NOT ARMED/);
+  });
+
+  test('arms and routes from database-held policy without local policy files', async () => {
+    await pointDatabasePrivateSource();
+    const route = await resolvePrivateWriteSource(engine, {
+      requestedSourceId: 'default',
+      slug: 'people/peer-person',
+      entityName: 'Peer Person',
+      entityType: 'person',
+    });
+    expect(route.sourceId).toBe('lg-private');
+    expect((await assertPrivateRoutingArmed(engine)).localPath).toBe('database:lg-private');
+
+    await expect(putPage.handler(putContext(), {
+      slug: 'people/peer-person',
+      content: PERSON_CONTENT,
+    })).resolves.toBeDefined();
+    await expect(engine.getPage('people/peer-person', { sourceId: 'lg-private' })).resolves.toBeDefined();
   });
 });
