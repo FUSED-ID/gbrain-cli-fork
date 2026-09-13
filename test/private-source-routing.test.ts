@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { Page } from '../src/core/types.ts';
-import { resolvePrivateWriteSource, assertPrivateRoutingArmed, __privateSourceRoutingTest } from '../src/core/private-source-routing.ts';
+import { resolvePrivateWriteSource, assertPrivateRoutingArmed, shouldAssertPrivateRouting, __privateSourceRoutingTest } from '../src/core/private-source-routing.ts';
 
 function writePolicy(dir: string): void {
   writeFileSync(join(dir, '_brain-filing-rules.md'), '# private filing rules\n');
@@ -88,6 +88,19 @@ describe('private source routing', () => {
     });
     expect(route.sourceId).toBe('lg-private');
     expect(route.reason).toBe('existing_private_page');
+  });
+
+  test('refreshes world federation flags after a source config change', async () => {
+    let config: Record<string, unknown> = { federated: true };
+    const engine = {
+      executeRaw: async () => [{
+        id: 'default', name: 'Default', local_path: null, last_commit: null,
+        last_sync_at: null, config, created_at: new Date(),
+      }],
+    } as unknown as BrainEngine;
+    expect(await shouldAssertPrivateRouting(engine, 'default')).toBe(false);
+    config = { federated: true, facts_visibility: 'world' };
+    expect(await shouldAssertPrivateRouting(engine, 'default')).toBe(true);
   });
 });
 
