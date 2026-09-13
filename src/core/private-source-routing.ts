@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from './engine.ts';
-import { loadAllSources, type SourceRow } from './sources-load.ts';
+import { loadAllSources, parseSourceConfig, type SourceRow } from './sources-load.ts';
 
 export interface PrivateWriteRouteInput {
   requestedSourceId?: string;
@@ -23,6 +23,14 @@ interface ExcludedPerson { slugPattern: string; name: string; }
 const DEFAULT_SOURCE_ID = 'default';
 const EXCLUDED_PEOPLE_FILE = '_excluded-people.md';
 const FILING_RULES_FILE = '_brain-filing-rules.md';
+const PRIVATE_ROUTING_CONFIG_KEY = 'private_routing';
+const EXCLUDED_PEOPLE_CONFIG_KEY = 'excluded_people_markdown';
+const FILING_RULES_CONFIG_KEY = 'filing_rules_markdown';
+
+interface PrivatePolicyDocuments {
+  excludedPeople: string;
+  filingRules: string;
+}
 
 function normalizeSlugish(value: string): string {
   return value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
@@ -52,7 +60,8 @@ function candidateKeys(input: PrivateWriteRouteInput): Set<string> {
 
 function isPersonishWrite(input: PrivateWriteRouteInput): boolean {
   return input.entityType === 'person' || input.slug.endsWith('/_author')
-    || input.slug.startsWith('people/') || /^type:\s*person\s*$/mi.test(input.content ?? '');
+    || input.slug.startsWith('people/') || input.slug.startsWith('person/')
+    || /^type:\s*person\s*$/mi.test(input.content ?? '');
 }
 
 function globMatches(pattern: string, keys: Set<string>): boolean {
@@ -87,6 +96,34 @@ async function getConfiguredPrivateSourceId(engine: BrainEngine): Promise<string
   return null;
 }
 
+function databasePolicyDocuments(source: SourceRow): PrivatePolicyDocuments | null {
+  const config = parseSourceConfig(source.config);
+  const routing = config[PRIVATE_ROUTING_CONFIG_KEY];
+  if (!routing || typeof routing !== 'object' || Array.isArray(routing)) return null;
+  const policy = routing as Record<string, unknown>;
+  const excludedPeople = policy[EXCLUDED_PEOPLE_CONFIG_KEY];
+  const filingRules = policy[FILING_RULES_CONFIG_KEY];
+  if (typeof excludedPeople !== 'string' || typeof filingRules !== 'string') return null;
+  return { excludedPeople, filingRules };
+}
+
+function sourceHasPolicy(source: SourceRow): boolean {
+  if (databasePolicyDocuments(source)) return true;
+  if (!source.local_path) return false;
+  return existsSync(join(source.local_path, EXCLUDED_PEOPLE_FILE))
+    && existsSync(join(source.local_path, FILING_RULES_FILE));
+}
+
+function readPolicyDocuments(source: SourceRow): PrivatePolicyDocuments | null {
+  const stored = databasePolicyDocuments(source);
+  if (stored) return stored;
+  if (!source.local_path) return null;
+  return {
+    excludedPeople: readFileSync(join(source.local_path, EXCLUDED_PEOPLE_FILE), 'utf8'),
+    filingRules: readFileSync(join(source.local_path, FILING_RULES_FILE), 'utf8'),
+  };
+}
+
 async function findPrivateSource(engine: BrainEngine): Promise<SourceRow | null> {
   let sources: SourceRow[];
   try { sources = await loadAllSources(engine); } catch { return null; }
@@ -96,15 +133,16 @@ async function findPrivateSource(engine: BrainEngine): Promise<SourceRow | null>
     ...sources.filter((source) => source.id === 'lg-private'),
     ...sources,
   ];
-  return preferred.find((source) => !!source.local_path
-    && existsSync(join(source.local_path, EXCLUDED_PEOPLE_FILE))
-    && existsSync(join(source.local_path, FILING_RULES_FILE))) ?? null;
+  return preferred.find(sourceHasPolicy) ?? null;
 }
 
 function matchesExcludedPeople(source: SourceRow, input: PrivateWriteRouteInput): boolean {
-  if (!source.local_path) return false;
   let entries: ExcludedPerson[];
-  try { entries = parseExcludedPeople(readFileSync(join(source.local_path, EXCLUDED_PEOPLE_FILE), 'utf8')); } catch { return false; }
+  try {
+    const documents = readPolicyDocuments(source);
+    if (!documents) return false;
+    entries = parseExcludedPeople(documents.excludedPeople);
+  } catch { return false; }
   const keys = candidateKeys(input);
   return entries.some((entry) => globMatches(entry.slugPattern, keys) || keys.has(normalizeName(entry.name)));
 }
@@ -114,7 +152,6 @@ export async function resolvePrivateWriteSource(
   input: PrivateWriteRouteInput,
 ): Promise<PrivateWriteRoute> {
   const requested = input.requestedSourceId || DEFAULT_SOURCE_ID;
-  if (!isPersonishWrite(input)) return { sourceId: requested, routed: false };
   const privateSource = await findPrivateSource(engine);
   if (!privateSource) return { sourceId: requested, routed: false };
   if (requested === privateSource.id) return { sourceId: requested, routed: false, privateSourceId: privateSource.id };
@@ -123,6 +160,7 @@ export async function resolvePrivateWriteSource(
       return { sourceId: privateSource.id, routed: true, reason: 'existing_private_page', privateSourceId: privateSource.id };
     }
   } catch { /* policy-file matching remains authoritative */ }
+  if (!isPersonishWrite(input)) return { sourceId: requested, routed: false, privateSourceId: privateSource.id };
   if (matchesExcludedPeople(privateSource, input)) {
     return { sourceId: privateSource.id, routed: true, reason: 'excluded_people_policy', privateSourceId: privateSource.id };
   }
@@ -145,7 +183,7 @@ export async function resolvePrivateWriteSource(
  * error, and leave nothing in the logs to find afterwards.
  *
  * So every person-shaped write must assert rather than assume. This throws; it
- * does not warn. The result is cached per engine while the policy file
+ * does not warn. The result is cached per engine while the policy source
  * metadata is unchanged, so a bulk import does not parse the policy per page.
  */
 export interface PrivateRoutingArmedReport {
@@ -160,15 +198,18 @@ interface CachedArmedRouting {
 }
 
 const armedRoutingCache = new WeakMap<object, CachedArmedRouting>();
-const worldFederatedSourceCache = new WeakMap<object, Set<string>>();
 
-export function isPersonishPageWrite(
+export async function isPersonishPageWrite(
+  engine: BrainEngine,
   slug: string,
   page: { type?: string; frontmatter?: unknown },
-): boolean {
-  if (page.type === 'person' || slug.endsWith('/_author') || slug.startsWith('people/')) return true;
-  if (!page.frontmatter || typeof page.frontmatter !== 'object') return false;
-  return (page.frontmatter as Record<string, unknown>).type === 'person';
+): Promise<boolean> {
+  if (page.type === 'person' || slug.endsWith('/_author') || slug.startsWith('people/') || slug.startsWith('person/')) return true;
+  if (page.frontmatter && typeof page.frontmatter === 'object'
+    && (page.frontmatter as Record<string, unknown>).type === 'person') return true;
+  const source = await findPrivateSource(engine);
+  if (!source) return false;
+  try { return !!(await engine.getPage(slug, { sourceId: source.id })); } catch { return false; }
 }
 
 function cacheOwner(engine: BrainEngine): object {
@@ -181,9 +222,6 @@ function cacheOwner(engine: BrainEngine): object {
 }
 
 async function worldFederatedSourceIds(engine: BrainEngine): Promise<Set<string>> {
-  const owner = cacheOwner(engine);
-  const cached = worldFederatedSourceCache.get(owner);
-  if (cached) return cached;
   let sources: SourceRow[];
   try {
     sources = await loadAllSources(engine);
@@ -193,13 +231,11 @@ async function worldFederatedSourceIds(engine: BrainEngine): Promise<Set<string>
   const ids = new Set(
     sources
       .filter((source) => {
-        const config = source.config;
-        return typeof config === 'object' && config !== null &&
-          config.federated === true && config.facts_visibility === 'world';
+        const config = parseSourceConfig(source.config);
+        return config.federated === true && config.facts_visibility === 'world';
       })
       .map((source) => source.id),
   );
-  worldFederatedSourceCache.set(owner, ids);
   return ids;
 }
 
@@ -210,11 +246,17 @@ export async function shouldAssertPrivateRouting(
   return (await worldFederatedSourceIds(engine)).has(sourceId);
 }
 
-function policyFingerprint(localPath: string): string | null {
+function policyFingerprint(source: SourceRow): string | null {
+  const stored = databasePolicyDocuments(source);
+  if (stored) {
+    return `db:${source.id}:${source.local_path ?? ''}:${stored.excludedPeople}:${stored.filingRules}`;
+  }
+  if (!source.local_path) return null;
   try {
-    return [EXCLUDED_PEOPLE_FILE, FILING_RULES_FILE].map((fileName) => {
-      const stat = statSync(join(localPath, fileName));
-      return `${fileName}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+    return [`source:${source.id}`, `path:${source.local_path}`, EXCLUDED_PEOPLE_FILE, FILING_RULES_FILE].map((part) => {
+      if (part !== EXCLUDED_PEOPLE_FILE && part !== FILING_RULES_FILE) return part;
+      const stat = statSync(join(source.local_path!, part));
+      return `${part}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
     }).join('|');
   } catch {
     return null;
@@ -226,12 +268,13 @@ export async function assertPrivateRoutingArmed(
 ): Promise<PrivateRoutingArmedReport> {
   const owner = cacheOwner(engine);
   const cached = armedRoutingCache.get(owner);
-  if (cached && policyFingerprint(cached.report.localPath) === cached.policyFingerprint) {
+  const source = await findPrivateSource(engine);
+  if (cached && source && source.id === cached.report.privateSourceId
+    && policyFingerprint(source) === cached.policyFingerprint) {
     return cached.report;
   }
 
-  const source = await findPrivateSource(engine);
-  if (!source || !source.local_path) {
+  if (!source) {
     throw new Error(
       'private-write routing is NOT ARMED: no source has both ' +
       `${EXCLUDED_PEOPLE_FILE} and ${FILING_RULES_FILE} present under its local_path. ` +
@@ -241,20 +284,32 @@ export async function assertPrivateRoutingArmed(
   }
 
   let raw: string;
-  try {
-    raw = readFileSync(join(source.local_path, EXCLUDED_PEOPLE_FILE), 'utf8');
-  } catch (err) {
-    throw new Error(
-      `private-write routing is NOT ARMED: ${EXCLUDED_PEOPLE_FILE} under ` +
-      `'${source.local_path}' could not be read (${(err as Error).message}). Refusing to import.`,
-    );
+  const stored = databasePolicyDocuments(source);
+  if (stored) {
+    raw = stored.excludedPeople;
+  } else {
+    if (!source.local_path) {
+      throw new Error(
+        'private-write routing is NOT ARMED: the private source has no local_path ' +
+          'and no database-held policy documents. Refusing to import.',
+      );
+    }
+    try {
+      raw = readFileSync(join(source.local_path, EXCLUDED_PEOPLE_FILE), 'utf8');
+    } catch (err) {
+      throw new Error(
+        `private-write routing is NOT ARMED: ${EXCLUDED_PEOPLE_FILE} under ` +
+        `'${source.local_path}' could not be read (${(err as Error).message}). Refusing to import.`,
+      );
+    }
   }
 
   const entries = parseExcludedPeople(raw);
   if (entries.length === 0) {
+    const policyLocation = source.local_path ?? `database:${source.id}`;
     throw new Error(
       `private-write routing is NOT ARMED: ${EXCLUDED_PEOPLE_FILE} under ` +
-      `'${source.local_path}' parsed to ZERO deny-list entries. The parser keys on a ` +
+      `'${policyLocation}' parsed to ZERO deny-list entries. The parser keys on a ` +
       "'## Family deny-list' heading followed by a markdown table; a renamed heading " +
       'or reformatted table yields an empty list and silently disables routing. Refusing to import.',
     );
@@ -262,10 +317,10 @@ export async function assertPrivateRoutingArmed(
 
   const report = {
     privateSourceId: source.id,
-    localPath: source.local_path,
+    localPath: source.local_path ?? `database:${source.id}`,
     excludedEntryCount: entries.length,
   };
-  const fingerprint = policyFingerprint(report.localPath);
+  const fingerprint = policyFingerprint(source);
   if (fingerprint) armedRoutingCache.set(owner, { report, policyFingerprint: fingerprint });
   return report;
 }
