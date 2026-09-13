@@ -91,6 +91,7 @@ import type {
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { assertPrivateRoutingArmed, isPersonishPageWrite, shouldAssertPrivateRouting } from './private-source-routing.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
 import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
 import { PAGE_SORT_SQL, MIN_ENTITY_PAGES_FOR_COVERAGE } from './types.ts';
@@ -1751,6 +1752,9 @@ export class PGLiteEngine implements BrainEngine {
 
   async putPage(slug: string, page: PageInput, opts?: { sourceId?: string; allowEmptyOverwrite?: boolean }): Promise<Page> {
     slug = validateSlug(slug);
+    if (isPersonishPageWrite(slug, page) && await shouldAssertPrivateRouting(this, opts?.sourceId ?? 'default')) {
+      await assertPrivateRoutingArmed(this);
+    }
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
     const sourceId = opts?.sourceId ?? 'default';
