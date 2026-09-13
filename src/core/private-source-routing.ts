@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from './engine.ts';
 import { loadAllSources, type SourceRow } from './sources-load.ts';
@@ -130,7 +130,7 @@ export async function resolvePrivateWriteSource(
 }
 
 /**
- * Import pre-flight: assert that private-write routing is ARMED.
+ * Write pre-flight: assert that private-write routing is ARMED.
  *
  * Why this exists. `resolvePrivateWriteSource` degrades to "no routing" in
  * three places, all silent: no private source resolves, `_excluded-people.md`
@@ -144,8 +144,9 @@ export async function resolvePrivateWriteSource(
  * family and person page to the federated, world-visible source, raise no
  * error, and leave nothing in the logs to find afterwards.
  *
- * So the import must assert rather than assume. This throws; it does not warn.
- * Call it immediately before a bulk import and treat a throw as a hard stop.
+ * So every person-shaped write must assert rather than assume. This throws; it
+ * does not warn. The result is cached per engine while the policy file
+ * metadata is unchanged, so a bulk import does not parse the policy per page.
  */
 export interface PrivateRoutingArmedReport {
   privateSourceId: string;
@@ -153,9 +154,82 @@ export interface PrivateRoutingArmedReport {
   excludedEntryCount: number;
 }
 
+interface CachedArmedRouting {
+  report: PrivateRoutingArmedReport;
+  policyFingerprint: string;
+}
+
+const armedRoutingCache = new WeakMap<object, CachedArmedRouting>();
+const worldFederatedSourceCache = new WeakMap<object, Set<string>>();
+
+export function isPersonishPageWrite(
+  slug: string,
+  page: { type?: string; frontmatter?: unknown },
+): boolean {
+  if (page.type === 'person' || slug.endsWith('/_author') || slug.startsWith('people/')) return true;
+  if (!page.frontmatter || typeof page.frontmatter !== 'object') return false;
+  return (page.frontmatter as Record<string, unknown>).type === 'person';
+}
+
+function cacheOwner(engine: BrainEngine): object {
+  let owner = engine as unknown as object;
+  while (true) {
+    const prototype = Object.getPrototypeOf(owner);
+    if (!prototype || typeof prototype !== 'object' || !('kind' in prototype)) return owner;
+    owner = prototype;
+  }
+}
+
+async function worldFederatedSourceIds(engine: BrainEngine): Promise<Set<string>> {
+  const owner = cacheOwner(engine);
+  const cached = worldFederatedSourceCache.get(owner);
+  if (cached) return cached;
+  let sources: SourceRow[];
+  try {
+    sources = await loadAllSources(engine);
+  } catch {
+    return new Set(['default']);
+  }
+  const ids = new Set(
+    sources
+      .filter((source) => {
+        const config = source.config;
+        return typeof config === 'object' && config !== null &&
+          config.federated === true && config.facts_visibility === 'world';
+      })
+      .map((source) => source.id),
+  );
+  worldFederatedSourceCache.set(owner, ids);
+  return ids;
+}
+
+export async function shouldAssertPrivateRouting(
+  engine: BrainEngine,
+  sourceId: string,
+): Promise<boolean> {
+  return (await worldFederatedSourceIds(engine)).has(sourceId);
+}
+
+function policyFingerprint(localPath: string): string | null {
+  try {
+    return [EXCLUDED_PEOPLE_FILE, FILING_RULES_FILE].map((fileName) => {
+      const stat = statSync(join(localPath, fileName));
+      return `${fileName}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+    }).join('|');
+  } catch {
+    return null;
+  }
+}
+
 export async function assertPrivateRoutingArmed(
   engine: BrainEngine,
 ): Promise<PrivateRoutingArmedReport> {
+  const owner = cacheOwner(engine);
+  const cached = armedRoutingCache.get(owner);
+  if (cached && policyFingerprint(cached.report.localPath) === cached.policyFingerprint) {
+    return cached.report;
+  }
+
   const source = await findPrivateSource(engine);
   if (!source || !source.local_path) {
     throw new Error(
@@ -186,11 +260,14 @@ export async function assertPrivateRoutingArmed(
     );
   }
 
-  return {
+  const report = {
     privateSourceId: source.id,
     localPath: source.local_path,
     excludedEntryCount: entries.length,
   };
+  const fingerprint = policyFingerprint(report.localPath);
+  if (fingerprint) armedRoutingCache.set(owner, { report, policyFingerprint: fingerprint });
+  return report;
 }
 
 export const __privateSourceRoutingTest = { parseExcludedPeople, normalizeSlugish, candidateKeys, findPrivateSource };
