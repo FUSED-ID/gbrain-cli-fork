@@ -90,6 +90,18 @@ describe('private source routing', () => {
     expect(route.reason).toBe('existing_private_page');
   });
 
+  test('routes an existing bare private slug after stripping leading path segments', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-private-routing-'));
+    writePolicy(dir);
+    const route = await resolvePrivateWriteSource(fakeEngine(dir, ['contact-person']), {
+      requestedSourceId: 'default',
+      slug: 'contacts/contact-person',
+      content: '---\ntype: concept\n---\n# Contact Person\n',
+    });
+    expect(route.sourceId).toBe('lg-private');
+    expect(route.reason).toBe('existing_private_page');
+  });
+
   test('refreshes world federation flags after a source config change', async () => {
     let config: Record<string, unknown> = { federated: true };
     const engine = {
@@ -147,5 +159,26 @@ describe('assertPrivateRoutingArmed (import pre-flight)', () => {
     try { await assertPrivateRoutingArmed(fakeEngine(empty)); } catch (e) { msg = (e as Error).message; }
     expect(msg).toContain('_excluded-people.md');
     expect(msg).toContain('Refusing to import');
+  });
+
+  test('refuses to arm when database and on-disk policy documents differ', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-mismatch-'));
+    writePolicy(dir);
+    const engine = {
+      executeRaw: async () => [
+        { id: 'default', name: 'Default', local_path: null, last_commit: null, last_sync_at: null, config: {}, created_at: new Date() },
+        {
+          id: 'lg-private', name: 'Private', local_path: dir, last_commit: null, last_sync_at: null,
+          config: {
+            private_routing: {
+              excluded_people_markdown: '## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `database-only` | Database Only |\n',
+              filing_rules_markdown: '# private filing rules\n',
+            },
+          },
+          created_at: new Date(),
+        },
+      ],
+    } as unknown as BrainEngine;
+    await expect(assertPrivateRoutingArmed(engine)).rejects.toThrow(/mismatches.*on-disk|on-disk.*mismatches/i);
   });
 });

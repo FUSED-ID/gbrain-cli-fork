@@ -44,10 +44,18 @@ function stripAuthorSuffix(slug: string): string { return slug.replace(/\/_autho
 function candidateKeys(input: PrivateWriteRouteInput): Set<string> {
   const keys = new Set<string>();
   const add = (value?: string) => { if (value) { const n = normalizeSlugish(value); if (n) keys.add(n); } };
+  const addPathCandidates = (value: string) => {
+    let rest = value;
+    while (rest) {
+      add(rest);
+      const slash = rest.indexOf('/');
+      if (slash < 0) break;
+      rest = rest.slice(slash + 1);
+    }
+  };
   const slug = input.slug;
-  add(slug); add(stripAuthorSuffix(slug));
-  add(slug.replace(/^people\//, '')); add(stripAuthorSuffix(slug).replace(/^people\//, ''));
-  add(slug.replace(/^wiki\//, '')); add(stripAuthorSuffix(slug).replace(/^wiki\//, ''));
+  addPathCandidates(slug);
+  addPathCandidates(stripAuthorSuffix(slug));
   add(input.entityName);
   if (input.content) {
     const title = input.content.match(/^title:\s*(.+)$/m)?.[1]
@@ -61,6 +69,7 @@ function candidateKeys(input: PrivateWriteRouteInput): Set<string> {
 function isPersonishWrite(input: PrivateWriteRouteInput): boolean {
   return input.entityType === 'person' || input.slug.endsWith('/_author')
     || input.slug.startsWith('people/') || input.slug.startsWith('person/')
+    || input.slug.startsWith('contacts/') || input.slug.startsWith('harvest/')
     || /^type:\s*person\s*$/mi.test(input.content ?? '');
 }
 
@@ -72,7 +81,7 @@ function globMatches(pattern: string, keys: Set<string>): boolean {
   return [...keys].some((key) => re.test(key));
 }
 
-function parseExcludedPeople(doc: string): ExcludedPerson[] {
+export function parseExcludedPeople(doc: string): ExcludedPerson[] {
   const start = doc.search(/^##\s+Family deny-list\b/im);
   if (start < 0) return [];
   const rest = doc.slice(start);
@@ -124,6 +133,28 @@ function readPolicyDocuments(source: SourceRow): PrivatePolicyDocuments | null {
   };
 }
 
+function diskPolicyDocuments(source: SourceRow): PrivatePolicyDocuments | null {
+  if (!source.local_path) return null;
+  const excludedPath = join(source.local_path, EXCLUDED_PEOPLE_FILE);
+  const filingPath = join(source.local_path, FILING_RULES_FILE);
+  if (!existsSync(excludedPath) || !existsSync(filingPath)) return null;
+  try {
+    return {
+      excludedPeople: readFileSync(excludedPath, 'utf8'),
+      filingRules: readFileSync(filingPath, 'utf8'),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function policyContentMismatch(source: SourceRow): boolean {
+  const stored = databasePolicyDocuments(source);
+  const onDisk = diskPolicyDocuments(source);
+  return !!stored && !!onDisk
+    && (stored.excludedPeople !== onDisk.excludedPeople || stored.filingRules !== onDisk.filingRules);
+}
+
 async function findPrivateSource(engine: BrainEngine): Promise<SourceRow | null> {
   let sources: SourceRow[];
   try { sources = await loadAllSources(engine); } catch { return null; }
@@ -155,9 +186,14 @@ export async function resolvePrivateWriteSource(
   const privateSource = await findPrivateSource(engine);
   if (!privateSource) return { sourceId: requested, routed: false };
   if (requested === privateSource.id) return { sourceId: requested, routed: false, privateSourceId: privateSource.id };
+  if (policyContentMismatch(privateSource)) {
+    return { sourceId: requested, routed: false, privateSourceId: privateSource.id };
+  }
   try {
-    if (await engine.getPage(input.slug, { sourceId: privateSource.id })) {
-      return { sourceId: privateSource.id, routed: true, reason: 'existing_private_page', privateSourceId: privateSource.id };
+    for (const key of candidateKeys(input)) {
+      if (await engine.getPage(key, { sourceId: privateSource.id })) {
+        return { sourceId: privateSource.id, routed: true, reason: 'existing_private_page', privateSourceId: privateSource.id };
+      }
     }
   } catch { /* policy-file matching remains authoritative */ }
   if (!isPersonishWrite(input)) return { sourceId: requested, routed: false, privateSourceId: privateSource.id };
@@ -202,14 +238,21 @@ const armedRoutingCache = new WeakMap<object, CachedArmedRouting>();
 export async function isPersonishPageWrite(
   engine: BrainEngine,
   slug: string,
-  page: { type?: string; frontmatter?: unknown },
+  page: { type?: string; title?: string; frontmatter?: unknown },
 ): Promise<boolean> {
-  if (page.type === 'person' || slug.endsWith('/_author') || slug.startsWith('people/') || slug.startsWith('person/')) return true;
+  if (page.type === 'person' || slug.endsWith('/_author') || slug.startsWith('people/') || slug.startsWith('person/')
+    || slug.startsWith('contacts/') || slug.startsWith('harvest/')) return true;
   if (page.frontmatter && typeof page.frontmatter === 'object'
     && (page.frontmatter as Record<string, unknown>).type === 'person') return true;
   const source = await findPrivateSource(engine);
   if (!source) return false;
-  try { return !!(await engine.getPage(slug, { sourceId: source.id })); } catch { return false; }
+  try {
+    const input = { slug, entityType: page.type, entityName: page.title, content: undefined };
+    for (const key of candidateKeys(input)) {
+      if (await engine.getPage(key, { sourceId: source.id })) return true;
+    }
+  } catch { /* existing-page detection is best effort */ }
+  return false;
 }
 
 function cacheOwner(engine: BrainEngine): object {
@@ -269,6 +312,13 @@ export async function assertPrivateRoutingArmed(
   const owner = cacheOwner(engine);
   const cached = armedRoutingCache.get(owner);
   const source = await findPrivateSource(engine);
+  if (source && policyContentMismatch(source)) {
+    throw new Error(
+      `private-write routing is NOT ARMED: ${source.id} has database-held policy content ` +
+      `that mismatches the on-disk ${EXCLUDED_PEOPLE_FILE} or ${FILING_RULES_FILE}; refusing to arm. ` +
+      'Update the database-held policy with the provisioning command or make both copies identical.',
+    );
+  }
   if (cached && source && source.id === cached.report.privateSourceId
     && policyFingerprint(source) === cached.policyFingerprint) {
     return cached.report;
