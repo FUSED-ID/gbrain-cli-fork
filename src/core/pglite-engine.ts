@@ -91,7 +91,7 @@ import type {
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
-import { assertPrivateRoutingArmed, hasLivePageInSource, isPersonishPageWrite, shouldAssertPrivateRouting } from './private-source-routing.ts';
+import { assertPrivateRoutingArmed, isPersonishPageWrite, resolvePrivateWriteSource, shouldAssertPrivateRouting } from './private-source-routing.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
 import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
 import { PAGE_SORT_SQL, MIN_ENTITY_PAGES_FOR_COVERAGE } from './types.ts';
@@ -1750,20 +1750,49 @@ export class PGLiteEngine implements BrainEngine {
     return { slug: r.slug, id: Number(r.id) };
   }
 
-  async putPage(slug: string, page: PageInput, opts?: { sourceId?: string; allowEmptyOverwrite?: boolean }): Promise<Page> {
+  async putPage(
+    slug: string,
+    page: PageInput,
+    opts?: { sourceId?: string; allowEmptyOverwrite?: boolean; migrationWrite?: boolean },
+  ): Promise<Page> {
     slug = validateSlug(slug);
     const sourceId = opts?.sourceId ?? 'default';
-    if (await shouldAssertPrivateRouting(this, sourceId)) {
+    // migrationWrite: mirrors postgres-engine.ts. `gbrain migrate` copies
+    // `sources` before `pages`, so on a fresh target every migrated page
+    // looks "new" to this guard. The D1 policy check is about NEW leaks
+    // entering a world-federated source, not a verbatim copy of a source
+    // engine's already-accepted pages, so migration is exempted here
+    // explicitly and only here. See copyPageToTarget in
+    // src/commands/migrate-engine.ts, the one caller allowed to set it.
+    if (!opts?.migrationWrite && await shouldAssertPrivateRouting(this, sourceId)) {
       const personish = await isPersonishPageWrite(this, slug, page);
-      if (personish && !(await hasLivePageInSource(this, slug, sourceId))) {
+      if (personish) {
+        // Fail closed on every personish write, regardless of outcome: a
+        // missing/unreadable policy file or a renamed deny-list heading must
+        // refuse, never silently admit.
         await assertPrivateRoutingArmed(this);
-        throw new Error(
-          `private-write routing is ARMED but engine putPage received a person-shaped write for ` +
-          `world-federated source '${sourceId}'. Slug '${slug}' is new to this source. ` +
-          'Route it through put_page or write the private source explicitly.',
-        );
+        const route = await resolvePrivateWriteSource(this, {
+          requestedSourceId: sourceId,
+          slug,
+          entityType: page.type,
+          entityName: page.title,
+        });
+        if (route.routed) {
+          throw new Error(
+            `private-write routing is ARMED but engine putPage received a person-shaped write for ` +
+            `world-federated source '${sourceId}' that the privacy policy routes to private source ` +
+            `'${route.sourceId}' (${route.reason}). Slug '${slug}'. ` +
+            'Route it through put_page or write the private source explicitly.',
+          );
+        }
       }
     }
+    // Tombstone race guard: captured before any read/write below, mirrors
+    // postgres-engine.ts. Lets the ON CONFLICT clause refuse to resurrect a
+    // row whose soft delete (a privacy purge, most sensitively) commits
+    // DURING this call, in the gap between the checks above and the upsert
+    // below.
+    const writeStartedAt = new Date().toISOString();
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
 
@@ -1837,18 +1866,31 @@ export class PGLiteEngine implements BrainEngine {
          source_uri            = COALESCE(EXCLUDED.source_uri,            pages.source_uri),
          ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
          ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at)
+       WHERE pages.deleted_at IS NULL OR pages.deleted_at < $19::timestamptz
        RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at`,
-      [sourceId, slug, page.type, pageKind, sanitizeText(page.title), sanitizeText(page.compiled_truth), sanitizeText(page.timeline || ''), JSON.stringify(frontmatter), hash, effectiveDate, effectiveDateSource, importFilename, chunkerVersion, sourcePath, sourceKind, sourceUri, ingestedVia, ingestedAt]
+      [sourceId, slug, page.type, pageKind, sanitizeText(page.title), sanitizeText(page.compiled_truth), sanitizeText(page.timeline || ''), JSON.stringify(frontmatter), hash, effectiveDate, effectiveDateSource, importFilename, chunkerVersion, sourcePath, sourceKind, sourceUri, ingestedVia, ingestedAt, writeStartedAt]
     );
     // PGLite can return zero rows from INSERT ... ON CONFLICT DO UPDATE ...
     // RETURNING in no-op/trigger edge cases, which made rowToPage(undefined)
     // throw "undefined is not an object (evaluating 'row.deleted_at')" and
-    // skip the file during sync. The row WAS written, so re-read instead of
-    // crashing.
+    // skip the file during sync. Most of the time the row WAS written, so
+    // re-read instead of crashing.
+    //
+    // The ON CONFLICT WHERE above adds a second, deliberate zero-rows case:
+    // a row soft-deleted (a privacy purge, most sensitively) AFTER
+    // writeStartedAt was captured, concurrently with this call. That row's
+    // deleted_at stays untouched, so the re-read below correctly finds
+    // nothing (getPage excludes deleted rows), and this must NOT be treated
+    // as a "no-op that actually succeeded" shrug: throw, refusing to report
+    // success for a write that was, deliberately, not applied.
     if (rows.length === 0) {
       const reread = await this.getPage(slug, { sourceId });
       if (reread) return reread;
-      throw new Error(`putPage: RETURNING produced no row for ${sourceId}/${slug}`);
+      throw new Error(
+        `putPage: '${slug}' in source '${sourceId}' produced no row. Either RETURNING produced ` +
+          'none for a PGLite no-op, or the row was deleted concurrently with this write and is ' +
+          'being left deleted rather than resurrected. Re-check whether the page should exist and retry if so.',
+      );
     }
     return rowToPage(rows[0] as Record<string, unknown>);
   }

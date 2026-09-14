@@ -12,6 +12,19 @@ const PERSON_CONTENT = '---\ntype: person\ntitle: Private Test Person\n---\n\nPe
 let engine: PGLiteEngine;
 let policyDir: string;
 
+// Hermeticity: this file writes real person-shaped content through the
+// put_page operation handler (`executePutPage`), which loads
+// ../ai/gateway.ts and checks isAvailable('embedding') BEFORE the engine's
+// privacy guard ever runs. On a shell where OPENAI_API_KEY / VOYAGE_API_KEY /
+// OPENROUTER_API_KEY are exported (this developer's normal shell), that
+// makes every put_page call in this file attempt a REAL embedding call,
+// which previously burned live quota, hit HTTP 429, and made this file take
+// 319s. Unset the provider keys for the duration of this file only, so
+// isAvailable('embedding') is false and noEmbed short-circuits before any
+// network call; restore whatever was there afterwards.
+const EMBEDDING_PROVIDER_KEYS = ['OPENAI_API_KEY', 'VOYAGE_API_KEY', 'OPENROUTER_API_KEY'] as const;
+const savedProviderKeys: Partial<Record<typeof EMBEDDING_PROVIDER_KEYS[number], string>> = {};
+
 function writePolicy(excluded: string): void {
   writeFileSync(join(policyDir, '_brain-filing-rules.md'), '# filing rules\n');
   writeFileSync(join(policyDir, '_excluded-people.md'), excluded);
@@ -57,6 +70,10 @@ async function executePutPage(slug: string): Promise<void> {
 }
 
 beforeAll(async () => {
+  for (const key of EMBEDDING_PROVIDER_KEYS) {
+    if (process.env[key] !== undefined) savedProviderKeys[key] = process.env[key];
+    delete process.env[key];
+  }
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -78,6 +95,10 @@ beforeEach(async () => {
 afterAll(async () => {
   await engine.disconnect();
   if (policyDir && existsSync(policyDir)) rmSync(policyDir, { recursive: true, force: true });
+  for (const key of EMBEDDING_PROVIDER_KEYS) {
+    if (key in savedProviderKeys) process.env[key] = savedProviderKeys[key];
+    else delete process.env[key];
+  }
 });
 
 describe('private routing armed guard at the put_page write path', () => {
@@ -156,60 +177,157 @@ describe('private routing armed guard at the put_page write path', () => {
     }, { sourceId: 'default' })).rejects.toThrow(/routed source|world-federated|refus/i);
   });
 
-  test('RED then GREEN varies only whether the exact target slug already exists', async () => {
+  // D1 policy fix (this lane): refusal is decided by the deny-list and by
+  // live private-source collisions, never by "is this exact slug new to
+  // `default`". The pairs below each vary exactly one input, RED then GREEN,
+  // so a gate that never went RED is not silently trusted.
+
+  test('RED/GREEN: a slug matching the deny list is refused; the same shape off the list is allowed', async () => {
     await pointPrivateSource(policyDir);
-    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated` | Unrelated |\n');
-    const slug = 'person/arm-writepath-existing';
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `denylisted-person*` | Denylisted Person |\n');
     const page = {
       type: 'concept',
-      title: 'Private Test Person',
-      compiled_truth: 'Person body.',
+      title: 'Some Contact',
+      compiled_truth: 'Contact body.',
       timeline: '',
       frontmatter: {},
     } as const;
 
-    const red = await engine.putPage(slug, page, { sourceId: 'default' })
+    const red = await engine.putPage('people/denylisted-person', page, { sourceId: 'default' })
       .then(() => ({ allowed: true, message: '' }))
       .catch((error: unknown) => ({ allowed: false, message: String(error) }));
     expect(red.allowed).toBe(false);
-    expect(red.message).toContain(`Slug '${slug}' is new to this source.`);
-    console.log(`RED person-shaped write to default: refused: ${red.message}`);
+    expect(red.message).toMatch(/excluded_people_policy/);
+    console.log(`RED deny-listed slug write to default: refused: ${red.message}`);
 
-    await engine.putPage('arm-writepath-existing-seed', page, { sourceId: 'default' });
-    await engine.executeRaw(
-      `UPDATE pages SET slug = $1 WHERE source_id = 'default' AND slug = 'arm-writepath-existing-seed'`,
-      [slug],
-    );
-
-    const green = await engine.putPage(slug, page, { sourceId: 'default' });
-    const roundTrip = await engine.getPage(slug, { sourceId: 'default' });
-    expect(green.slug).toBe(slug);
+    const green = await engine.putPage('people/off-the-list-person', page, { sourceId: 'default' });
+    const roundTrip = await engine.getPage('people/off-the-list-person', { sourceId: 'default' });
+    expect(green.slug).toBe('people/off-the-list-person');
     expect(roundTrip?.compiled_truth).toBe(page.compiled_truth);
-    console.log(`GREEN person-shaped write to default: allowed and round-tripped slug=${roundTrip?.slug}`);
+    console.log(`GREEN non-denylisted slug write to default: allowed, round-tripped slug=${roundTrip?.slug}`);
   });
 
-  test('a soft-deleted target row does not count as existing', async () => {
+  test('RED/GREEN: a slug live in lg-private is refused; the same shape not live there is allowed', async () => {
     await pointPrivateSource(policyDir);
     writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated` | Unrelated |\n');
-    const slug = 'person/arm-writepath-soft-deleted';
+    await engine.putPage('privately-held-person', {
+      type: 'concept',
+      title: 'Privately Held Person',
+      compiled_truth: 'Private copy.',
+      timeline: '',
+      frontmatter: {},
+    }, { sourceId: 'lg-private' });
+
     const page = {
       type: 'concept',
-      title: 'Private Test Person',
-      compiled_truth: 'Person body.',
+      title: 'Privately Held Person',
+      compiled_truth: 'Leaked shape.',
       timeline: '',
       frontmatter: {},
     } as const;
 
-    await engine.putPage('arm-writepath-soft-deleted-seed', page, { sourceId: 'default' });
+    const red = await engine.putPage('people/privately-held-person', page, { sourceId: 'default' })
+      .then(() => ({ allowed: true, message: '' }))
+      .catch((error: unknown) => ({ allowed: false, message: String(error) }));
+    expect(red.allowed).toBe(false);
+    expect(red.message).toMatch(/existing_private_page/);
+    console.log(`RED slug live in lg-private write to default: refused: ${red.message}`);
+
+    const green = await engine.putPage('people/not-privately-held-person', {
+      ...page,
+      title: 'Not Privately Held Person',
+    }, { sourceId: 'default' });
+    expect(green.slug).toBe('people/not-privately-held-person');
+    console.log(`GREEN slug not live in lg-private write to default: allowed, slug=${green.slug}`);
+  });
+
+  test('regression: a brand new ordinary business-contact page is ALLOWED', async () => {
+    // This is exactly the shape com.lgv.capture-contact creates every night
+    // (bryan-y/_author, mirko/_author, ...): a person-shaped write to
+    // `default` for a slug that is new to `default`, not on the deny list,
+    // and not live in lg-private. The pre-fix guard refused every one of
+    // these; that was the defect.
+    await pointPrivateSource(policyDir);
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated` | Unrelated |\n');
+    const slug = 'wiki/some-new-contact/_author';
+    const page = {
+      type: 'note',
+      title: 'Some New Contact',
+      compiled_truth: 'Ordinary business contact, never seen before.',
+      timeline: '',
+      frontmatter: {},
+    } as const;
+
+    await expect(engine.getPage(slug, { sourceId: 'default' })).resolves.toBeNull();
+    const written = await engine.putPage(slug, page, { sourceId: 'default' });
+    expect(written.slug).toBe(slug);
+    const roundTrip = await engine.getPage(slug, { sourceId: 'default' });
+    expect(roundTrip?.compiled_truth).toBe(page.compiled_truth);
+  });
+
+  test('a page soft-deleted in lg-private does not count as existing there', async () => {
+    await pointPrivateSource(policyDir);
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated` | Unrelated |\n');
+    const page = {
+      type: 'concept',
+      title: 'Formerly Private Person',
+      compiled_truth: 'Was private, now purged.',
+      timeline: '',
+      frontmatter: {},
+    } as const;
+
+    await engine.putPage('formerly-private-person', page, { sourceId: 'lg-private' });
+    await engine.softDeletePage('formerly-private-person', { sourceId: 'lg-private' });
+    await expect(engine.getPage('formerly-private-person', { sourceId: 'lg-private' })).resolves.toBeNull();
+
+    // Not live in lg-private (it is soft-deleted, i.e. not "existing"), not
+    // on the deny list: the write to default must be allowed, not routed.
+    const written = await engine.putPage('people/formerly-private-person', {
+      ...page,
+      compiled_truth: 'Now a shared business page.',
+    }, { sourceId: 'default' });
+    expect(written.slug).toBe('people/formerly-private-person');
+  });
+
+  test('a target row deleted concurrently with the write is NOT resurrected', async () => {
+    // This proves the tombstone-race fix, not merely the guard: seed a live
+    // row in `default`, then force its deleted_at to a timestamp AFTER the
+    // write we are about to issue will have captured writeStartedAt. That
+    // simulates a purge that lands in the gap between this call's checks and
+    // its INSERT ... ON CONFLICT. The ON CONFLICT WHERE must see deleted_at
+    // >= writeStartedAt and refuse to clear it back to NULL.
+    await pointPrivateSource(policyDir);
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated` | Unrelated |\n');
+    const slug = 'concurrently-purged-page';
+    const page = {
+      type: 'concept',
+      title: 'Concurrently Purged Page',
+      compiled_truth: 'Original body.',
+      timeline: '',
+      frontmatter: {},
+    } as const;
+
+    await engine.putPage(slug, page, { sourceId: 'default' });
+    // Force the tombstone into the future relative to any writeStartedAt the
+    // next putPage call captures, standing in for "the purge committed after
+    // this call's checks ran".
     await engine.executeRaw(
-      `UPDATE pages SET slug = $1 WHERE source_id = 'default' AND slug = 'arm-writepath-soft-deleted-seed'`,
+      `UPDATE pages SET deleted_at = now() + interval '1 hour' WHERE source_id = 'default' AND slug = $1`,
       [slug],
     );
-    await engine.deletePage(slug, { sourceId: 'default' });
-    await expect(engine.getPage(slug, { sourceId: 'default' })).resolves.toBeNull();
-    await expect(engine.putPage(slug, page, { sourceId: 'default' })).rejects.toThrow(
-      `Slug '${slug}' is new to this source.`,
+
+    await expect(engine.putPage(slug, {
+      ...page,
+      compiled_truth: 'Attempted resurrection via routine sync write.',
+    }, { sourceId: 'default' })).rejects.toThrow(/deleted concurrently|produced no row/);
+
+    const raw = await engine.executeRaw<{ deleted_at: string | null; compiled_truth: string }>(
+      `SELECT deleted_at, compiled_truth FROM pages WHERE source_id = 'default' AND slug = $1`,
+      [slug],
     );
+    expect(raw[0]?.deleted_at).not.toBeNull();
+    expect(raw[0]?.compiled_truth).toBe('Original body.');
+    console.log(`Tombstone race: purged row stayed deleted, compiled_truth unchanged: ${JSON.stringify(raw[0])}`);
   });
 
   test('put_page routes a person prefix to an existing bare private slug', async () => {

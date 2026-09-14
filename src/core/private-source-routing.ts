@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from './engine.ts';
 import { loadAllSources, parseSourceConfig, type SourceRow } from './sources-load.ts';
+import { warnOncePerProcess } from './utils.ts';
 
 export interface PrivateWriteRouteInput {
   requestedSourceId?: string;
@@ -48,6 +49,14 @@ function candidateKeys(input: PrivateWriteRouteInput): Set<string> {
     let rest = value;
     while (rest) {
       add(rest);
+      // D1 policy fix: pages stored under a `wiki/` prefix and pages stored
+      // bare are the same identity (see _excluded-people.md's note on
+      // william-vandenberg existing in both forms). Every de-prefixed
+      // candidate along this walk also gets a wiki/-prefixed sibling, so a
+      // deny-list match or an existing-private-page lookup catches whichever
+      // form the other side used, in either direction.
+      if (rest.startsWith('wiki/')) add(rest.slice('wiki/'.length));
+      else add(`wiki/${rest}`);
       const slash = rest.indexOf('/');
       if (slash < 0) break;
       rest = rest.slice(slash + 1);
@@ -187,7 +196,8 @@ export async function resolvePrivateWriteSource(
   if (!privateSource) return { sourceId: requested, routed: false };
   if (requested === privateSource.id) return { sourceId: requested, routed: false, privateSourceId: privateSource.id };
   if (policyContentMismatch(privateSource)) {
-    console.warn(
+    warnOncePerProcess(
+      `private-routing.policy_mismatch.${privateSource.id}`,
       `[private-routing] policy content mismatch for private source '${privateSource.id}'; ` +
       'refusing to route this write until the database-held and on-disk policy documents match.',
     );
