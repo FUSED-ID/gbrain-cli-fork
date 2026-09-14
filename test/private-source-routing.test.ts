@@ -102,6 +102,41 @@ describe('private source routing', () => {
     expect(route.reason).toBe('existing_private_page');
   });
 
+  test('warns when policy content mismatch disables private routing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-private-routing-mismatch-'));
+    writePolicy(dir);
+    const engine = {
+      executeRaw: async () => [
+        { id: 'default', name: 'Default', local_path: null, last_commit: null, last_sync_at: null, config: {}, created_at: new Date() },
+        {
+          id: 'lg-private', name: 'Private', local_path: dir, last_commit: null, last_sync_at: null,
+          config: {
+            private_routing: {
+              excluded_people_markdown: '## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `database-only` | Database Only |\n',
+              filing_rules_markdown: '# private filing rules\n',
+            },
+          },
+          created_at: new Date(),
+        },
+      ],
+      getPage: async () => null,
+    } as unknown as BrainEngine;
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(' '));
+    try {
+      const route = await resolvePrivateWriteSource(engine, {
+        requestedSourceId: 'default',
+        slug: 'person/mismatch-warning',
+        entityType: 'person',
+      });
+      expect(route.sourceId).toBe('default');
+    } finally {
+      console.warn = originalWarn;
+    }
+    expect(warnings.join('\n')).toMatch(/policy content mismatch.*lg-private/i);
+  });
+
   test('refreshes world federation flags after a source config change', async () => {
     let config: Record<string, unknown> = { federated: true };
     const engine = {
