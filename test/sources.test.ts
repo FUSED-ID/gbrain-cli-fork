@@ -7,7 +7,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runSources } from '../src/commands/sources.ts';
@@ -52,6 +52,38 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}): {
 
   return { engine, calls, configSet };
 }
+
+describe('sources provision-private-routing', () => {
+  test('loads both policy files into sources.config and reports the entry count', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-provision-'));
+    const excluded = '## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `person-a` | Person A |\n| `person-b` | Person B |\n';
+    const filing = '# filing rules\n';
+    writeFileSync(join(dir, '_excluded-people.md'), excluded);
+    writeFileSync(join(dir, '_brain-filing-rules.md'), filing);
+    const { engine, calls } = makeStub({
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [{
+        id: 'lg-private', name: 'Private', local_path: dir, last_commit: null,
+        last_sync_at: null, config: '{}', created_at: new Date(),
+      }],
+    });
+    const lines: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => { lines.push(args.map(String).join(' ')); });
+    try {
+      await runSources(engine, ['provision-private-routing', 'lg-private', '--json']);
+    } finally {
+      logSpy.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+    const update = calls.find(call => call.sql.includes('UPDATE sources SET config'));
+    expect(update).toBeDefined();
+    const stored = JSON.parse(update!.params[0] as string);
+    expect(stored.private_routing).toEqual({
+      excluded_people_markdown: excluded,
+      filing_rules_markdown: filing,
+    });
+    expect(JSON.parse(lines[0])).toEqual({ source_id: 'lg-private', excluded_entry_count: 2 });
+  });
+});
 
 // ── add ─────────────────────────────────────────────────────
 

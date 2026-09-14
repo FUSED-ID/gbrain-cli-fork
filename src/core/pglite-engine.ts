@@ -1772,7 +1772,13 @@ export class PGLiteEngine implements BrainEngine {
     slug = validateSlug(slug);
     if (await shouldAssertPrivateRouting(this, opts?.sourceId ?? 'default')) {
       const personish = await isPersonishPageWrite(this, slug, page);
-      if (personish) await assertPrivateRoutingArmed(this);
+      if (personish) {
+        await assertPrivateRoutingArmed(this);
+        throw new Error(
+          `private-write routing is ARMED but engine putPage received a person-shaped write for ` +
+          `world-federated source '${opts?.sourceId ?? 'default'}'. Route it through put_page or write the private source explicitly.`,
+        );
+      }
     }
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
