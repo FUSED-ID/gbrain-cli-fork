@@ -791,7 +791,7 @@ export interface BrainEngine {
    * `isBlankBody`). Pass it only when clearing a body is the deliberate intent;
    * deleting a page goes through `deletePage`/`softDeletePage`, not this path.
    */
-  putPage(slug: string, page: PageInput, opts?: PageWriteOptions): Promise<Page>;
+  putPage(slug: string, page: PageInput, opts?: { sourceId?: string; allowEmptyOverwrite?: boolean; migrationWrite?: boolean }): Promise<Page>;
   /**
    * v0.41.13 (#1309) — identity-based dedup pre-check for the import pipeline.
    *

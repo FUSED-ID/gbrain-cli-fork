@@ -98,7 +98,7 @@ import { ConnectionManager, DEFAULT_DIRECT_POOL_SIZE } from './connection-manage
 import { logConnectionEvent } from './connection-audit.ts';
 import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
-import { assertPrivateRoutingArmed, hasLivePageInSource, isPersonishPageWrite, shouldAssertPrivateRouting } from './private-source-routing.ts';
+import { assertPrivateRoutingArmed, isPersonishPageWrite, resolvePrivateWriteSource, shouldAssertPrivateRouting } from './private-source-routing.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery } from './search/sql-ranking.ts';
 import { privatePagesFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
@@ -709,34 +709,49 @@ export class PostgresEngine implements BrainEngine {
     });
   }
 
-  private _pageTransaction = false;
-
-  async putPage(slug: string, page: PageInput, opts?: PageWriteOptions): Promise<Page> {
-    slug = validateSlug(slug);
-    return this.transaction(async tx => {
-      const sourceId = opts?.sourceId ?? 'default';
-      await tx.lockPageKeys([{ sourceId, slug }]);
-      if (opts?.expectedRevision !== undefined || opts?.force !== undefined) {
-        assertPageRevision(await tx.readPageSnapshot(slug, { sourceId, includeDeleted: true }), opts);
-      }
-      return (tx as PostgresEngine)._putPage(slug, page, opts);
-    });
-  }
-
-  private async _putPage(slug: string, page: PageInput, opts?: PageWriteOptions): Promise<Page> {
+  async putPage(
+    slug: string,
+    page: PageInput,
+    opts?: { sourceId?: string; allowEmptyOverwrite?: boolean; migrationWrite?: boolean },
+  ): Promise<Page> {
     slug = validateSlug(slug);
     const sourceId = opts?.sourceId ?? 'default';
-    if (await shouldAssertPrivateRouting(this, sourceId)) {
+    // migrationWrite: `gbrain migrate` copies `sources` before `pages`, so on
+    // a fresh target every migrated page looks "new" to this guard. The D1
+    // policy check is about NEW leaks entering a world-federated source, not
+    // about a verbatim copy of a source engine's already-accepted pages, so
+    // migration is exempted here explicitly and only here. See
+    // copyPageToTarget in src/commands/migrate-engine.ts, the one caller
+    // allowed to set it.
+    if (!opts?.migrationWrite && await shouldAssertPrivateRouting(this, sourceId)) {
       const personish = await isPersonishPageWrite(this, slug, page);
-      if (personish && !(await hasLivePageInSource(this, slug, sourceId))) {
+      if (personish) {
+        // Fail closed on every personish write, regardless of outcome: a
+        // missing/unreadable policy file or a renamed deny-list heading must
+        // refuse, never silently admit.
         await assertPrivateRoutingArmed(this);
-        throw new Error(
-          `private-write routing is ARMED but engine putPage received a person-shaped write for ` +
-          `world-federated source '${sourceId}'. Slug '${slug}' is new to this source. ` +
-          'Route it through put_page or write the private source explicitly.',
-        );
+        const route = await resolvePrivateWriteSource(this, {
+          requestedSourceId: sourceId,
+          slug,
+          entityType: page.type,
+          entityName: page.title,
+        });
+        if (route.routed) {
+          throw new Error(
+            `private-write routing is ARMED but engine putPage received a person-shaped write for ` +
+            `world-federated source '${sourceId}' that the privacy policy routes to private source ` +
+            `'${route.sourceId}' (${route.reason}). Slug '${slug}'. ` +
+            'Route it through put_page or write the private source explicitly.',
+          );
+        }
       }
     }
+    // Tombstone race guard: captured before any read/write below so the
+    // ON CONFLICT clause can refuse to resurrect a row whose soft delete
+    // (a privacy purge, most sensitively) commits DURING this call, in the
+    // gap between the checks above and the upsert below. See the
+    // deleted-after-writeStartedAt guard on the ON CONFLICT SET.
+    const writeStartedAt = new Date();
     const sql = this.sql;
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
@@ -813,8 +828,22 @@ export class PostgresEngine implements BrainEngine {
         source_uri            = COALESCE(EXCLUDED.source_uri,            pages.source_uri),
         ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
         ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at)
-      RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at
+      WHERE pages.deleted_at IS NULL OR pages.deleted_at < ${writeStartedAt}
+      RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at
     `;
+    if (rows.length === 0) {
+      // The ON CONFLICT WHERE above evaluated false: a live row would have
+      // matched it (deleted_at IS NULL), and a row deleted before this call
+      // started would too (deleted_at < writeStartedAt). Falling to zero rows
+      // means the row was soft-deleted AFTER writeStartedAt was captured, i.e.
+      // concurrently with this call. Do not resurrect it: surface a clear
+      // conflict instead of returning a fabricated Page for a row that was
+      // just, deliberately, purged.
+      throw new Error(
+        `putPage: '${slug}' in source '${sourceId}' was deleted concurrently with this write; ` +
+          'refusing to resurrect it. Re-check whether the page should exist and retry if so.',
+      );
+    }
     return rowToPage(rows[0]);
   }
 
