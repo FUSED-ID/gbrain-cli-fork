@@ -102,13 +102,7 @@ describe('private routing armed guard at the put_page write path', () => {
     await pointPrivateSource(policyDir);
     writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `cache-person` | Cache Person |\n');
 
-    await engine.putPage('people/arm-writepath-cache', {
-      type: 'person',
-      title: 'Cache Person',
-      compiled_truth: 'Cached write.',
-      timeline: '',
-      frontmatter: {},
-    });
+    await assertPrivateRoutingArmed(engine);
 
     writeFileSync(join(policyDir, '_excluded-people.md'), '## Renamed family section\n');
     await expect(engine.putPage('people/arm-writepath-cache', {
@@ -122,7 +116,8 @@ describe('private routing armed guard at the put_page write path', () => {
 
   test('throws for the leaked singular person slug even when its type is concept', async () => {
     await pointPrivateSource(policyDir);
-    await engine.putPage('person/lgv', {
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated` | Unrelated |\n');
+    await engine.putPage('lgv', {
       type: 'concept',
       title: 'LGV',
       compiled_truth: 'Private copy.',
@@ -136,28 +131,95 @@ describe('private routing armed guard at the put_page write path', () => {
       compiled_truth: 'Leaked shape.',
       timeline: '',
       frontmatter: {},
-    }, { sourceId: 'default' })).rejects.toThrow(/NOT ARMED/);
+    }, { sourceId: 'default' })).rejects.toThrow(/routed source|world-federated|refus/i);
+  });
+
+  test('refuses a person-shaped engine write to default even when ARMED', async () => {
+    await pointPrivateSource(policyDir);
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated` | Unrelated |\n');
+    await engine.putPage('lgv', {
+      type: 'concept',
+      title: 'LGV',
+      compiled_truth: 'Private copy.',
+      timeline: '',
+      frontmatter: {},
+    }, { sourceId: 'lg-private' });
+
+    await expect(engine.putPage('person/lgv', {
+      type: 'concept',
+      title: 'LGV',
+      compiled_truth: 'Leaked shape.',
+      timeline: '',
+      frontmatter: {},
+    }, { sourceId: 'default' })).rejects.toThrow(/routed source|world-federated|refus/i);
+  });
+
+  test('put_page routes a person prefix to an existing bare private slug', async () => {
+    await pointPrivateSource(policyDir);
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated` | Unrelated |\n');
+    await engine.putPage('bare-existing-person', {
+      type: 'concept',
+      title: 'Bare Existing Person',
+      compiled_truth: 'Private copy.',
+      timeline: '',
+      frontmatter: {},
+    }, { sourceId: 'lg-private' });
+
+    await expect(putPage.handler(putContext(), {
+      slug: 'person/bare-existing-person',
+      content: '---\ntype: concept\ntitle: Bare Existing Person\n---\n\nRouted update.\n',
+    })).resolves.toBeDefined();
+    await expect(engine.getPage('bare-existing-person', { sourceId: 'lg-private' })).resolves.toBeDefined();
+    await expect(engine.getPage('person/bare-existing-person', { sourceId: 'default' })).resolves.toBeNull();
+  });
+
+  test('catches a bare private copy behind the contacts prefix', async () => {
+    await pointPrivateSource(policyDir);
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated` | Unrelated |\n');
+    await engine.putPage('contact-person', {
+      type: 'concept',
+      title: 'Contact Person',
+      compiled_truth: 'Private copy.',
+      timeline: '',
+      frontmatter: {},
+    }, { sourceId: 'lg-private' });
+
+    await expect(engine.putPage('contacts/contact-person', {
+      type: 'concept',
+      title: 'Contact Person',
+      compiled_truth: 'Leaked shape.',
+      timeline: '',
+      frontmatter: {},
+    }, { sourceId: 'default' })).rejects.toThrow(/routed source|world-federated|refus|NOT ARMED/i);
+  });
+
+  test('catches a bare private copy behind the harvest prefix', async () => {
+    await pointPrivateSource(policyDir);
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated` | Unrelated |\n');
+    await engine.putPage('harvest-person', {
+      type: 'concept',
+      title: 'Harvest Person',
+      compiled_truth: 'Private copy.',
+      timeline: '',
+      frontmatter: {},
+    }, { sourceId: 'lg-private' });
+
+    await expect(engine.putPage('harvest/harvest-person', {
+      type: 'concept',
+      title: 'Harvest Person',
+      compiled_truth: 'Leaked shape.',
+      timeline: '',
+      frontmatter: {},
+    }, { sourceId: 'default' })).rejects.toThrow(/routed source|world-federated|refus|NOT ARMED/i);
   });
 
   test('rechecks the private source row after a successful arm', async () => {
     await pointPrivateSource(policyDir);
-    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `after-delete` | After Delete |\n');
-    await engine.putPage('people/arm-writepath-after-delete', {
-      type: 'person',
-      title: 'After Delete',
-      compiled_truth: 'First write.',
-      timeline: '',
-      frontmatter: {},
-    }, { sourceId: 'default' });
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `arm-writepath-after-delete` | After Delete |\n');
+    await executePutPage('people/arm-writepath-after-delete');
 
     await engine.executeRaw(`DELETE FROM sources WHERE id = 'lg-private'`);
-    await expect(engine.putPage('people/arm-writepath-after-delete', {
-      type: 'person',
-      title: 'After Delete',
-      compiled_truth: 'Second write.',
-      timeline: '',
-      frontmatter: {},
-    }, { sourceId: 'default' })).rejects.toThrow(/NOT ARMED/);
+    await expect(executePutPage('people/arm-writepath-after-delete')).rejects.toThrow(/NOT ARMED/);
   });
 
   test('arms and routes from database-held policy without local policy files', async () => {

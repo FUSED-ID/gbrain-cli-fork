@@ -27,7 +27,7 @@
  *   - MCP tool-def regen for full source-scoping of all ops (part of Step 2+5)
  */
 
-import { writeFileSync, unlinkSync, existsSync } from 'fs';
+import { writeFileSync, unlinkSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
@@ -67,6 +67,7 @@ import {
 } from '../core/sources-load.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { preflightOauthClientColumns } from './auth.ts';
+import { parseExcludedPeople } from '../core/private-source-routing.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -124,6 +125,64 @@ async function countPages(engine: BrainEngine, sourceId: string): Promise<number
     [sourceId],
   );
   return rows[0]?.n ?? 0;
+}
+
+// ── Subcommand: provision-private-routing ─────────────────
+
+async function runProvisionPrivateRouting(engine: BrainEngine, args: string[]): Promise<void> {
+  const sourceId = args.find((arg, index) => index === 0 && !arg.startsWith('--')) ?? 'lg-private';
+  const json = args.includes('--json');
+  const source = await fetchSource(engine, sourceId);
+  if (!source) {
+    throw new Error(`Source "${sourceId}" not found.`);
+  }
+  if (!source.local_path) {
+    throw new Error(`Source "${sourceId}" has no local_path; cannot provision private routing policy.`);
+  }
+
+  const excludedPath = join(source.local_path, '_excluded-people.md');
+  const filingPath = join(source.local_path, '_brain-filing-rules.md');
+  let excludedPeople: string;
+  let filingRules: string;
+  try {
+    excludedPeople = readFileSync(excludedPath, 'utf8');
+    filingRules = readFileSync(filingPath, 'utf8');
+  } catch (err) {
+    throw new Error(
+      `Cannot provision private routing policy for source "${sourceId}": ` +
+      `${(err as Error).message}`,
+    );
+  }
+  const excludedEntryCount = parseExcludedPeople(excludedPeople).length;
+  if (excludedEntryCount === 0) {
+    throw new Error(
+      `Cannot provision private routing policy for source "${sourceId}": ` +
+      '_excluded-people.md parsed to zero deny-list entries.',
+    );
+  }
+
+  const config = parseConfig(source.config);
+  const currentRouting = config.private_routing;
+  const routing = currentRouting && typeof currentRouting === 'object' && !Array.isArray(currentRouting)
+    ? currentRouting as Record<string, unknown>
+    : {};
+  config.private_routing = {
+    ...routing,
+    excluded_people_markdown: excludedPeople,
+    filing_rules_markdown: filingRules,
+  };
+  await engine.executeRaw(
+    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
+    [JSON.stringify(normalizeSourceConfig(config)), sourceId],
+  );
+
+  const result = { source_id: sourceId, excluded_entry_count: excludedEntryCount };
+  if (json) {
+    console.log(JSON.stringify(result));
+  } else {
+    console.log(`Provisioned private routing policy for source "${sourceId}".`);
+    console.log(`Excluded people entries: ${excludedEntryCount}`);
+  }
 }
 
 // ── Subcommand: add ─────────────────────────────────────────
@@ -1827,6 +1886,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
 
   switch (sub) {
     case 'add':        return runAdd(engine, rest);
+    case 'provision-private-routing': return runProvisionPrivateRouting(engine, rest);
     case 'list':       return runList(engine, rest);
     case 'remove':     return runRemove(engine, rest);
     case 'rename':     return runRename(engine, rest);
@@ -1878,6 +1938,9 @@ Subcommands:
   add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
                                     Register a new source. --path must be a git repo
                                     with committed files; --force skips that check.
+  provision-private-routing [<id>] [--json]
+                                    Load both private routing policy files from
+                                    the source local_path into sources.config.
   list [--json]                     List registered sources with page counts.
   remove <id> [--confirm-destructive] [--dry-run]
                                     Permanently delete a source and all its data.
