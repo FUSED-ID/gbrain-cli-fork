@@ -91,7 +91,7 @@ import type {
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
-import { assertPrivateRoutingArmed, isPersonishPageWrite, shouldAssertPrivateRouting } from './private-source-routing.ts';
+import { assertPrivateRoutingArmed, hasLivePageInSource, isPersonishPageWrite, shouldAssertPrivateRouting } from './private-source-routing.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
 import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
 import { PAGE_SORT_SQL, MIN_ENTITY_PAGES_FOR_COVERAGE } from './types.ts';
@@ -1752,19 +1752,20 @@ export class PGLiteEngine implements BrainEngine {
 
   async putPage(slug: string, page: PageInput, opts?: { sourceId?: string; allowEmptyOverwrite?: boolean }): Promise<Page> {
     slug = validateSlug(slug);
-    if (await shouldAssertPrivateRouting(this, opts?.sourceId ?? 'default')) {
+    const sourceId = opts?.sourceId ?? 'default';
+    if (await shouldAssertPrivateRouting(this, sourceId)) {
       const personish = await isPersonishPageWrite(this, slug, page);
-      if (personish) {
+      if (personish && !(await hasLivePageInSource(this, slug, sourceId))) {
         await assertPrivateRoutingArmed(this);
         throw new Error(
           `private-write routing is ARMED but engine putPage received a person-shaped write for ` +
-          `world-federated source '${opts?.sourceId ?? 'default'}'. Route it through put_page or write the private source explicitly.`,
+          `world-federated source '${sourceId}'. Slug '${slug}' is new to this source. ` +
+          'Route it through put_page or write the private source explicitly.',
         );
       }
     }
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
-    const sourceId = opts?.sourceId ?? 'default';
 
     // Data-loss guard (mirrors postgres-engine.ts): a page edit is a
     // read-modify-write; if the read returned empty, the modify lands on

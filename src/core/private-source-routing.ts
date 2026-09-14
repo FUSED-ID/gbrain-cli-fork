@@ -187,6 +187,10 @@ export async function resolvePrivateWriteSource(
   if (!privateSource) return { sourceId: requested, routed: false };
   if (requested === privateSource.id) return { sourceId: requested, routed: false, privateSourceId: privateSource.id };
   if (policyContentMismatch(privateSource)) {
+    console.warn(
+      `[private-routing] policy content mismatch for private source '${privateSource.id}'; ` +
+      'refusing to route this write until the database-held and on-disk policy documents match.',
+    );
     return { sourceId: requested, routed: false, privateSourceId: privateSource.id };
   }
   try {
@@ -201,6 +205,23 @@ export async function resolvePrivateWriteSource(
     return { sourceId: privateSource.id, routed: true, reason: 'excluded_people_policy', privateSourceId: privateSource.id };
   }
   return { sourceId: requested, routed: false, privateSourceId: privateSource.id };
+}
+
+/**
+ * Return whether a live page with this exact slug exists in one source.
+ * The default getPage contract excludes soft-deleted rows, so a tombstone
+ * does not count as existing and cannot re-admit a purged leak.
+ */
+export async function hasLivePageInSource(
+  engine: BrainEngine,
+  slug: string,
+  sourceId: string,
+): Promise<boolean> {
+  try {
+    return (await engine.getPage(slug, { sourceId })) !== null;
+  } catch {
+    return false;
+  }
 }
 
 /**

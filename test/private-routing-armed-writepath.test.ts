@@ -69,7 +69,9 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   policyDir = mkdtempSync(join(tmpdir(), 'gbrain-arm-writepath-'));
-  await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'people/arm-writepath-%'`);
+  await engine.executeRaw(
+    `DELETE FROM pages WHERE slug LIKE 'people/arm-writepath-%' OR slug LIKE 'person/arm-writepath-%'`,
+  );
   await engine.executeRaw(`DELETE FROM sources WHERE id = 'lg-private'`);
 });
 
@@ -152,6 +154,62 @@ describe('private routing armed guard at the put_page write path', () => {
       timeline: '',
       frontmatter: {},
     }, { sourceId: 'default' })).rejects.toThrow(/routed source|world-federated|refus/i);
+  });
+
+  test('RED then GREEN varies only whether the exact target slug already exists', async () => {
+    await pointPrivateSource(policyDir);
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated` | Unrelated |\n');
+    const slug = 'person/arm-writepath-existing';
+    const page = {
+      type: 'concept',
+      title: 'Private Test Person',
+      compiled_truth: 'Person body.',
+      timeline: '',
+      frontmatter: {},
+    } as const;
+
+    const red = await engine.putPage(slug, page, { sourceId: 'default' })
+      .then(() => ({ allowed: true, message: '' }))
+      .catch((error: unknown) => ({ allowed: false, message: String(error) }));
+    expect(red.allowed).toBe(false);
+    expect(red.message).toContain(`Slug '${slug}' is new to this source.`);
+    console.log(`RED person-shaped write to default: refused: ${red.message}`);
+
+    await engine.putPage('arm-writepath-existing-seed', page, { sourceId: 'default' });
+    await engine.executeRaw(
+      `UPDATE pages SET slug = $1 WHERE source_id = 'default' AND slug = 'arm-writepath-existing-seed'`,
+      [slug],
+    );
+
+    const green = await engine.putPage(slug, page, { sourceId: 'default' });
+    const roundTrip = await engine.getPage(slug, { sourceId: 'default' });
+    expect(green.slug).toBe(slug);
+    expect(roundTrip?.compiled_truth).toBe(page.compiled_truth);
+    console.log(`GREEN person-shaped write to default: allowed and round-tripped slug=${roundTrip?.slug}`);
+  });
+
+  test('a soft-deleted target row does not count as existing', async () => {
+    await pointPrivateSource(policyDir);
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated` | Unrelated |\n');
+    const slug = 'person/arm-writepath-soft-deleted';
+    const page = {
+      type: 'concept',
+      title: 'Private Test Person',
+      compiled_truth: 'Person body.',
+      timeline: '',
+      frontmatter: {},
+    } as const;
+
+    await engine.putPage('arm-writepath-soft-deleted-seed', page, { sourceId: 'default' });
+    await engine.executeRaw(
+      `UPDATE pages SET slug = $1 WHERE source_id = 'default' AND slug = 'arm-writepath-soft-deleted-seed'`,
+      [slug],
+    );
+    await engine.deletePage(slug, { sourceId: 'default' });
+    await expect(engine.getPage(slug, { sourceId: 'default' })).resolves.toBeNull();
+    await expect(engine.putPage(slug, page, { sourceId: 'default' })).rejects.toThrow(
+      `Slug '${slug}' is new to this source.`,
+    );
   });
 
   test('put_page routes a person prefix to an existing bare private slug', async () => {
