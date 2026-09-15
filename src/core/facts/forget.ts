@@ -153,7 +153,7 @@ export async function forgetFactInFence(
     // struck body can never equal the unchanged file's, so the next sync
     // re-imports + re-chunks through the withdrawal overlay.
     await engine.refreshPageBody(slug, row.source_id, struck, page.timeline ?? '',
-      contentHash({ ...page, compiled_truth: struck }));
+      contentHash({ ...page, compiled_truth: struck }), { effect: 'reduce' });
   };
 
   // DB-only path: the withdrawal remains authoritative during reimport.
@@ -215,15 +215,24 @@ export async function forgetFactInFence(
     // next extract_facts cycle phase to reconcile.
     await engine.expireFact(factId, { validUntil: today });
 
-      // Atomic .tmp + parse-validate + rename.
-      assertSourceFilesystemActive();
-      writeFileSync(tmpPath, newBody, 'utf-8');
-      const tmpBody = readFileSync(tmpPath, 'utf-8');
-      const validate = parseFactsFence(tmpBody);
-      if (validate.warnings.length > 0) {
-        // Quarantine .tmp; leave the canonical file alone; fall back to
-        // DB expire so the user's forget intent still succeeds.
-        return legacyExpire(true);
+    // #4696: mirror the rewritten file into the DB body, or the reconcile
+    // (which reads pages.compiled_truth) resurrects the claim before the
+    // next sync absorbs the file — and sync is commit-anchored, so that
+    // window lasts until the user commits. Parse + sanitize the FILE bytes
+    // as import-file.ts does. Body-only: content_chunks still carry the
+    // live claim, so the row KEEPS its old content_hash and the next sync
+    // re-imports + re-chunks. Stamping the importer's hash here made sync
+    // skip the page and the struck claim kept surfacing in chunk search.
+    // Never persist an EMPTY hash: a row that had none gets a row-shaped
+    // hash of its pre-mirror content, which the rewritten file can't match.
+    // Best-effort — file + facts row are already correct.
+    try {
+      const reparsed = parseMarkdown(tmpBody, `${slug}.md`);
+      const page = await engine.getPage(slug, { sourceId: row.source_id });
+      if (page) {
+        await engine.refreshPageBody(slug, row.source_id,
+          sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline),
+          page.content_hash || contentHash(page), { effect: 'reduce' });
       }
       renameSync(tmpPath, filePath);
 

@@ -555,6 +555,14 @@ const put_page: Operation = {
       );
     }
 
+    // A routed import replaces any exposed copy in the requested source.
+    // Tombstoning is exposure-reducing, so it remains available for a
+    // deny-listed page. Do this only after the private write and its
+    // write-through have succeeded.
+    if (route.routed && writeSourceId !== (ctx.sourceId ?? 'default') && result.status !== 'error') {
+      await ctx.engine.softDeletePage(slug, { sourceId: ctx.sourceId ?? 'default' });
+    }
+
     // Auto-link post-hook: runs AFTER importFromContent (which is its own
     // transaction). Runs even on status='skipped' so reconciliation catches drift
     // between the page text and the links table. Failures are non-blocking.

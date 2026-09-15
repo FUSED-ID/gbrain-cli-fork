@@ -955,6 +955,7 @@ export class PostgresEngine implements BrainEngine {
     if (current) await enforcePrivatePageWrite(this, {
       requestedSourceId: current.source_id,
       slug,
+      effect: 'reduce',
       entityType: current.type,
       entityName: current.title,
     });
@@ -1052,8 +1053,9 @@ export class PostgresEngine implements BrainEngine {
     compiledTruth: string,
     timeline: string,
     contentHash: string,
+    opts?: { effect?: 'create' | 'reduce' },
   ): Promise<void> {
-    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug, effect: opts?.effect });
     const sql = this.sql;
     // Narrow UPDATE — leaves frontmatter, type, chunks, links, embeddings,
     // tags, takes untouched. Skips soft-deleted rows so a redirect retry

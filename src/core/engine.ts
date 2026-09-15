@@ -2394,6 +2394,7 @@ export interface BrainEngine {
     compiledTruth: string,
     timeline: string,
     contentHash: string,
+    opts?: { effect?: 'create' | 'reduce' },
   ): Promise<void>;
 
   /**
