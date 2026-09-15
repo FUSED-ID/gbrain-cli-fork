@@ -1792,10 +1792,28 @@ export class PGLiteEngine implements BrainEngine {
       }
     }
     // Tombstone race guard: captured before any read/write below, mirrors
-    // postgres-engine.ts. Lets the ON CONFLICT clause refuse to resurrect a
-    // row whose soft delete (a privacy purge, most sensitively) commits
-    // DURING this call, in the gap between the checks above and the upsert
-    // below.
+    // postgres-engine.ts.
+    //
+    // What this closes: a soft delete (UPDATE ... SET deleted_at = now())
+    // whose OWN now() value is stamped at or after writeStartedAt. The ON
+    // CONFLICT WHERE below refuses to clear that row's deleted_at back to
+    // NULL and this call throws instead of reporting a fabricated success.
+    //
+    // What this does NOT close (known gaps, not fixed by this guard):
+    //  (a) a HARD delete (DELETE FROM pages) landing between the checks
+    //      above and the upsert below. There is no conflicting row left for
+    //      ON CONFLICT to match, so no WHERE clause runs at all; the upsert
+    //      just INSERTs a fresh row and the purge is silently undone. This
+    //      predicate cannot see a row that no longer exists.
+    //  (b) a soft delete whose UPDATE statement executed (and so captured
+    //      its own now() for deleted_at) BEFORE writeStartedAt, but whose
+    //      transaction committed DURING this call's gap. Its deleted_at is
+    //      less than writeStartedAt, so the WHERE clause reads it as an
+    //      old, already-settled delete and clears it back to NULL,
+    //      resurrecting a row purged concurrently with this write. Only a
+    //      same-transaction existence check plus write (or a row-version
+    //      lock captured during the guard) closes this; a timestamp
+    //      comparison against a value read outside that transaction cannot.
     const writeStartedAt = new Date().toISOString();
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
@@ -1881,12 +1899,14 @@ export class PGLiteEngine implements BrainEngine {
     // re-read instead of crashing.
     //
     // The ON CONFLICT WHERE above adds a second, deliberate zero-rows case:
-    // a row soft-deleted (a privacy purge, most sensitively) AFTER
-    // writeStartedAt was captured, concurrently with this call. That row's
-    // deleted_at stays untouched, so the re-read below correctly finds
-    // nothing (getPage excludes deleted rows), and this must NOT be treated
-    // as a "no-op that actually succeeded" shrug: throw, refusing to report
-    // success for a write that was, deliberately, not applied.
+    // a row soft-deleted (a privacy purge, most sensitively) whose deleted_at
+    // was stamped at or after writeStartedAt. That row's deleted_at stays
+    // untouched, so the re-read below correctly finds nothing (getPage
+    // excludes deleted rows), and this must NOT be treated as a "no-op that
+    // actually succeeded" shrug: throw, refusing to report success for a
+    // write that was, deliberately, not applied. This covers only that one
+    // window; see the writeStartedAt comment above this function for the
+    // hard-delete and pre-writeStartedAt-timestamp gaps this does NOT cover.
     if (rows.length === 0) {
       const reread = await this.getPage(slug, { sourceId });
       if (reread) return reread;

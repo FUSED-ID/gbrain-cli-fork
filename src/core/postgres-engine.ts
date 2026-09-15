@@ -746,11 +746,28 @@ export class PostgresEngine implements BrainEngine {
         }
       }
     }
-    // Tombstone race guard: captured before any read/write below so the
-    // ON CONFLICT clause can refuse to resurrect a row whose soft delete
-    // (a privacy purge, most sensitively) commits DURING this call, in the
-    // gap between the checks above and the upsert below. See the
-    // deleted-after-writeStartedAt guard on the ON CONFLICT SET.
+    // Tombstone race guard: captured before any read/write below.
+    //
+    // What this closes: a soft delete (UPDATE ... SET deleted_at = now())
+    // whose OWN now() value is stamped at or after writeStartedAt. The ON
+    // CONFLICT WHERE below refuses to clear that row's deleted_at back to
+    // NULL and this call throws instead of reporting a fabricated success.
+    //
+    // What this does NOT close (known gaps, not fixed by this guard):
+    //  (a) a HARD delete (DELETE FROM pages) landing between the checks
+    //      above and the upsert below. There is no conflicting row left for
+    //      ON CONFLICT to match, so no WHERE clause runs at all; the upsert
+    //      just INSERTs a fresh row and the purge is silently undone. This
+    //      predicate cannot see a row that no longer exists.
+    //  (b) a soft delete whose UPDATE statement executed (and so captured
+    //      its own now() for deleted_at) BEFORE writeStartedAt, but whose
+    //      transaction committed DURING this call's gap. Its deleted_at is
+    //      less than writeStartedAt, so the WHERE clause reads it as an
+    //      old, already-settled delete and clears it back to NULL,
+    //      resurrecting a row purged concurrently with this write. Only a
+    //      same-transaction existence check plus write (or a row-version
+    //      lock captured during the guard) closes this; a timestamp
+    //      comparison against a value read outside that transaction cannot.
     const writeStartedAt = new Date();
     const sql = this.sql;
     const hash = page.content_hash || contentHash(page);
@@ -839,6 +856,10 @@ export class PostgresEngine implements BrainEngine {
       // concurrently with this call. Do not resurrect it: surface a clear
       // conflict instead of returning a fabricated Page for a row that was
       // just, deliberately, purged.
+      // This covers only the window where a soft delete's deleted_at was
+      // stamped at or after writeStartedAt; see the writeStartedAt comment
+      // above this function for the hard-delete and pre-writeStartedAt-
+      // timestamp gaps this does NOT cover.
       throw new Error(
         `putPage: '${slug}' in source '${sourceId}' was deleted concurrently with this write; ` +
           'refusing to resurrect it. Re-check whether the page should exist and retry if so.',
