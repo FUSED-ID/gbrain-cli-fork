@@ -459,6 +459,10 @@ export async function assertPrivateRoutingArmed(
   const cached = armedRoutingCache.get(owner);
   const source = await findPrivateSource(engine);
   if (source && policyContentMismatch(source)) {
+    warnOncePerProcess(
+      `private-routing.unarmed-mismatch.${source.id}`,
+      `[private-routing] could not use ${EXCLUDED_PEOPLE_FILE} for source '${source.id}': database-held and on-disk policy content differs.`,
+    );
     throw new Error(
       `private-write routing is NOT ARMED: ${source.id} has database-held policy content ` +
       `that mismatches the on-disk ${EXCLUDED_PEOPLE_FILE} or ${FILING_RULES_FILE}; refusing to arm. ` +
@@ -471,6 +475,10 @@ export async function assertPrivateRoutingArmed(
   }
 
   if (!source) {
+    warnOncePerProcess(
+      'private-routing.unarmed-no-source',
+      `[private-routing] could not resolve ${EXCLUDED_PEOPLE_FILE} and ${FILING_RULES_FILE}; no private source carries both files.`,
+    );
     throw new Error(
       'private-write routing is NOT ARMED: no source has both ' +
       `${EXCLUDED_PEOPLE_FILE} and ${FILING_RULES_FILE} present under its local_path. ` +
@@ -485,6 +493,10 @@ export async function assertPrivateRoutingArmed(
     raw = stored.excludedPeople;
   } else {
     if (!source.local_path) {
+      warnOncePerProcess(
+        `private-routing.unarmed-no-path.${source.id}`,
+        `[private-routing] could not parse ${EXCLUDED_PEOPLE_FILE}: private source '${source.id}' has no local_path or database-held policy.`,
+      );
       throw new Error(
         'private-write routing is NOT ARMED: the private source has no local_path ' +
           'and no database-held policy documents. Refusing to import.',
@@ -493,6 +505,10 @@ export async function assertPrivateRoutingArmed(
     try {
       raw = readFileSync(join(source.local_path, EXCLUDED_PEOPLE_FILE), 'utf8');
     } catch (err) {
+      warnOncePerProcess(
+        `private-routing.unarmed-read.${source.id}.${source.local_path}`,
+        `[private-routing] could not parse/read ${join(source.local_path, EXCLUDED_PEOPLE_FILE)}: ${(err as Error).message}.`,
+      );
       throw new Error(
         `private-write routing is NOT ARMED: ${EXCLUDED_PEOPLE_FILE} under ` +
         `'${source.local_path}' could not be read (${(err as Error).message}). Refusing to import.`,
@@ -503,6 +519,10 @@ export async function assertPrivateRoutingArmed(
   const entries = parseExcludedPeople(raw);
   if (entries.length === 0) {
     const policyLocation = source.local_path ?? `database:${source.id}`;
+    warnOncePerProcess(
+      `private-routing.unarmed-empty.${source.id}.${policyLocation}`,
+      `[private-routing] could not parse ${policyLocation}/${EXCLUDED_PEOPLE_FILE}: zero deny-list entries.`,
+    );
     throw new Error(
       `private-write routing is NOT ARMED: ${EXCLUDED_PEOPLE_FILE} under ` +
       `'${policyLocation}' parsed to ZERO deny-list entries. The parser keys on a ` +
@@ -561,13 +581,16 @@ export async function enforcePrivatePageWrite(
     }
   }
 
+  // The armed assertion is a source-wide invariant. It must run before the
+  // identity-shape heuristic because a renamed heading or a family/title-only
+  // deny-list match must not fail open as "not person-shaped".
+  await assertPrivateRoutingArmed(engine);
   const personish = await isPersonishPageWrite(engine, target.slug, {
     type: entityType,
     title: entityName,
   });
   if (!personish) return { sourceId: target.requestedSourceId, routed: false };
 
-  await assertPrivateRoutingArmed(engine);
   const route = await resolvePrivateWriteSource(engine, {
     requestedSourceId: target.requestedSourceId,
     slug: target.slug,
