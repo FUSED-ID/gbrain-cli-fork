@@ -200,6 +200,56 @@ describe('D1 private-routing bypass paths', () => {
     expect(failureMessage(timelineRemote)).toMatch(/excluded_people_policy|private source|private-write routing/);
   });
 
+  test('revert_version refuses a deny-listed person row outside a person prefix', async () => {
+    const denied = 'wiki/d1-bypass-denylisted-revert-person';
+    await seedDefaultPerson(denied);
+    const version = await engine.createVersion(denied, { sourceId: 'default' });
+    await engine.putPage(denied, { ...PERSON_PAGE, compiled_truth: 'changed person body' }, { sourceId: 'default', migrationWrite: true });
+
+    const local = await outcome(() => revertVersion.handler(context(false), { slug: denied, version_id: version.id }));
+    console.log(`${local.allowed ? 'RED-BEFORE-FIX' : 'GREEN'} revert_version wiki person local: ${local.allowed ? 'ALLOWED' : failureMessage(local)}`);
+    expect(local.allowed).toBe(false);
+    expect(failureMessage(local)).toMatch(/excluded_people_policy|private-write routing/);
+
+    const remote = await outcome(() => revertVersion.handler(context(true), { slug: denied, version_id: version.id }));
+    console.log(`${remote.allowed ? 'RED-BEFORE-FIX' : 'GREEN'} revert_version wiki person remote: ${remote.allowed ? 'ALLOWED' : failureMessage(remote)}`);
+    expect(remote.allowed).toBe(false);
+    expect(failureMessage(remote)).toMatch(/excluded_people_policy|private source|private-write routing/);
+  });
+
+  test('revert_version refuses a deny-listed person title on an innocuous slug', async () => {
+    const denied = 'wiki/d1-bypass-innocuous-revert-person';
+    await seedDefaultPerson(denied);
+    const version = await engine.createVersion(denied, { sourceId: 'default' });
+    await engine.putPage(denied, { ...PERSON_PAGE, compiled_truth: 'changed titled person body' }, { sourceId: 'default', migrationWrite: true });
+
+    const local = await outcome(() => revertVersion.handler(context(false), { slug: denied, version_id: version.id }));
+    console.log(`${local.allowed ? 'RED-BEFORE-FIX' : 'GREEN'} revert_version innocuous slug local: ${local.allowed ? 'ALLOWED' : failureMessage(local)}`);
+    expect(local.allowed).toBe(false);
+    expect(failureMessage(local)).toMatch(/excluded_people_policy|private-write routing/);
+
+    const remote = await outcome(() => revertVersion.handler(context(true), { slug: denied, version_id: version.id }));
+    console.log(`${remote.allowed ? 'RED-BEFORE-FIX' : 'GREEN'} revert_version innocuous slug remote: ${remote.allowed ? 'ALLOWED' : failureMessage(remote)}`);
+    expect(remote.allowed).toBe(false);
+    expect(failureMessage(remote)).toMatch(/excluded_people_policy|private source|private-write routing/);
+  });
+
+  test('revert_version allows a non-deny-listed person row outside a person prefix', async () => {
+    const allowed = 'wiki/d1-bypass-ordinary-revert-person';
+    await seedDefaultPerson(allowed);
+    await engine.putPage(allowed, { ...PERSON_PAGE, title: 'Ordinary D1 Person' }, { sourceId: 'default', migrationWrite: true });
+    const version = await engine.createVersion(allowed, { sourceId: 'default' });
+    await engine.putPage(allowed, { ...PERSON_PAGE, title: 'Ordinary D1 Person', compiled_truth: 'changed ordinary person body' }, { sourceId: 'default', migrationWrite: true });
+
+    const local = await outcome(() => revertVersion.handler(context(false), { slug: allowed, version_id: version.id }));
+    console.log(`GREEN revert_version ordinary wiki person local: ${local.allowed ? 'ALLOWED' : failureMessage(local)}`);
+    expect(local.allowed).toBe(true);
+
+    const remote = await outcome(() => revertVersion.handler(context(true), { slug: allowed, version_id: version.id }));
+    console.log(`GREEN revert_version ordinary wiki person remote: ${remote.allowed ? 'ALLOWED' : failureMessage(remote)}`);
+    expect(remote.allowed).toBe(true);
+  });
+
   test('person-shaped writes refuse when the policy directory is missing', async () => {
     const denied = 'wiki/d1-bypass-arm-missing-policy';
     await seedDefaultPerson(denied);

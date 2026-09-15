@@ -197,12 +197,18 @@ const revert_version: Operation = {
     const versionType = version?.frontmatter && typeof version.frontmatter.type === 'string'
       ? version.frontmatter.type
       : undefined;
+    const current = await ctx.engine.getPage(p.slug as string, { includeDeleted: true, ...sourceOpts });
     await enforcePrivateWriteGuard(ctx, 'revert_version', {
       requestedSourceId,
       slug: p.slug as string,
       content: version?.compiled_truth,
-      entityType: versionType,
-    }, version ? { type: versionType, frontmatter: version.frontmatter } : undefined);
+      entityType: versionType ?? current?.type,
+      entityName: current?.title,
+    }, version ? {
+      type: versionType ?? current?.type,
+      title: current?.title,
+      frontmatter: version.frontmatter,
+    } : undefined);
     await ctx.engine.createVersion(p.slug as string, sourceOpts);
     await ctx.engine.revertToVersion(p.slug as string, p.version_id as number, sourceOpts);
     return { status: 'reverted' };
