@@ -1,4 +1,4 @@
-import { readPolicyOpts } from './context.ts';
+import { enforcePrivateWriteGuard, readPolicyOpts } from './context.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 /**
  * Admin operation cluster — pure move from operations.ts (v0.46.x tranche 2).
@@ -187,6 +187,18 @@ const revert_version: Operation = {
     // intended page row instead of whichever same-slug row Postgres returns
     // first.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const requestedSourceId = sourceOpts.sourceId ?? 'default';
+    const versions = await ctx.engine.getVersions(p.slug as string, sourceOpts);
+    const version = versions.find((candidate) => candidate.id === p.version_id);
+    const versionType = version?.frontmatter && typeof version.frontmatter.type === 'string'
+      ? version.frontmatter.type
+      : undefined;
+    await enforcePrivateWriteGuard(ctx, 'revert_version', {
+      requestedSourceId,
+      slug: p.slug as string,
+      content: version?.compiled_truth,
+      entityType: versionType,
+    }, version ? { type: versionType, frontmatter: version.frontmatter } : undefined);
     await ctx.engine.createVersion(p.slug as string, sourceOpts);
     await ctx.engine.revertToVersion(p.slug as string, p.version_id as number, sourceOpts);
     return { status: 'reverted' };

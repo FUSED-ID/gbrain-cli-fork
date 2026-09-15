@@ -11,6 +11,7 @@ import { readPolicyOpts } from './context.ts';
 import {
   enforceSubagentSlugFence,
   enforceClientSlugFence,
+  enforcePrivateWriteGuard,
   reclassifyMutationTimePageMiss,
   requireWritablePage,
 } from './context.ts';
@@ -60,6 +61,11 @@ const add_timeline_entry: Operation = {
     }
     // v0.31.8 (D7): thread ctx.sourceId.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const current = await ctx.engine.getPage(p.slug as string, { includeDeleted: true, ...sourceOpts });
+    await enforcePrivateWriteGuard(ctx, 'add_timeline_entry', {
+      requestedSourceId: sourceOpts.sourceId ?? 'default',
+      slug: p.slug as string,
+    }, current ?? undefined);
     // #4109: source-boundary diagnostics before the write-through/insert —
     // a page readable only from another granted source must come back as
     // permission_denied, not the engine's exact-source "not found".

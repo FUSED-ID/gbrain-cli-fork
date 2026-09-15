@@ -28,6 +28,7 @@ import { OperationError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import {
   assertExplicitSourceLive,
+  enforcePrivateWriteGuard,
   enforceSubagentSlugFence,
   slugOutsideCallerFence,
   enforceClientSlugFence,
@@ -1195,6 +1196,11 @@ const restore_page: Operation = {
     const sourceOpts = requestedSource
       ? { sourceId: requestedSource }
       : ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const current = await ctx.engine.getPage(slug, { includeDeleted: true, ...sourceOpts });
+    await enforcePrivateWriteGuard(ctx, 'restore_page', {
+      requestedSourceId: sourceOpts.sourceId ?? 'default',
+      slug,
+    }, current ?? undefined);
     const ok = await ctx.engine.restorePage(slug, sourceOpts);
     if (!ok) {
       // Distinguish "not found" from "already active" (idempotent-as-false).
