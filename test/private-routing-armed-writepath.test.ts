@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { assertPrivateRoutingArmed, resolvePrivateWriteSource } from '../src/core/private-source-routing.ts';
+import { resetGateway } from '../src/core/ai/gateway.ts';
 
 const putPage = operationsByName.put_page;
 const PERSON_CONTENT = '---\ntype: person\ntitle: Private Test Person\n---\n\nPerson body.\n';
@@ -12,18 +13,41 @@ const PERSON_CONTENT = '---\ntype: person\ntitle: Private Test Person\n---\n\nPe
 let engine: PGLiteEngine;
 let policyDir: string;
 
-// Hermeticity: this file writes real person-shaped content through the
-// put_page operation handler (`executePutPage`), which loads
-// ../ai/gateway.ts and checks isAvailable('embedding') BEFORE the engine's
-// privacy guard ever runs. On a shell where OPENAI_API_KEY / VOYAGE_API_KEY /
-// OPENROUTER_API_KEY are exported (this developer's normal shell), that
-// makes every put_page call in this file attempt a REAL embedding call,
-// which previously burned live quota, hit HTTP 429, and made this file take
-// 319s. Unset the provider keys for the duration of this file only, so
-// isAvailable('embedding') is false and noEmbed short-circuits before any
-// network call; restore whatever was there afterwards.
+// This file writes real person-shaped content through the put_page
+// operation handler (`executePutPage`), which loads ../ai/gateway.ts and
+// checks isAvailable('embedding') BEFORE the engine's privacy guard ever
+// runs. On a shell where OPENAI_API_KEY / VOYAGE_API_KEY / OPENROUTER_API_KEY
+// are exported (this developer's normal shell), that makes every put_page
+// call in this file attempt a REAL embedding call, which previously burned
+// live quota, hit HTTP 429, and made this file take 319s.
+//
+// Unsetting process.env here is NOT enough on its own: isAvailable checks
+// the gateway's module-global config snapshot (src/core/ai/gateway.ts,
+// configureGateway's `_config`), not process.env directly. If an earlier
+// test file in the same worker left the gateway configured with a key
+// already folded into that snapshot (test/extract-facts-embed-warn.serial
+// .test.ts mock.modules the gateway, for one), deleting the env vars here
+// changes nothing the gateway reads and this file still embeds for real.
+// So beforeAll unsets the keys AND calls resetGateway() (clears _config,
+// then re-applies the registered test baseline if any, capturing the now
+// key-less process.env), and afterAll restores the keys AND calls
+// resetGateway() again so the next test file in this worker does not
+// inherit a keyless gateway. See
+// test/helpers/private-routing-armed-writepath-preload.ts for a standalone
+// reproduction that proves this at the gateway layer directly, run with
+// `bun test --preload`.
 const EMBEDDING_PROVIDER_KEYS = ['OPENAI_API_KEY', 'VOYAGE_API_KEY', 'OPENROUTER_API_KEY'] as const;
 const savedProviderKeys: Partial<Record<typeof EMBEDDING_PROVIDER_KEYS[number], string>> = {};
+
+// This file's 'lgv' scenarios exercise a slug ('person/lgv') that the real
+// operator's live ~/.gbrain/privacy-allowlist.tsv (the T-LEAK-7 collision
+// allowlist) legitimately exempts, on a machine where that file exists.
+// Point GBRAIN_PRIVACY_ALLOWLIST_PATH at a path that never exists for the
+// duration of this file, so these tests assert the guard's behavior in
+// isolation and do not depend on, or get broken by, whatever the operator's
+// real dotfile happens to contain.
+const ALLOWLIST_PATH_ENV = 'GBRAIN_PRIVACY_ALLOWLIST_PATH';
+let savedAllowlistPath: string | undefined;
 
 function writePolicy(excluded: string): void {
   writeFileSync(join(policyDir, '_brain-filing-rules.md'), '# filing rules\n');
@@ -74,6 +98,14 @@ beforeAll(async () => {
     if (process.env[key] !== undefined) savedProviderKeys[key] = process.env[key];
     delete process.env[key];
   }
+  savedAllowlistPath = process.env[ALLOWLIST_PATH_ENV];
+  process.env[ALLOWLIST_PATH_ENV] = join(tmpdir(), 'gbrain-arm-writepath-no-such-allowlist.tsv');
+  // Clear whatever the gateway's module-global config snapshot holds from an
+  // earlier test file in this worker, and reconfigure from the now key-less
+  // process.env (via the registered test baseline, if any), so
+  // isAvailable('embedding') reflects the keys just deleted above rather
+  // than a stale snapshot.
+  resetGateway();
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -99,6 +131,11 @@ afterAll(async () => {
     if (key in savedProviderKeys) process.env[key] = savedProviderKeys[key];
     else delete process.env[key];
   }
+  if (savedAllowlistPath === undefined) delete process.env[ALLOWLIST_PATH_ENV];
+  else process.env[ALLOWLIST_PATH_ENV] = savedAllowlistPath;
+  // Reconfigure the gateway from the restored env so the next test file in
+  // this worker does not inherit the keyless snapshot this file needed.
+  resetGateway();
 });
 
 describe('private routing armed guard at the put_page write path', () => {

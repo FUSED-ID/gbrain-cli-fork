@@ -88,7 +88,7 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
     // Verbatim copy: the source row is authoritative, so the copy carries
     // putPage's empty-overwrite escape hatch (a legitimately blank body must
     // land over a drifted non-empty target row on re-run).
-    expect(call.opts).toEqual({ sourceId: 'default', allowEmptyOverwrite: true });
+    expect(call.opts).toEqual({ sourceId: 'default', allowEmptyOverwrite: true, migrationWrite: true });
   });
 
   test('already-null / already-populated fields are left as-is (no double-mapping)', async () => {
