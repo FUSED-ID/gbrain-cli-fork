@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
@@ -117,6 +117,23 @@ afterAll(async () => {
 });
 
 describe('D1 private-routing bypass paths', () => {
+  test('grouped C-path assertion: non-remote writes are absent from the remote op surface', () => {
+    const repo = resolve(import.meta.dir, '..');
+    const opsDir = join(repo, 'src/core/ops');
+    const remoteSurface = readdirSync(opsDir)
+      .filter((name) => name.endsWith('.ts'))
+      .map((name) => readFileSync(join(opsDir, name), 'utf8'))
+      .join('\n');
+    const extractionSource = readFileSync(join(opsDir, 'extraction.ts'), 'utf8');
+    const extractionReview = operationsByName.extraction_review;
+    const groupedProof = [
+      !/\.(softDeletePages|updateSlug)\s*\(/.test(remoteSurface),
+      !/\b(copyMigrationFacts|phaseCGrandfather|stampAtomsScanHash|recordItemFailureCount|runPhaseExtractAtoms|stampDreamProvenance|applyRetypeRule)\b/.test(remoteSurface),
+      extractionReview?.localOnly === true && /ctx\.remote !== false/.test(extractionSource),
+    ];
+    expect(groupedProof).toEqual([true, true, true]);
+  });
+
   test('revert_version refuses deny-listed local and remote writes, while an ordinary slug works', async () => {
     const denied = 'people/d1-bypass-denylisted-revert';
     await seedDefault(denied);

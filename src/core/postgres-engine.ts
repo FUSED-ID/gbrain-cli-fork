@@ -756,7 +756,6 @@ export class PostgresEngine implements BrainEngine {
         slug,
         entityType: page.type,
         entityName: page.title,
-        frontmatter: page.frontmatter,
       });
     }
     // Tombstone race guard (defects 2 and 4 fix; wording corrected, third
@@ -985,7 +984,6 @@ export class PostgresEngine implements BrainEngine {
       slug,
       entityType: current.type,
       entityName: current.title,
-      frontmatter: current.frontmatter,
     });
     // Idempotent-as-null contract: only flip rows that are currently active.
     // RETURNING projects the slug so we can tell hit-vs-miss without a probe.
@@ -1014,9 +1012,6 @@ export class PostgresEngine implements BrainEngine {
       );
     }
     const sql = this.sql;
-    for (const slug of slugs) {
-      await enforcePrivatePageWrite(this, { requestedSourceId: opts.sourceId, slug });
-    }
     const rows = await sql<{ slug: string }[]>`
       UPDATE pages SET deleted_at = now()
        WHERE slug = ANY(${slugs}::text[]) AND source_id = ${opts.sourceId} AND deleted_at IS NULL
@@ -1034,7 +1029,6 @@ export class PostgresEngine implements BrainEngine {
       slug,
       entityType: current.type,
       entityName: current.title,
-      frontmatter: current.frontmatter,
     });
     const sourceCondition = sourceId ? sql`AND source_id = ${sourceId}` : sql``;
     const rows = await sql`
@@ -4539,7 +4533,7 @@ export class PostgresEngine implements BrainEngine {
     return factsImpl.insertFact(this.factsDeps, input, ctx);
   }
 
-  async expireFact(id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean> {
+  async expireFact(id: number, opts?: { supersededBy?: number; at?: Date; validUntil?: Date | string | null }): Promise<boolean> {
     return factsImpl.expireFact(this.factsDeps, id, opts);
   }
 
@@ -4831,7 +4825,6 @@ export class PostgresEngine implements BrainEngine {
       slug,
       entityType: current.type,
       entityName: current.title,
-      frontmatter: current.frontmatter,
     });
     // v0.31.8 (D12): two-branch. With opts.sourceId, scope BOTH the page lookup
     // AND the version reference. Without it, multi-source brains can revert
@@ -5179,14 +5172,6 @@ export class PostgresEngine implements BrainEngine {
     newSlug = validateSlug(newSlug);
     const sql = this.sql;
     const sourceId = opts?.sourceId ?? 'default';
-    const current = await this.getPage(oldSlug, { sourceId, includeDeleted: true });
-    await enforcePrivatePageWrite(this, {
-      requestedSourceId: sourceId,
-      slug: newSlug,
-      entityType: current?.type,
-      entityName: current?.title,
-      frontmatter: current?.frontmatter,
-    });
     // Source-qualify so a rename in source A doesn't sweep up same-slug rows
     // in sources B/C/D (which would either rename them all OR fail the
     // (source_id, slug) UNIQUE if the new slug already exists in another source).

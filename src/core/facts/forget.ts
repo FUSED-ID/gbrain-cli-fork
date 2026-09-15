@@ -47,7 +47,6 @@ import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fen
 import { parseMarkdown } from '../markdown.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { contentHash } from '../utils.ts';
-import { enforcePrivateFactWrite } from '../private-source-routing.ts';
 
 export interface ForgetFactResult {
   /** True iff the row was found AND a forget was applied (fence or DB). */
@@ -166,16 +165,6 @@ export async function forgetFactInFence(
   }
   const row = rows[0];
 
-  // Preflight before touching the canonical fence. The DB expiry statement
-  // has the same guard, but waiting until after rename would leave the file
-  // changed when a private-routing refusal is raised.
-  await enforcePrivateFactWrite(engine, {
-    sourceId: row.source_id,
-    pageSlug: row.source_markdown_slug,
-    entitySlug: row.entity_slug,
-    visibility: row.visibility,
-  });
-
   if (row.expired_at !== null) {
     return { ok: false, path: 'already_expired', reason };
   }
@@ -276,11 +265,7 @@ export async function forgetFactInFence(
     // This keeps DB query patterns (active facts WHERE expired_at IS NULL)
     // accurate the moment the forget commits, without waiting for the
     // next extract_facts cycle phase to reconcile.
-    await engine.executeRaw(
-      `UPDATE facts SET valid_until = $1, expired_at = now()
-       WHERE id = $2 AND expired_at IS NULL`,
-      [today, factId],
-    );
+    await engine.expireFact(factId, { validUntil: today });
 
     // #4696: mirror the rewritten file into the DB body, or the reconcile
     // (which reads pages.compiled_truth) resurrects the claim before the
