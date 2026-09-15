@@ -21,7 +21,16 @@ import { isSearchMode } from '../search/mode.ts';
 import { stampEvidence } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
 import type { SearchResult, HybridSearchMeta, PageReadScope, PageReadPolicy } from '../types.ts';
-import { resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
+import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import {
+  assertPrivateRoutingArmed,
+  isAllowlistedCollision,
+  isPersonishPageWrite,
+  resolvePrivateWriteSource,
+  shouldAssertPrivateRouting,
+  type PrivateWriteRoute,
+  type PrivateWriteRouteInput,
+} from '../private-source-routing.ts';
 
 // --- Upload validators (Fix 1 / B5 / H5 / M4) ---
 
@@ -240,6 +249,47 @@ export function enforceClientSlugFence(ctx: OperationContext, slug: string, opNa
       `${opName}: slug '${slug}' is not under any of client ${ctx.auth?.clientId ?? '(unknown)'}'s bound_slug_prefixes (${prefixes.join(', ')})`,
     );
   }
+}
+
+/**
+ * D1 guard for write operations that do not call putPage. The direct page
+ * writers must use the same route decision, arm check, collision allowlist,
+ * and remote fence as putPage before they mutate a page or its timeline.
+ */
+export async function enforcePrivateWriteGuard(
+  ctx: OperationContext,
+  operation: string,
+  input: PrivateWriteRouteInput,
+  page?: { type?: string; title?: string; frontmatter?: unknown },
+): Promise<PrivateWriteRoute> {
+  const requestedSourceId = input.requestedSourceId ?? 'default';
+  const pageShape = page ?? {
+    type: input.entityType,
+    title: input.entityName,
+  };
+  const personish = await isPersonishPageWrite(ctx.engine, input.slug, pageShape);
+  if (personish && await shouldAssertPrivateRouting(ctx.engine, requestedSourceId)) {
+    await assertPrivateRoutingArmed(ctx.engine);
+  }
+
+  const route = await resolvePrivateWriteSource(ctx.engine, input);
+  const collisionExempt = route.reason === 'existing_private_page'
+    && isAllowlistedCollision(requestedSourceId, input.slug);
+  if (!route.routed || (ctx.remote === false && collisionExempt)) return route;
+
+  if (ctx.remote !== false) {
+    throw new OperationError(
+      'permission_denied',
+      `${operation} slug '${input.slug}' is routed to private source '${route.privateSourceId}' and cannot be written by a remote caller`,
+    );
+  }
+  throw new OperationError(
+    'permission_denied',
+    `private-write routing is ARMED but ${operation} received a person-shaped write for ` +
+    `world-federated source '${requestedSourceId}' that the privacy policy routes to private source ` +
+    `'${route.sourceId}' (${route.reason}). Slug '${input.slug}'. ` +
+    'Route it through put_page or write the private source explicitly.',
+  );
 }
 
 /**
