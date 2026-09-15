@@ -34,7 +34,7 @@ export interface PgFactsDeps {
   readonly sql: PgSql;
   /** Cast-suffix probe for facts.embedding (cache state lives on the engine). */
   resolveFactsEmbeddingCast(): Promise<'::vector' | '::halfvec'>;
-  guardFactWrite(target: { sourceId: string; pageSlug?: string | null; entitySlug?: string | null; visibility?: string | null }): Promise<void>;
+  guardFactWrite(target: { sourceId: string; pageSlug?: string | null; entitySlug?: string | null; visibility?: string | null; effect?: 'create' | 'reduce' }): Promise<void>;
 }
 
 export async function insertFact(
@@ -137,6 +137,7 @@ export async function expireFact(deps: PgFactsDeps, id: number, opts?: { superse
       pageSlug: row.source_markdown_slug,
       entitySlug: row.entity_slug,
       visibility: row.visibility,
+      effect: 'reduce',
     });
     const result = await sql`
       UPDATE facts SET
