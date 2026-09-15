@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -12,6 +12,7 @@ if (!revertVersion || !restorePage || !addTimelineEntry) throw new Error('D1 byp
 
 const ALLOWLIST_ENV = 'GBRAIN_PRIVACY_ALLOWLIST_PATH';
 const DENYLIST = '## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `d1-bypass-denylisted*` | D1 Bypass Denied |\n';
+const PERSON_PAGE = { type: 'person' as const, title: 'D1 Bypass Denied', compiled_truth: 'person body', timeline: '', frontmatter: {} };
 const ALLOWLISTED_COLLISIONS = [
   { slug: 'person/lgv', privateSlug: 'lgv' },
   { slug: 'wiki/chris-hooper/_author', privateSlug: 'chris-hooper' },
@@ -47,7 +48,11 @@ async function addPrivateCollision(slug: string): Promise<void> {
 }
 
 async function seedDefault(slug: string): Promise<void> {
-  await engine.putPage(slug, PAGE, { sourceId: 'default' });
+  await engine.putPage(slug, PAGE, { sourceId: 'default', migrationWrite: true });
+}
+
+async function seedDefaultPerson(slug: string): Promise<void> {
+  await engine.putPage(slug, PERSON_PAGE, { sourceId: 'default', migrationWrite: true });
 }
 
 async function outcome<T>(fn: () => Promise<T>): Promise<{ allowed: true; value: T } | { allowed: false; message: string }> {
@@ -73,13 +78,16 @@ beforeAll(async () => {
   await engine.initSchema();
   await engine.executeRaw(
     `UPDATE sources
-     SET config = jsonb_set(COALESCE(config, '{}'::jsonb), '{federated}', 'true'::jsonb)
+     SET config = jsonb_set(
+       jsonb_set(COALESCE(config, '{}'::jsonb), '{federated}', 'true'::jsonb),
+       '{facts_visibility}', '"world"'::jsonb
+     )
      WHERE id = 'default'`,
   );
 }, 120_000);
 
 beforeEach(async () => {
-  await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'd1-bypass-%' OR slug LIKE 'people/d1-bypass-%' OR slug LIKE 'notes/d1-bypass-%' OR slug IN ('person/lgv', 'lgv', 'wiki/chris-hooper/_author', 'chris-hooper/_author', 'chris-hooper')`);
+  await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'd1-bypass-%' OR slug LIKE 'people/d1-bypass-%' OR slug LIKE 'notes/d1-bypass-%' OR slug LIKE 'wiki/d1-bypass-%' OR slug IN ('person/lgv', 'lgv', 'wiki/chris-hooper/_author', 'chris-hooper/_author', 'chris-hooper')`);
   await engine.executeRaw(`DELETE FROM sources WHERE id = 'lg-private'`);
   await engine.executeRaw(`DELETE FROM timeline_entries`);
   await engine.executeRaw(`INSERT INTO sources (id, name, local_path, config) VALUES ('lg-private', 'LG private', $1, '{}'::jsonb)`, [policyDir]);
@@ -97,7 +105,7 @@ describe('D1 private-routing bypass paths', () => {
     const denied = 'people/d1-bypass-denylisted-revert';
     await seedDefault(denied);
     const version = await engine.createVersion(denied, { sourceId: 'default' });
-    await engine.putPage(denied, { ...PAGE, compiled_truth: 'changed body' }, { sourceId: 'default' });
+    await engine.putPage(denied, { ...PAGE, compiled_truth: 'changed body' }, { sourceId: 'default', migrationWrite: true });
 
     const localRed = await outcome(() => revertVersion.handler(context(false), { slug: denied, version_id: version.id }));
     expect(localRed.allowed).toBe(false);
@@ -165,11 +173,54 @@ describe('D1 private-routing bypass paths', () => {
     console.log(`GREEN add_timeline_entry ordinary slug: ${green.allowed ? 'allowed' : failureMessage(green)}`);
   });
 
+  test('restore_page and add_timeline_entry refuse a deny-listed person row outside a person prefix', async () => {
+    const denied = 'wiki/d1-bypass-denylisted-x';
+    await seedDefaultPerson(denied);
+    await engine.softDeletePage(denied, { sourceId: 'default' });
+
+    const restoreLocal = await outcome(() => restorePage.handler(context(false), { slug: denied }));
+    console.log(`${restoreLocal.allowed ? 'RED-BEFORE-FIX' : 'GREEN'} restore_page wiki person local: ${restoreLocal.allowed ? 'ALLOWED' : failureMessage(restoreLocal)}`);
+    expect(restoreLocal.allowed).toBe(false);
+    expect(failureMessage(restoreLocal)).toMatch(/excluded_people_policy|private-write routing/);
+
+    const restoreRemote = await outcome(() => restorePage.handler(context(true), { slug: denied }));
+    console.log(`${restoreRemote.allowed ? 'RED-BEFORE-FIX' : 'GREEN'} restore_page wiki person remote: ${restoreRemote.allowed ? 'ALLOWED' : failureMessage(restoreRemote)}`);
+    expect(restoreRemote.allowed).toBe(false);
+    expect(failureMessage(restoreRemote)).toMatch(/excluded_people_policy|private source|private-write routing/);
+
+    const timelineInput = { slug: denied, date: '2026-09-15', summary: 'Denied wiki person timeline entry' };
+    const timelineLocal = await outcome(() => addTimelineEntry.handler(context(false), timelineInput));
+    console.log(`${timelineLocal.allowed ? 'RED-BEFORE-FIX' : 'GREEN'} add_timeline_entry wiki person local: ${timelineLocal.allowed ? 'ALLOWED' : failureMessage(timelineLocal)}`);
+    expect(timelineLocal.allowed).toBe(false);
+    expect(failureMessage(timelineLocal)).toMatch(/excluded_people_policy|private-write routing/);
+
+    const timelineRemote = await outcome(() => addTimelineEntry.handler(context(true), timelineInput));
+    console.log(`${timelineRemote.allowed ? 'RED-BEFORE-FIX' : 'GREEN'} add_timeline_entry wiki person remote: ${timelineRemote.allowed ? 'ALLOWED' : failureMessage(timelineRemote)}`);
+    expect(timelineRemote.allowed).toBe(false);
+    expect(failureMessage(timelineRemote)).toMatch(/excluded_people_policy|private source|private-write routing/);
+  });
+
+  test('person-shaped writes refuse when the policy directory is missing', async () => {
+    const denied = 'wiki/d1-bypass-arm-missing-policy';
+    await seedDefaultPerson(denied);
+    await engine.softDeletePage(denied, { sourceId: 'default' });
+    rmSync(policyDir, { recursive: true, force: true });
+    try {
+      const result = await outcome(() => restorePage.handler(context(false), { slug: denied }));
+      console.log(`GREEN NOT ARMED missing policy directory: ${failureMessage(result)}`);
+      expect(result.allowed).toBe(false);
+      expect(failureMessage(result)).toMatch(/NOT ARMED/);
+    } finally {
+      mkdirSync(policyDir, { recursive: true });
+      writePolicy();
+    }
+  });
+
   test('all three operations refuse a non-allowlisted private collision', async () => {
     const revertSlug = 'people/d1-bypass-collision-revert';
     await seedDefault(revertSlug);
     const version = await engine.createVersion(revertSlug, { sourceId: 'default' });
-    await engine.putPage(revertSlug, { ...PAGE, compiled_truth: 'collision changed' }, { sourceId: 'default' });
+    await engine.putPage(revertSlug, { ...PAGE, compiled_truth: 'collision changed' }, { sourceId: 'default', migrationWrite: true });
     await addPrivateCollision(revertSlug);
     writeFileSync(allowlistPath, '');
     const revertLocal = await outcome(() => revertVersion.handler(context(false), { slug: revertSlug, version_id: version.id }));
@@ -213,7 +264,7 @@ describe('D1 private-routing bypass paths', () => {
     for (const { slug, privateSlug } of ALLOWLISTED_COLLISIONS) {
       await seedDefault(slug);
       const version = await engine.createVersion(slug, { sourceId: 'default' });
-      await engine.putPage(slug, { ...PAGE, compiled_truth: 'changed body' }, { sourceId: 'default' });
+      await engine.putPage(slug, { ...PAGE, compiled_truth: 'changed body' }, { sourceId: 'default', migrationWrite: true });
       await addPrivateCollision(privateSlug);
       writeFileSync(allowlistPath, `collision|${slug}\n`);
 

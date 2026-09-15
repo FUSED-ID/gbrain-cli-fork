@@ -65,6 +65,8 @@ const add_timeline_entry: Operation = {
     await enforcePrivateWriteGuard(ctx, 'add_timeline_entry', {
       requestedSourceId: sourceOpts.sourceId ?? 'default',
       slug: p.slug as string,
+      entityType: current?.type,
+      entityName: current?.title,
     }, current ?? undefined);
     // #4109: source-boundary diagnostics before the write-through/insert —
     // a page readable only from another granted source must come back as
