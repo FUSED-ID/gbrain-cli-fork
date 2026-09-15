@@ -91,7 +91,7 @@ import type {
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
-import { enforcePrivatePageWrite } from './private-source-routing.ts';
+import { enforcePrivateFactWrite, enforcePrivatePageWrite } from './private-source-routing.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
 import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
 import { PAGE_SORT_SQL, MIN_ENTITY_PAGES_FOR_COVERAGE } from './types.ts';
@@ -2003,6 +2003,14 @@ export class PGLiteEngine implements BrainEngine {
       params.push(sourceId);
       where.push(`source_id = $${params.length}`);
     }
+    const current = await this.getPage(slug, { includeDeleted: true, ...(sourceId ? { sourceId } : {}) });
+    if (current) await enforcePrivatePageWrite(this, {
+      requestedSourceId: current.source_id,
+      slug,
+      effect: 'reduce',
+      entityType: current.type,
+      entityName: current.title,
+    });
     const { rows } = await this.db.query(
       `UPDATE pages SET deleted_at = now() WHERE ${where.join(' AND ')} RETURNING slug`,
       params
@@ -2090,10 +2098,12 @@ export class PGLiteEngine implements BrainEngine {
     compiledTruth: string,
     timeline: string,
     contentHash: string,
+    opts?: { effect?: 'create' | 'reduce' },
   ): Promise<void> {
     // Parity with PostgresEngine.refreshPageBody: narrow UPDATE only.
     // The deleted_at filter prevents a redirect retry from reviving a
     // canonical that was already purged.
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug, effect: opts?.effect });
     await this.db.query(
       `UPDATE pages
          SET compiled_truth = $1,
@@ -4912,6 +4922,12 @@ export class PGLiteEngine implements BrainEngine {
     const conf = obs.confidence ?? 0.7;
     const status = obs.status ?? (isNovelDimension(dimension) ? 'quarantined' : 'active');
     const visibility = obs.visibility ?? 'private';
+    await enforcePrivateFactWrite(this, {
+      sourceId,
+      pageSlug: obs.entitySlug,
+      entitySlug: obs.entitySlug,
+      visibility,
+    });
     const validFrom = obs.validFrom ?? null;
     const validUntil = obs.validTo ?? null;
     const factText = `${dimension}: ${obs.value}`;
@@ -5254,6 +5270,7 @@ export class PGLiteEngine implements BrainEngine {
     const self = this;
     return {
       get db() { return self.db; },
+      guardFactWrite: (target) => enforcePrivateFactWrite(self, target),
     };
   }
 

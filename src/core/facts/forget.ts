@@ -189,7 +189,7 @@ export async function forgetFactInFence(
     // re-imports + re-chunks — and, the fence being canonical, legitimately
     // revives a row the file still carries, in body AND chunks as one state.
     await engine.refreshPageBody(slug, row.source_id, struck, page.timeline ?? '',
-      contentHash({ ...page, compiled_truth: struck }));
+      contentHash({ ...page, compiled_truth: struck }), { effect: 'reduce' });
   };
 
   // Legacy path — DB-only forget. Doesn't survive `gbrain rebuild` (the
@@ -284,7 +284,7 @@ export async function forgetFactInFence(
       if (page) {
         await engine.refreshPageBody(slug, row.source_id,
           sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline),
-          page.content_hash || contentHash(page));
+          page.content_hash || contentHash(page), { effect: 'reduce' });
       }
     } catch { /* degrades to the pre-#4696 window (stale until the next sync) */ }
 

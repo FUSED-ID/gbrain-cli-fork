@@ -53,6 +53,7 @@ import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';
 import { runGuardrails } from './guardrails.ts';
 import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
 import { scanFencedBlocks, MAX_FENCES_PER_PAGE } from './fence-scan.ts';
+import { resolvePrivateWriteSource } from './private-source-routing.ts';
 
 /**
  * v0.20.0 Cathedral II Layer 8 D2 — markdown fence extraction helper.
@@ -375,7 +376,8 @@ export async function importFromContent(
   // (source_id, slug) row. Pre-fix, putPage relied on the schema DEFAULT and
   // silently fabricated a duplicate at (default, slug) — causing later
   // bare-slug subqueries (getTags, deleteChunks, etc.) to crash with 21000.
-  const sourceId = opts.sourceId;
+  const requestedSourceId = opts.sourceId ?? 'default';
+  let sourceId = opts.sourceId;
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
@@ -403,6 +405,27 @@ export async function importFromContent(
   parsed.title = sanitizeText(parsed.title);
   parsed.compiled_truth = sanitizeText(parsed.compiled_truth);
   parsed.timeline = sanitizeText(parsed.timeline);
+
+  // Route all content imports, including sync/import callers that do not pass
+  // through the put_page operation. If a world-federated copy already exists
+  // in the requested source, tombstone it only after the private write
+  // succeeds so reconciliation cannot refresh the exposed copy.
+  const route = await resolvePrivateWriteSource(engine, {
+    requestedSourceId,
+    slug,
+    content,
+    entityType: parsed.type,
+    entityName: parsed.title,
+  });
+  const routedFromSourceId = route.routed && route.sourceId !== requestedSourceId
+    ? requestedSourceId
+    : null;
+  if (route.routed) sourceId = route.sourceId;
+  const reconcileRoutedMirror = async (): Promise<void> => {
+    if (routedFromSourceId) {
+      await engine.softDeletePage(slug, { sourceId: routedFromSourceId });
+    }
+  };
 
   // v0.42 (#1699 trust boundary): strip gate-owned markers from UNTRUSTED
   // input. parseMarkdown preserves every frontmatter key except type/title/
@@ -725,6 +748,7 @@ export async function importFromContent(
   };
 
   if (existing?.content_hash === hash && !opts.forceRechunk) {
+    await reconcileRoutedMirror();
     return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
   }
 
@@ -749,6 +773,7 @@ export async function importFromContent(
         parsed.timeline || '',
         hash,
       );
+      await reconcileRoutedMirror();
       return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
     }
   }
@@ -1142,6 +1167,7 @@ export async function importFromContent(
   // this guard, the operation reports success and the page is invisible to all
   // reads (get_page, search, query) until someone notices the gap manually.
   await verifyPageReadable(engine, slug, hash, sourceId, 'importFromContent');
+  await reconcileRoutedMirror();
 
   return {
     slug,
