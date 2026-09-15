@@ -2046,6 +2046,13 @@ export class PGLiteEngine implements BrainEngine {
       params.push(sourceId);
       where.push(`source_id = $${params.length}`);
     }
+    const current = await this.getPage(slug, { includeDeleted: true, ...(sourceId ? { sourceId } : {}) });
+    if (current) await enforcePrivatePageWrite(this, {
+      requestedSourceId: current.source_id,
+      slug,
+      entityType: current.type,
+      entityName: current.title,
+    });
     const { rows } = await this.db.query(
       `UPDATE pages SET deleted_at = NULL WHERE ${where.join(' AND ')} RETURNING slug`,
       params
