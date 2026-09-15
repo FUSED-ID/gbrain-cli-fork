@@ -123,10 +123,11 @@ export async function insertFact(
     return { id, status: 'inserted' };
   }
 
-export async function expireFact(deps: PgFactsDeps, id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean> {
+export async function expireFact(deps: PgFactsDeps, id: number, opts?: { supersededBy?: number; at?: Date; validUntil?: Date | string | null }): Promise<boolean> {
     const sql = deps.sql;
     const at = opts?.at ?? new Date();
     const supersededBy = opts?.supersededBy ?? null;
+    const validUntil = opts?.validUntil ?? null;
     const rows = await sql<{ source_id: string; entity_slug: string | null; source_markdown_slug: string | null; visibility: string | null }[]>`
       SELECT source_id, entity_slug, source_markdown_slug, visibility FROM facts WHERE id = ${id}
     `;
@@ -138,8 +139,12 @@ export async function expireFact(deps: PgFactsDeps, id: number, opts?: { superse
       visibility: row.visibility,
     });
     const result = await sql`
-      UPDATE facts SET expired_at = ${at}, superseded_by = COALESCE(${supersededBy}, superseded_by)
-      WHERE id = ${id} AND expired_at IS NULL
+      UPDATE facts SET
+        expired_at = COALESCE(expired_at, ${at}),
+        superseded_by = COALESCE(${supersededBy}::int, superseded_by),
+        valid_until = COALESCE(${validUntil}::timestamptz, valid_until)
+      WHERE id = ${id}
+        AND (expired_at IS NULL OR ${supersededBy}::int IS NOT NULL)
     `;
     return (result.count ?? 0) > 0;
   }

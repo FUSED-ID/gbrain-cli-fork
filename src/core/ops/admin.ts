@@ -198,10 +198,7 @@ const revert_version: Operation = {
       ? version.frontmatter.type
       : undefined;
     const current = await ctx.engine.getPage(p.slug as string, { includeDeleted: true, ...sourceOpts });
-    // The engine createVersion/revert seams enforce the loaded row's policy.
-    // Retain only the remote fence because the engine does not receive trust
-    // context and local allowlisted rule-(b) collisions remain permitted.
-    if (ctx.remote !== false) await enforcePrivateWriteGuard(ctx, 'revert_version', {
+    await enforcePrivateWriteGuard(ctx, 'revert_version', {
       requestedSourceId,
       slug: p.slug as string,
       content: version?.compiled_truth,

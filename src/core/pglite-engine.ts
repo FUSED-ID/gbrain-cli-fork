@@ -106,7 +106,7 @@ import type {
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
-import { enforcePrivateFactWrite, enforcePrivatePageWrite } from './private-source-routing.ts';
+import { enforcePrivatePageWrite } from './private-source-routing.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
 import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
 import { PAGE_SORT_SQL, MIN_ENTITY_PAGES_FOR_COVERAGE } from './types.ts';
@@ -1774,7 +1774,6 @@ export class PGLiteEngine implements BrainEngine {
         slug,
         entityType: page.type,
         entityName: page.title,
-        frontmatter: page.frontmatter,
       });
     }
     // Tombstone race guard (defects 2 and 4 fix; wording corrected, third
@@ -2002,14 +2001,6 @@ export class PGLiteEngine implements BrainEngine {
     // Idempotent-as-null: only flip rows currently active. Source filter is
     // optional; without it the first matching row across sources gets soft-deleted.
     const sourceId = opts?.sourceId;
-    const current = await this.getPage(slug, { includeDeleted: true, ...(sourceId ? { sourceId } : {}) });
-    if (current) await enforcePrivatePageWrite(this, {
-      requestedSourceId: current.source_id,
-      slug,
-      entityType: current.type,
-      entityName: current.title,
-      frontmatter: current.frontmatter,
-    });
     const where: string[] = ['slug = $1', 'deleted_at IS NULL'];
     const params: unknown[] = [slug];
     if (sourceId) {
@@ -2040,9 +2031,6 @@ export class PGLiteEngine implements BrainEngine {
         `softDeletePages: input size ${slugs.length} exceeds DELETE_BATCH_SIZE=${DELETE_BATCH_SIZE}. Caller must chunk.`,
       );
     }
-    for (const slug of slugs) {
-      await enforcePrivatePageWrite(this, { requestedSourceId: opts.sourceId, slug });
-    }
     const { rows } = await this.db.query<{ slug: string }>(
       'UPDATE pages SET deleted_at = now() WHERE slug = ANY($1::text[]) AND source_id = $2 AND deleted_at IS NULL RETURNING slug',
       [slugs, opts.sourceId],
@@ -2052,14 +2040,6 @@ export class PGLiteEngine implements BrainEngine {
 
   async restorePage(slug: string, opts?: { sourceId?: string }): Promise<boolean> {
     const sourceId = opts?.sourceId;
-    const current = await this.getPage(slug, { includeDeleted: true, ...(sourceId ? { sourceId } : {}) });
-    if (current) await enforcePrivatePageWrite(this, {
-      requestedSourceId: current.source_id,
-      slug,
-      entityType: current.type,
-      entityName: current.title,
-      frontmatter: current.frontmatter,
-    });
     const where: string[] = ['slug = $1', 'deleted_at IS NOT NULL'];
     const params: unknown[] = [slug];
     if (sourceId) {
@@ -2115,7 +2095,6 @@ export class PGLiteEngine implements BrainEngine {
     timeline: string,
     contentHash: string,
   ): Promise<void> {
-    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
     // Parity with PostgresEngine.refreshPageBody: narrow UPDATE only.
     // The deleted_at filter prevents a redirect retry from reviving a
     // canonical that was already purged.
@@ -4920,12 +4899,6 @@ export class PGLiteEngine implements BrainEngine {
     const conf = obs.confidence ?? 0.7;
     const status = obs.status ?? (isNovelDimension(dimension) ? 'quarantined' : 'active');
     const visibility = obs.visibility ?? 'private';
-    await enforcePrivateFactWrite(this, {
-      sourceId,
-      pageSlug: obs.entitySlug,
-      entitySlug: obs.entitySlug,
-      visibility,
-    });
     const validFrom = obs.validFrom ?? null;
     const validUntil = obs.validTo ?? null;
     const factText = `${dimension}: ${obs.value}`;
@@ -5269,7 +5242,6 @@ export class PGLiteEngine implements BrainEngine {
     const self = this;
     return {
       get db() { return self.db; },
-      guardFactWrite: (target) => enforcePrivateFactWrite(self, target),
     };
   }
 
@@ -5280,7 +5252,7 @@ export class PGLiteEngine implements BrainEngine {
     return factsImpl.insertFact(this.factsDeps, input, ctx);
   }
 
-  async expireFact(id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean> {
+  async expireFact(id: number, opts?: { supersededBy?: number; at?: Date; validUntil?: Date | string | null }): Promise<boolean> {
     return factsImpl.expireFact(this.factsDeps, id, opts);
   }
 
@@ -5514,7 +5486,6 @@ export class PGLiteEngine implements BrainEngine {
   // Versions
   async createVersion(slug: string, opts?: { sourceId?: string }): Promise<PageVersion> {
     const sourceId = opts?.sourceId ?? 'default';
-    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
     const { rows } = await this.db.query(
       `INSERT INTO page_versions (page_id, compiled_truth, frontmatter)
        SELECT id, compiled_truth, frontmatter
@@ -5567,17 +5538,6 @@ export class PGLiteEngine implements BrainEngine {
     versionId: number,
     opts?: { sourceId?: string },
   ): Promise<void> {
-    const current = await this.getPage(slug, {
-      includeDeleted: true,
-      ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
-    });
-    if (current) await enforcePrivatePageWrite(this, {
-      requestedSourceId: current.source_id,
-      slug,
-      entityType: current.type,
-      entityName: current.title,
-      frontmatter: current.frontmatter,
-    });
     // v0.31.8 (D12): when opts.sourceId is set, scope BOTH the page lookup
     // and the version row reference. Without it, multi-source brains can
     // revert the wrong same-slug page (the one Postgres returns first).
@@ -5905,14 +5865,6 @@ export class PGLiteEngine implements BrainEngine {
   async updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string }): Promise<number> {
     newSlug = validateSlug(newSlug);
     const sourceId = opts?.sourceId ?? 'default';
-    const current = await this.getPage(oldSlug, { sourceId, includeDeleted: true });
-    await enforcePrivatePageWrite(this, {
-      requestedSourceId: sourceId,
-      slug: newSlug,
-      entityType: current?.type,
-      entityName: current?.title,
-      frontmatter: current?.frontmatter,
-    });
     // Source-qualify so a rename in source A doesn't sweep up same-slug rows
     // in sources B/C/D (mirrors postgres-engine.ts).
     const result = await this.db.query(

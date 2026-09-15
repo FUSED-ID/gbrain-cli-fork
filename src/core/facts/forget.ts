@@ -20,7 +20,6 @@ import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fen
 import { parseMarkdown } from '../markdown.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { contentHash } from '../utils.ts';
-import { enforcePrivateFactWrite } from '../private-source-routing.ts';
 
 export interface ForgetFactResult {
   /** True iff the row was found AND a forget was applied (fence or DB). */
@@ -135,16 +134,6 @@ export async function forgetFactInFence(
   }
   const row = rows[0];
 
-  // Preflight before touching the canonical fence. The DB expiry statement
-  // has the same guard, but waiting until after rename would leave the file
-  // changed when a private-routing refusal is raised.
-  await enforcePrivateFactWrite(engine, {
-    sourceId: row.source_id,
-    pageSlug: row.source_markdown_slug,
-    entitySlug: row.entity_slug,
-    visibility: row.visibility,
-  });
-
   if (row.expired_at !== null) {
     return { ok: false, path: 'already_expired', reason };
   }
@@ -220,13 +209,11 @@ export async function forgetFactInFence(
       return legacyExpire();
     }
 
-    return withPageLock(slug, async () => {
-      const body = readFileSync(filePath, 'utf-8');
-      // Fence missing the row (DB drifted from markdown) or its markers (race /
-      // corruption): fall through to legacy expire so the user's intent
-      // succeeds; doctor surfaces the drift separately.
-      const newBody = strikeFenceRow(body, targetRowNum, reason, today);
-      if (newBody === null) return legacyExpire(true);
+    // Stamp the DB to match: valid_until = today, expired_at = now().
+    // This keeps DB query patterns (active facts WHERE expired_at IS NULL)
+    // accurate the moment the forget commits, without waiting for the
+    // next extract_facts cycle phase to reconcile.
+    await engine.expireFact(factId, { validUntil: today });
 
       // Atomic .tmp + parse-validate + rename.
       assertSourceFilesystemActive();
