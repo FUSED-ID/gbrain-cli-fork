@@ -18,7 +18,7 @@ export interface PgliteFactsDeps {
   /** Live PGLite handle. Getter-backed at the call site so the
    *  connect() check fires exactly when the original engine `db` read did. */
   readonly db: PGlite;
-  guardFactWrite(target: { sourceId: string; pageSlug?: string | null; entitySlug?: string | null; visibility?: string | null; effect?: 'create' | 'reduce' }): Promise<void>;
+  guardFactWrite(target: { sourceId: string; pageSlug?: string | null; entitySlug?: string | null; visibility?: string | null }): Promise<void>;
 }
 
 export async function insertFact(
@@ -121,17 +121,6 @@ export async function insertFact(
 
 export async function expireFact(deps: PgliteFactsDeps, id: number, opts?: { supersededBy?: number; at?: Date; validUntil?: Date | string | null }): Promise<boolean> {
   const at = opts?.at ?? new Date();
-  const loaded = await deps.db.query<{ source_id: string; entity_slug: string | null; source_markdown_slug: string | null; visibility: string | null }>(
-    'SELECT source_id, entity_slug, source_markdown_slug, visibility FROM facts WHERE id = $1', [id],
-  );
-  const row = loaded.rows[0];
-  if (row) await deps.guardFactWrite({
-    sourceId: row.source_id,
-    pageSlug: row.source_markdown_slug,
-    entitySlug: row.entity_slug,
-    visibility: row.visibility,
-    effect: 'reduce',
-  });
   const result = await deps.db.query(
       `UPDATE facts SET expired_at = COALESCE(expired_at, $1),
                         superseded_by = COALESCE($2::int, superseded_by),
