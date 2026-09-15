@@ -307,7 +307,6 @@ export async function writeTimelineEntryThrough(
       slug,
       entityType: currentForGuard.type,
       entityName: currentForGuard.title,
-      frontmatter: currentForGuard.frontmatter,
     });
   }
   // Set the moment the atomic rename lands: from then on the canonical bullet

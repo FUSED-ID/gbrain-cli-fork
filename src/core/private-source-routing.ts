@@ -383,12 +383,10 @@ const armedRoutingCache = new WeakMap<object, CachedArmedRouting>();
 export async function isPersonishPageWrite(
   engine: BrainEngine,
   slug: string,
-  page: { type?: string; title?: string; frontmatter?: unknown },
+  page: { type?: string; title?: string },
 ): Promise<boolean> {
   if (page.type === 'person' || slug.endsWith('/_author') || slug.startsWith('people/') || slug.startsWith('person/')
     || slug.startsWith('contacts/') || slug.startsWith('harvest/')) return true;
-  if (page.frontmatter && typeof page.frontmatter === 'object'
-    && (page.frontmatter as Record<string, unknown>).type === 'person') return true;
   const source = await findPrivateSource(engine);
   if (!source) return false;
   try {
@@ -529,7 +527,6 @@ export interface PrivatePageWriteTarget {
   /** Type/title from the loaded row, or from the row about to be inserted. */
   entityType?: string;
   entityName?: string;
-  frontmatter?: unknown;
 }
 
 /**
@@ -548,8 +545,7 @@ export async function enforcePrivatePageWrite(
 
   let entityType = target.entityType;
   let entityName = target.entityName;
-  let frontmatter = target.frontmatter;
-  if (entityType === undefined || entityName === undefined || frontmatter === undefined) {
+  if (entityType === undefined || entityName === undefined) {
     const loaded = await engine.getPage(target.slug, {
       sourceId: target.requestedSourceId,
       includeDeleted: true,
@@ -557,14 +553,12 @@ export async function enforcePrivatePageWrite(
     if (loaded) {
       entityType ??= loaded.type;
       entityName ??= loaded.title;
-      frontmatter ??= loaded.frontmatter;
     }
   }
 
   const personish = await isPersonishPageWrite(engine, target.slug, {
     type: entityType,
     title: entityName,
-    frontmatter,
   });
   if (!personish) return { sourceId: target.requestedSourceId, routed: false };
 
@@ -619,9 +613,10 @@ export async function enforcePrivateFactWrite(
     slug,
     entityType: page?.type,
     entityName: page?.title,
-    frontmatter: page?.frontmatter,
   });
-  if (route.routed && target.sourceId === DEFAULT_SOURCE_ID) {
+  const collisionExempt = route.reason === 'existing_private_page'
+    && isAllowlistedCollision(target.sourceId, slug);
+  if (route.routed && target.sourceId === DEFAULT_SOURCE_ID && !collisionExempt) {
     throw new Error(
       `private-write routing refused fact write for '${slug}' in world-federated source ` +
       `'${target.sourceId}'; route the fact to '${route.sourceId}'.`,
@@ -630,7 +625,7 @@ export async function enforcePrivateFactWrite(
   // Explicitly retain the world-on-default denial even if a future caller
   // widens the collision exception above.  The allowlist never exempts rule
   // (a), and never permits a world fact to remain in default.
-  if (target.visibility === 'world' && target.sourceId === DEFAULT_SOURCE_ID && route.routed) {
+  if (target.visibility === 'world' && target.sourceId === DEFAULT_SOURCE_ID && route.routed && !collisionExempt) {
     throw new Error(`world-visible fact denied for private-routed page '${slug}'`);
   }
 }

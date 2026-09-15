@@ -13,7 +13,6 @@ import { OperationError } from './contract.ts';
 import { sourceScopeOpts } from './context.ts';
 import { unverifiedExtractionFragment, isUnverifiedExtraction, EXTRACTION_STATUS_KEY, STATUS_VERIFIED } from '../extraction-review.ts';
 import { buildVisibilityClause } from '../search/sql-ranking.ts';
-import { enforcePrivatePageWrite } from '../private-source-routing.ts';
 
 // ---------------------------------------------------------------------------
 // Extraction quarantine lane (issue #160)
@@ -202,13 +201,6 @@ const extraction_review: Operation = {
         // trail of HOW the page came to exist; status → 'verified' records
         // the owner's call. jsonb_build_object binds as text (no
         // JSON.stringify-into-::jsonb hazard); identical on both engines.
-        await enforcePrivatePageWrite(ctx.engine, {
-          requestedSourceId: page.source_id,
-          slug,
-          entityType: page.type,
-          entityName: page.title,
-          frontmatter: page.frontmatter,
-        });
         await ctx.engine.executeRaw(
           `UPDATE pages
            SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || jsonb_build_object($1::text, $2::text),

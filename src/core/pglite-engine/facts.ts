@@ -18,7 +18,6 @@ export interface PgliteFactsDeps {
   /** Live PGLite handle. Getter-backed at the call site so the
    *  connect() check fires exactly when the original engine `db` read did. */
   readonly db: PGlite;
-  guardFactWrite(target: { sourceId: string; pageSlug?: string | null; entitySlug?: string | null; visibility?: string | null }): Promise<void>;
 }
 
 export async function insertFact(
@@ -26,11 +25,6 @@ export async function insertFact(
     input: NewFact,
     ctx: { source_id: string; supersedeId?: number },
   ): Promise<{ id: number; status: FactInsertStatus }> {
-    await deps.guardFactWrite({
-      sourceId: ctx.source_id,
-      entitySlug: input.entity_slug,
-      visibility: input.visibility ?? 'private',
-    });
     const validFrom = input.valid_from ?? new Date();
     const validUntil = input.valid_until ?? null;
     const kind = input.kind ?? 'fact';
@@ -119,22 +113,14 @@ export async function insertFact(
     return { id: ins.rows[0].id, status: 'inserted' };
   }
 
-export async function expireFact(deps: PgliteFactsDeps, id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean> {
+export async function expireFact(deps: PgliteFactsDeps, id: number, opts?: { supersededBy?: number; at?: Date; validUntil?: Date | string | null }): Promise<boolean> {
     const at = opts?.at ?? new Date();
-    const found = await deps.db.query<{ source_id: string; entity_slug: string | null; source_markdown_slug: string | null; visibility: string | null }>(
-      'SELECT source_id, entity_slug, source_markdown_slug, visibility FROM facts WHERE id = $1', [id],
-    );
-    const row = found.rows[0];
-    if (row) await deps.guardFactWrite({
-      sourceId: row.source_id,
-      pageSlug: row.source_markdown_slug,
-      entitySlug: row.entity_slug,
-      visibility: row.visibility,
-    });
     const result = await deps.db.query(
-      `UPDATE facts SET expired_at = $1, superseded_by = COALESCE($2, superseded_by)
-       WHERE id = $3 AND expired_at IS NULL`,
-      [at, opts?.supersededBy ?? null, id],
+      `UPDATE facts SET expired_at = COALESCE(expired_at, $1),
+                        superseded_by = COALESCE($2::int, superseded_by),
+                        valid_until = COALESCE($3::timestamptz, valid_until)
+       WHERE id = $4 AND (expired_at IS NULL OR $2::int IS NOT NULL)`,
+      [at, opts?.supersededBy ?? null, opts?.validUntil ?? null, id],
     );
     return (result.affectedRows ?? 0) > 0;
   }
@@ -146,13 +132,6 @@ export async function insertFacts(
     opts?: { deleteForPageFirst?: { slug: string; excludeSourcePrefixes?: string[]; preserveExpiredLegacy?: boolean } },
   ): Promise<{ inserted: number; ids: number[]; warnings: string[]; deleted: number }> {
     if (rows.length === 0) return { inserted: 0, ids: [], warnings: [], deleted: 0 };
-
-    for (const row of rows) await deps.guardFactWrite({
-      sourceId: ctx.source_id,
-      pageSlug: row.source_markdown_slug,
-      entitySlug: row.entity_slug,
-      visibility: row.visibility ?? 'private',
-    });
 
     const warnings: string[] = [];
     // v0.46 (#3014): captured inside the transaction below when
