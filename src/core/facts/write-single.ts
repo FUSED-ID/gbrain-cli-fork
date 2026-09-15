@@ -240,7 +240,8 @@ export async function writeSingleFact(
  * is already durably written; a partial supersede is an audit gap, not data
  * loss.
  */
-async function expireSuperseded(engine: BrainEngine, oldId: number, newId: number): Promise<void> {
+/** @internal Engine-seam test helper; production callers reach this via writeSingleFact. */
+export async function expireSuperseded(engine: BrainEngine, oldId: number, newId: number): Promise<void> {
   try {
     const { forgetFactInFence } = await import('./forget.ts');
     await forgetFactInFence(engine, oldId, { reason: `superseded by fact #${newId}` });

@@ -5515,6 +5515,7 @@ export class PGLiteEngine implements BrainEngine {
   // Versions
   async createVersion(slug: string, opts?: { sourceId?: string }): Promise<PageVersion> {
     const sourceId = opts?.sourceId ?? 'default';
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
     const { rows } = await this.db.query(
       `INSERT INTO page_versions (page_id, compiled_truth, frontmatter)
        SELECT id, compiled_truth, frontmatter
