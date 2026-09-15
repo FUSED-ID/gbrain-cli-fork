@@ -434,10 +434,7 @@ const loops_close: Operation = {
     // stop carrying it (fence round-trip happens on the next facts sweep).
     if (row.fact_id !== null) {
       try {
-        await ctx.engine.executeRaw(
-          `UPDATE facts SET expired_at = now() WHERE id = $1 AND expired_at IS NULL`,
-          [row.fact_id],
-        );
+        await ctx.engine.expireFact(row.fact_id);
       } catch { /* best-effort */ }
     }
     return { closed: true, id: row.id, status: row.status, fact_expired: row.fact_id !== null };

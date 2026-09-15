@@ -28,6 +28,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../operations.ts';
 import { loadActivePackBestEffort } from './best-effort.ts';
 import { ALLOWED_SUBTYPE_FIELDS, type AllowedSubtypeField } from './manifest-v1.ts';
+import { enforcePrivatePageWrite } from '../private-source-routing.ts';
 
 /** Sentinel: `from_type: '*unknown*'` matches every page whose type isn't
  *  declared in the pack's page_types AND isn't the target of any prior
@@ -248,6 +249,25 @@ async function applyRetypeRule(
       SELECT COUNT(*)::text AS updated FROM upd
     `;
     try {
+      const guardRows = await engine.executeRaw<{
+        slug: string; source_id: string; type: string; title: string; frontmatter: Record<string, unknown> | null;
+      }>(
+        `WITH win AS (
+           SELECT id FROM pages
+           WHERE ${winWhereParts.join(' AND ')}
+           LIMIT ${limitPlaceholder}
+         )
+         SELECT p.slug, p.source_id, p.type, p.title, p.frontmatter
+           FROM pages p JOIN win ON win.id = p.id`,
+        winParams,
+      );
+      for (const row of guardRows) await enforcePrivatePageWrite(engine, {
+        requestedSourceId: row.source_id,
+        slug: row.slug,
+        entityType: row.type,
+        entityName: row.title,
+        frontmatter: row.frontmatter,
+      });
       const rows = await engine.executeRaw<{ updated: string }>(sqlText, allParams);
       const batchCount = parseInt(rows[0]?.updated ?? '0', 10) || 0;
       if (batchCount === 0) break;

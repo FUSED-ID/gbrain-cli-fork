@@ -20,8 +20,7 @@ import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fen
 import { parseMarkdown } from '../markdown.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { contentHash } from '../utils.ts';
-import { recordFactWithdrawal } from './withdrawal.ts';
-import { withdrawnFact } from './withdrawal-overlay.ts';
+import { enforcePrivateFactWrite } from '../private-source-routing.ts';
 
 export interface ForgetFactResult {
   /** True iff the row was found AND a forget was applied (fence or DB). */
@@ -136,12 +135,15 @@ export async function forgetFactInFence(
   }
   const row = rows[0];
 
-  const { assertCoordinatedWrite } = await import('../persistence/context.ts');
-  await assertCoordinatedWrite(engine, row.source_id);
-
-  // A stale source file or rebuilt index must not silently restore an exact
-  // withdrawn claim. Intent commits independently of filesystem availability.
-  await recordFactWithdrawal(engine, factId, row.source_id, opts.worldOnly === true);
+  // Preflight before touching the canonical fence. The DB expiry statement
+  // has the same guard, but waiting until after rename would leave the file
+  // changed when a private-routing refusal is raised.
+  await enforcePrivateFactWrite(engine, {
+    sourceId: row.source_id,
+    pageSlug: row.source_markdown_slug,
+    entitySlug: row.entity_slug,
+    visibility: row.visibility,
+  });
 
   if (row.expired_at !== null) {
     return { ok: false, path: 'already_expired', reason };

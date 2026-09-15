@@ -882,7 +882,11 @@ const restore_page: Operation = {
       ? { sourceId: requestedSource }
       : ctx.sourceId ? { sourceId: ctx.sourceId } : {};
     const current = await ctx.engine.getPage(slug, { includeDeleted: true, ...sourceOpts });
-    await enforcePrivateWriteGuard(ctx, 'restore_page', {
+    // The engine restore seam is the policy chokepoint. Keep only the
+    // operation-level remote fence: the engine cannot know whether this
+    // invocation is remote, and the collision allowlist exempts local rule-(b)
+    // writes but never remote callers.
+    if (ctx.remote !== false) await enforcePrivateWriteGuard(ctx, 'restore_page', {
       requestedSourceId: sourceOpts.sourceId ?? 'default',
       slug,
       entityType: current?.type,

@@ -60,7 +60,9 @@ const add_timeline_entry: Operation = {
     // v0.31.8 (D7): thread ctx.sourceId.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
     const current = await ctx.engine.getPage(p.slug as string, { includeDeleted: true, ...sourceOpts });
-    await enforcePrivateWriteGuard(ctx, 'add_timeline_entry', {
+    // writeTimelineEntryThrough and the engine page-update seam enforce the
+    // local policy. This call remains only as the remote trust fence.
+    if (ctx.remote !== false) await enforcePrivateWriteGuard(ctx, 'add_timeline_entry', {
       requestedSourceId: sourceOpts.sourceId ?? 'default',
       slug: p.slug as string,
       entityType: current?.type,

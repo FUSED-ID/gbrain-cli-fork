@@ -42,9 +42,7 @@ import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhase
 import { loadConfig, toEngineConfig, gbrainPath } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
 import type { BrainEngine } from '../../core/engine.ts';
-import { managedPersistenceEnabled } from '../../core/persistence/ownership.ts';
-import { grandfatherCanonicalPage } from '../../core/persistence/grandfather.ts';
-import { OperationError } from '../../core/ops/contract.ts';
+import { enforcePrivatePageWrite } from '../../core/private-source-routing.ts';
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
 
 // Lazy: GBRAIN_HOME may be set after module load.
@@ -170,31 +168,30 @@ export async function phaseCGrandfather(
         // Rollback log BEFORE mutation: one SELECT per chunk (bounded memory),
         // one appendFileSync per chunk. Carries source_id so rollback is
         // unambiguous across same-slug-different-source pages.
-        const touched = await engine.transaction(async tx => {
-          const keys = await tx.executeRaw<{ id: number; slug: string; source_id: string }>(
-            'SELECT id, slug, source_id FROM pages WHERE id = ANY($1::int[])', [chunk]);
-          await tx.lockPageKeys(keys.map(row => ({ sourceId: row.source_id, slug: row.slug })));
-          const snap = await tx.executeRaw<{
-            id: number; slug: string; source_id: string; frontmatter: Record<string, unknown> | null;
-            knowledge_revision: string; text_projection_revision: string | null;
-          }>(`SELECT id, slug, source_id, frontmatter, knowledge_revision, text_projection_revision
-              FROM pages WHERE id = ANY($1::int[]) AND ${GRANDFATHER_WHERE} FOR UPDATE`, [chunk]);
-          const identities = new Map(keys.map(row => [row.id, row]));
-          if (snap.some(row => identities.get(row.id)?.source_id !== row.source_id || identities.get(row.id)?.slug !== row.slug)) {
-            throw new Error('Page identity changed during grandfathering; retry the migration.');
-          }
-          appendRollbackBatch(snap);
-          await tx.executeRaw(
-            `UPDATE pages SET frontmatter = jsonb_set(COALESCE(frontmatter, '{}'::jsonb), '{validate}', 'false'::jsonb) ` +
-            'WHERE id = ANY($1::int[])', [snap.map(row => row.id)]);
-          const sealed = snap.filter(row => row.text_projection_revision === row.knowledge_revision).map(row => row.id);
-          if (sealed.length) {
-            await tx.executeRaw('UPDATE pages SET text_projection_revision=knowledge_revision WHERE id = ANY($1::int[])', [sealed]);
-          }
-          return snap.length;
-        });
-        gf.touched += touched;
-        gf.skipped += chunk.length - touched;
+        const snap = await engine.executeRaw<{
+          id: number; slug: string; source_id: string | null; frontmatter: Record<string, unknown> | null;
+        }>(
+          'SELECT id, slug, source_id, frontmatter FROM pages WHERE id = ANY($1::int[])',
+          [chunk],
+        );
+        appendRollbackBatch(snap);
+
+        for (const row of snap) {
+          await enforcePrivatePageWrite(engine, {
+            requestedSourceId: row.source_id ?? 'default',
+            slug: row.slug,
+            entityType: undefined,
+            entityName: undefined,
+            frontmatter: row.frontmatter,
+          });
+        }
+
+        await engine.executeRaw(
+          `UPDATE pages SET frontmatter = jsonb_set(COALESCE(frontmatter, '{}'::jsonb), '{validate}', 'false'::jsonb) ` +
+          'WHERE id = ANY($1::int[])',
+          [chunk],
+        );
+        gf.touched += chunk.length;
       } catch (e) {
         gf.failed += chunk.length;
         const msg = e instanceof Error ? e.message : String(e);

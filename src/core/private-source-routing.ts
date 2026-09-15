@@ -149,6 +149,12 @@ function candidateKeys(input: PrivateWriteRouteInput): Set<string> {
   const slug = input.slug;
   addPathCandidates(slug);
   addPathCandidates(stripAuthorSuffix(slug));
+  // The page row is authoritative for routing.  A slug-only caller can be
+  // misleading (for example, a concept-shaped row under a person slug), so
+  // include the loaded/about-to-be-written type and title as independent
+  // deny-list keys.  This is deliberately before content parsing: parsed
+  // frontmatter is not a substitute for the stored row identity.
+  add(input.entityType);
   add(input.entityName);
   if (input.content) {
     const title = input.content.match(/^title:\s*(.+)$/m)?.[1]
@@ -308,7 +314,11 @@ export async function resolvePrivateWriteSource(
   // safe to narrow: it never affects route.routed or route.sourceId, so the
   // remote fence in ops/pages.ts keeps refusing remote callers for these
   // slugs.
-  if (isPersonishWrite(input) && matchesExcludedPeople(privateSource, input)) {
+  // Rule (a) is always evaluated first.  The caller-side personish gate is
+  // still used to decide whether the armed assertion is required, but a
+  // resolver invocation carrying a loaded type/title must never skip the
+  // deny-list merely because the slug shape is unusual.
+  if (matchesExcludedPeople(privateSource, input)) {
     return { sourceId: privateSource.id, routed: true, reason: 'excluded_people_policy', privateSourceId: privateSource.id };
   }
   try {
@@ -383,6 +393,9 @@ export async function isPersonishPageWrite(
   if (!source) return false;
   try {
     const input = { slug, entityType: page.type, entityName: page.title, content: undefined };
+    // A loaded title/type can be the only signal for a deny-list entry when a
+    // legacy or user-renamed slug is not person-shaped.
+    if (matchesExcludedPeople(source, input)) return true;
     for (const key of candidateKeys(input)) {
       if (await engine.getPage(key, { sourceId: source.id })) return true;
     }
@@ -510,7 +523,119 @@ export async function assertPrivateRoutingArmed(
   return report;
 }
 
+export interface PrivatePageWriteTarget {
+  requestedSourceId: string;
+  slug: string;
+  /** Type/title from the loaded row, or from the row about to be inserted. */
+  entityType?: string;
+  entityName?: string;
+  frontmatter?: unknown;
+}
+
+/**
+ * The single page-write policy chokepoint used by both engines and by direct
+ * page JSONB writers.  It intentionally loads the existing row when the
+ * caller does not provide identity fields; callers must not derive routing
+ * solely from newly parsed frontmatter.
+ */
+export async function enforcePrivatePageWrite(
+  engine: BrainEngine,
+  target: PrivatePageWriteTarget,
+): Promise<PrivateWriteRoute> {
+  if (!(await shouldAssertPrivateRouting(engine, target.requestedSourceId))) {
+    return { sourceId: target.requestedSourceId, routed: false };
+  }
+
+  let entityType = target.entityType;
+  let entityName = target.entityName;
+  let frontmatter = target.frontmatter;
+  if (entityType === undefined || entityName === undefined || frontmatter === undefined) {
+    const loaded = await engine.getPage(target.slug, {
+      sourceId: target.requestedSourceId,
+      includeDeleted: true,
+    });
+    if (loaded) {
+      entityType ??= loaded.type;
+      entityName ??= loaded.title;
+      frontmatter ??= loaded.frontmatter;
+    }
+  }
+
+  const personish = await isPersonishPageWrite(engine, target.slug, {
+    type: entityType,
+    title: entityName,
+    frontmatter,
+  });
+  if (!personish) return { sourceId: target.requestedSourceId, routed: false };
+
+  await assertPrivateRoutingArmed(engine);
+  const route = await resolvePrivateWriteSource(engine, {
+    requestedSourceId: target.requestedSourceId,
+    slug: target.slug,
+    entityType,
+    entityName,
+  });
+  // The allowlist is a rule-(b)-only exception.  It is intentionally checked
+  // at the final refusal point, never inside resolvePrivateWriteSource, so a
+  // deny-list match (rule (a)) remains a refusal even for an allowlisted slug.
+  const collisionExempt = route.reason === 'existing_private_page'
+    && isAllowlistedCollision(target.requestedSourceId, target.slug);
+  if (route.routed && !collisionExempt) {
+    throw new Error(
+      `private-write routing is ARMED but a page write received a person-shaped write for ` +
+      `world-federated source '${target.requestedSourceId}' that the privacy policy routes to ` +
+      `private source '${route.sourceId}' (${route.reason}). Slug '${target.slug}'. ` +
+      'Route it through the private source or refuse the write.',
+    );
+  }
+  return route;
+}
+
+/**
+ * Fact-write companion to enforcePrivatePageWrite.  Facts carry no type or
+ * title, so resolve the owning page from the loaded database row using the
+ * fence slug first and the entity slug as the legacy fallback.  A fact that
+ * would route away from default is refused at this low-level seam; callers
+ * that can route must do so before invoking the engine.
+ */
+export async function enforcePrivateFactWrite(
+  engine: BrainEngine,
+  target: {
+    sourceId: string;
+    pageSlug?: string | null;
+    entitySlug?: string | null;
+    visibility?: string | null;
+  },
+): Promise<void> {
+  if (!(await shouldAssertPrivateRouting(engine, target.sourceId))) return;
+  const slug = target.pageSlug?.trim() || target.entitySlug?.trim();
+  if (!slug) return;
+  const page = await engine.getPage(slug, {
+    sourceId: target.sourceId,
+    includeDeleted: true,
+  });
+  const route = await enforcePrivatePageWrite(engine, {
+    requestedSourceId: target.sourceId,
+    slug,
+    entityType: page?.type,
+    entityName: page?.title,
+    frontmatter: page?.frontmatter,
+  });
+  if (route.routed && target.sourceId === DEFAULT_SOURCE_ID) {
+    throw new Error(
+      `private-write routing refused fact write for '${slug}' in world-federated source ` +
+      `'${target.sourceId}'; route the fact to '${route.sourceId}'.`,
+    );
+  }
+  // Explicitly retain the world-on-default denial even if a future caller
+  // widens the collision exception above.  The allowlist never exempts rule
+  // (a), and never permits a world fact to remain in default.
+  if (target.visibility === 'world' && target.sourceId === DEFAULT_SOURCE_ID && route.routed) {
+    throw new Error(`world-visible fact denied for private-routed page '${slug}'`);
+  }
+}
+
 export const __privateSourceRoutingTest = {
   parseExcludedPeople, normalizeSlugish, candidateKeys, findPrivateSource,
-  isAllowlistedCollision, collisionAllowlistPath,
+  isAllowlistedCollision, collisionAllowlistPath, matchesExcludedPeople,
 };
