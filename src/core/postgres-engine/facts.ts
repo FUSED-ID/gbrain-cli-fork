@@ -34,7 +34,7 @@ export interface PgFactsDeps {
   readonly sql: PgSql;
   /** Cast-suffix probe for facts.embedding (cache state lives on the engine). */
   resolveFactsEmbeddingCast(): Promise<'::vector' | '::halfvec'>;
-  guardFactWrite(target: { sourceId: string; pageSlug?: string | null; entitySlug?: string | null; visibility?: string | null; effect?: 'create' | 'reduce' }): Promise<void>;
+  guardFactWrite(target: { sourceId: string; pageSlug?: string | null; entitySlug?: string | null; visibility?: string | null }): Promise<void>;
 }
 
 export async function insertFact(
@@ -128,17 +128,6 @@ export async function expireFact(deps: PgFactsDeps, id: number, opts?: { superse
     const at = opts?.at ?? new Date();
     const supersededBy = opts?.supersededBy ?? null;
     const validUntil = opts?.validUntil ?? null;
-    const rows = await sql<{ source_id: string; entity_slug: string | null; source_markdown_slug: string | null; visibility: string | null }[]>`
-      SELECT source_id, entity_slug, source_markdown_slug, visibility FROM facts WHERE id = ${id}
-    `;
-    const row = rows[0];
-    if (row) await deps.guardFactWrite({
-      sourceId: row.source_id,
-      pageSlug: row.source_markdown_slug,
-      entitySlug: row.entity_slug,
-      visibility: row.visibility,
-      effect: 'reduce',
-    });
     const result = await sql`
       UPDATE facts SET
         expired_at = COALESCE(expired_at, ${at}),

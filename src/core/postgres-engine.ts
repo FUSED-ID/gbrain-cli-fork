@@ -951,14 +951,6 @@ export class PostgresEngine implements BrainEngine {
   async softDeletePage(slug: string, opts?: { sourceId?: string }): Promise<{ slug: string } | null> {
     const sql = this.sql;
     const sourceId = opts?.sourceId;
-    const current = await this.getPage(slug, { includeDeleted: true, ...(sourceId ? { sourceId } : {}) });
-    if (current) await enforcePrivatePageWrite(this, {
-      requestedSourceId: current.source_id,
-      slug,
-      effect: 'reduce',
-      entityType: current.type,
-      entityName: current.title,
-    });
     // Idempotent-as-null contract: only flip rows that are currently active.
     // RETURNING projects the slug so we can tell hit-vs-miss without a probe.
     const sourceCondition = sourceId ? sql`AND source_id = ${sourceId}` : sql``;
@@ -1053,9 +1045,8 @@ export class PostgresEngine implements BrainEngine {
     compiledTruth: string,
     timeline: string,
     contentHash: string,
-    opts?: { effect?: 'create' | 'reduce' },
   ): Promise<void> {
-    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug, effect: opts?.effect });
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
     const sql = this.sql;
     // Narrow UPDATE — leaves frontmatter, type, chunks, links, embeddings,
     // tags, takes untouched. Skips soft-deleted rows so a redirect retry

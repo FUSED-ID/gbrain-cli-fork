@@ -544,8 +544,6 @@ export async function assertPrivateRoutingArmed(
 export interface PrivatePageWriteTarget {
   requestedSourceId: string;
   slug: string;
-  /** `reduce` only removes exposure and is always permitted. */
-  effect?: 'create' | 'reduce';
   /** Type/title from the loaded row, or from the row about to be inserted. */
   entityType?: string;
   entityName?: string;
@@ -561,9 +559,6 @@ export async function enforcePrivatePageWrite(
   engine: BrainEngine,
   target: PrivatePageWriteTarget,
 ): Promise<PrivateWriteRoute> {
-  // A removal cannot create a leak. Keep remediation available even when the
-  // routing policy itself is unavailable or malformed.
-  if (target.effect === 'reduce') return { sourceId: target.requestedSourceId, routed: false };
   if (!(await shouldAssertPrivateRouting(engine, target.requestedSourceId))) {
     return { sourceId: target.requestedSourceId, routed: false };
   }
@@ -627,12 +622,8 @@ export async function enforcePrivateFactWrite(
     pageSlug?: string | null;
     entitySlug?: string | null;
     visibility?: string | null;
-    effect?: 'create' | 'reduce';
   },
 ): Promise<void> {
-  // Expiry/tombstoning only reduces exposure and must never be blocked by a
-  // deny-list, a missing private source, or an unarmed policy.
-  if (target.effect === 'reduce') return;
   if (!(await shouldAssertPrivateRouting(engine, target.sourceId))) return;
   const slug = target.pageSlug?.trim() || target.entitySlug?.trim();
   if (!slug) return;
