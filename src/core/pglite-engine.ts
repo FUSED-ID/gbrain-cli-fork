@@ -2003,14 +2003,6 @@ export class PGLiteEngine implements BrainEngine {
       params.push(sourceId);
       where.push(`source_id = $${params.length}`);
     }
-    const current = await this.getPage(slug, { includeDeleted: true, ...(sourceId ? { sourceId } : {}) });
-    if (current) await enforcePrivatePageWrite(this, {
-      requestedSourceId: current.source_id,
-      slug,
-      effect: 'reduce',
-      entityType: current.type,
-      entityName: current.title,
-    });
     const { rows } = await this.db.query(
       `UPDATE pages SET deleted_at = now() WHERE ${where.join(' AND ')} RETURNING slug`,
       params
@@ -2098,12 +2090,11 @@ export class PGLiteEngine implements BrainEngine {
     compiledTruth: string,
     timeline: string,
     contentHash: string,
-    opts?: { effect?: 'create' | 'reduce' },
   ): Promise<void> {
     // Parity with PostgresEngine.refreshPageBody: narrow UPDATE only.
     // The deleted_at filter prevents a redirect retry from reviving a
     // canonical that was already purged.
-    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug, effect: opts?.effect });
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
     await this.db.query(
       `UPDATE pages
          SET compiled_truth = $1,

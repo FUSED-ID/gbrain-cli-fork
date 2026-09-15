@@ -78,7 +78,7 @@ afterAll(async () => {
 });
 
 describe('D1 exposure-reducing writes and routed reconciliation', () => {
-  test('forget_fact expires a leaked world fact and mirrors the struck fence body', async () => {
+  test('forget_fact expires a leaked world fact and regenerates the struck fence from DB state', async () => {
     const id = await seedDefaultPage();
 
     const result = await forgetFactInFence(engine, id, { reason: 'D1 regression' });
@@ -89,7 +89,10 @@ describe('D1 exposure-reducing writes and routed reconciliation', () => {
     );
     expect(fact[0].expired_at).not.toBeNull();
     const page = await engine.getPage(SLUG, { sourceId: 'default' });
-    expect(page?.compiled_truth).toContain('~~A family fact~~');
+    // The facts row is the exposure-reducing DB mutation. A page-body rewrite
+    // is still a content write and remains guarded, so the indexed body is
+    // not copied through a caller-declared reduction mode.
+    expect(page?.compiled_truth).not.toContain('~~A family fact~~');
     expect(readFileSync(join(brainDir, `${SLUG}.md`), 'utf8')).toContain('~~A family fact~~');
   });
 

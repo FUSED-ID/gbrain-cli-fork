@@ -35,7 +35,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendFileSync, unlinkSync } from 'node:fs';
 import { dirname, isAbsolute, relative } from 'node:path';
 
 import type { BrainEngine, NewFact, FactVisibility, FactKind } from '../engine.ts';
@@ -462,33 +462,10 @@ export async function writeFactsToFence(
         return { inserted: 0, ids: [], fenceWriteFailed: true };
       }
 
-      // 5. Rename .tmp → file. POSIX atomic; the canonical file is
-      //    either the old content or the new content, never partial.
-      renameSync(tmpPath, filePath);
-
-      // #4872: mirror the rewritten file into pages.compiled_truth. get_page
-      // and the extract_facts reconcile read the DB body, not the file — left
-      // stale, a plain get→put round-trip flattens the new row off disk and
-      // the next reconcile deletes it from the facts table. Same recipe as
-      // forget.ts (#4696): parse + sanitize the FILE bytes as import-file.ts
-      // does. Body-only: content_chunks are untouched, so the row KEEPS its
-      // old content_hash and the next sync re-imports + re-chunks. Stamping
-      // the importer's hash here made sync skip the page and left search
-      // blind to the new row forever. Never persist an EMPTY hash: a row
-      // that had none gets a row-shaped hash of its pre-mirror content,
-      // which the rewritten file can't match. Best-effort: the file is
-      // already committed; a stub page with no DB row is created by sync.
-      try {
-        const reparsed = parseMarkdown(tmpBody, `${target.slug}.md`);
-        const existing = await engine.getPage(target.slug, { sourceId: target.sourceId });
-        if (existing) {
-          await engine.refreshPageBody(target.slug, target.sourceId,
-            sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline),
-            existing.content_hash || contentHash(existing));
-        }
-      } catch { /* degrades to the pre-#4872 window (stale until the next sync) */ }
-
-      // 6. Stamp the DB. extractFactsFromFenceText handles the
+      // 5. Prepare and accept the DB rows before touching the canonical file.
+      // If the fact chokepoint refuses, the .tmp remains quarantine evidence
+      // and the old canonical file is untouched.
+      // extractFactsFromFenceText handles the
       //    validFrom/validUntil date derivation + the strikethrough
       //    semantic distinction. We only want to insert the NEW rows
       //    (those with row_nums in assignedRowNums), so filter the
@@ -508,7 +485,15 @@ export async function writeFactsToFence(
         source_session: facts[i].sessionId,
       }));
 
-      const result = await engine.insertFacts(enriched, { source_id: target.sourceId }); // gbrain-allow-direct-insert: writeFactsToFence is the markdown-first reconcile path; runs only after the atomic fence write commits
+      let result: Awaited<ReturnType<BrainEngine['insertFacts']>>;
+      try {
+        result = await engine.insertFacts(enriched, { source_id: target.sourceId }); // gbrain-allow-direct-insert: writeFactsToFence is the guarded fence reconcile path
+      } catch (error) {
+        // A policy refusal is not a durable write and must not leave the
+        // rejected body in either the canonical path or its temporary path.
+        try { unlinkSync(tmpPath); } catch { /* already absent */ }
+        throw error;
+      }
       // v0.46 (#3014) — an unresolvable `superseded by #N` reference (self
       // / dangling / struck target) leaves superseded_by NULL; log it rather
       // than swallow it. The row still lands (expired_at set for struck
@@ -517,6 +502,25 @@ export async function writeFactsToFence(
         // eslint-disable-next-line no-console
         console.warn(`[facts.supersession] ${w}`);
       }
+
+      // Keep pages.compiled_truth in step with the accepted fence body. This
+      // is a content write and uses the normal page chokepoint; the fact guard
+      // above has already accepted this same target.
+      try {
+        const reparsed = parseMarkdown(tmpBody, `${target.slug}.md`);
+        const existing = await engine.getPage(target.slug, { sourceId: target.sourceId });
+        if (existing) {
+          await engine.refreshPageBody(target.slug, target.sourceId,
+            sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline),
+            existing.content_hash || contentHash(existing));
+        }
+      } catch { /* DB facts remain authoritative if the body mirror degrades */ }
+
+      // 6. Rename .tmp → file only after the guarded DB write has accepted.
+      // POSIX atomic; the canonical file is either old or new, never partial.
+      renameSync(tmpPath, filePath);
+
+      // 7. Durability receipt follows the canonical rename.
       if (durabilityEnabled) {
         await commitFactFenceFile(
           writeRoot,
