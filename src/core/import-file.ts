@@ -53,7 +53,7 @@ import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';
 import { runGuardrails } from './guardrails.ts';
 import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
 import { scanFencedBlocks, MAX_FENCES_PER_PAGE } from './fence-scan.ts';
-import { resolvePrivateWriteSource } from './private-source-routing.ts';
+import { isAllowlistedCollision, resolvePrivateWriteSource } from './private-source-routing.ts';
 
 /**
  * v0.20.0 Cathedral II Layer 8 D2 — markdown fence extraction helper.
@@ -417,6 +417,16 @@ export async function importFromContent(
     entityType: parsed.type,
     entityName: parsed.title,
   });
+  // The engine-level collision exemption must be applied before import
+  // retargets the write. Otherwise the default-tree sync path never reaches
+  // putPage with the requested source, so the exemption cannot preserve the
+  // intentionally shared public row and private copy.
+  const allowlistedCollision = route.reason === 'existing_private_page'
+    && isAllowlistedCollision(requestedSourceId, slug);
+  if (allowlistedCollision) {
+    route.sourceId = requestedSourceId;
+    route.routed = false;
+  }
   const routedFromSourceId = route.routed && route.sourceId !== requestedSourceId
     ? requestedSourceId
     : null;
