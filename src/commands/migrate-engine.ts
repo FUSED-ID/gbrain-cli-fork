@@ -25,7 +25,7 @@ import { registerCleanup } from '../core/process-cleanup.ts';
 import { autopilotPausedMarkerPath, autopilotLockPath, markerHolderAlive, MIGRATE_PAUSE_MARKER_PREFIX } from '../core/autopilot-paths.ts';
 export { MIGRATE_PAUSE_MARKER_PREFIX };
 import { listLiveLocks } from '../core/db-lock.ts';
-import { queuePageProjection } from '../core/page-state/projections.ts';
+import { enforcePrivateFactWrite } from '../core/private-source-routing.ts';
 
 interface MigrateOpts {
   targetEngine: 'postgres' | 'pglite';
@@ -330,6 +330,12 @@ export async function copyMigrationFacts(
   const chainPairs: Array<{ id: unknown; superseded_by: unknown }> = [];
   for (const raw of rows) {
     const row = nullifyUndefinedColumns(raw);
+    await enforcePrivateFactWrite(target, {
+      sourceId: String(row.source_id ?? 'default'),
+      pageSlug: typeof row.source_markdown_slug === 'string' ? row.source_markdown_slug : null,
+      entitySlug: typeof row.entity_slug === 'string' ? row.entity_slug : null,
+      visibility: typeof row.visibility === 'string' ? row.visibility : null,
+    });
     if (row.superseded_by != null) chainPairs.push({ id: row.id, superseded_by: row.superseded_by });
     // Pass 1 inserts with superseded_by NULL (see the two-pass note above).
     const values = cols.map(c => (c === 'superseded_by' ? null : row[c]));
@@ -359,6 +365,14 @@ export async function copyMigrationFacts(
   const failedIds = new Set(result.failed.map(f => f.id));
   for (const pair of chainPairs) {
     if (failedIds.has(String(pair.id)) || failedIds.has(String(pair.superseded_by))) continue;
+    const prior = await target.executeRaw<{ source_id: string; entity_slug: string | null; source_markdown_slug: string | null; visibility: string | null }>(
+      'SELECT source_id, entity_slug, source_markdown_slug, visibility FROM facts WHERE id = $1', [pair.id]);
+    if (prior[0]) await enforcePrivateFactWrite(target, {
+      sourceId: prior[0].source_id,
+      pageSlug: prior[0].source_markdown_slug,
+      entitySlug: prior[0].entity_slug,
+      visibility: prior[0].visibility,
+    });
     await target.executeRaw('UPDATE facts SET superseded_by = $1 WHERE id = $2', [pair.superseded_by, pair.id]);
   }
 

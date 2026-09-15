@@ -76,6 +76,7 @@ import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveTierDefault } from '../model-config.ts';
 import { isUndefinedTableError, warnOncePerProcess } from '../utils.ts';
+import { enforcePrivatePageWrite } from '../private-source-routing.ts';
 import { normalizeForGrounding } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 import { managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, MANAGED_ATOM_DISCOVERY_SQL, type AtomOrigin } from '../persistence/atom-maintenance.ts';
@@ -990,8 +991,17 @@ export async function runPhaseExtractAtoms(
   // say are "retryable, never counted" — see that regex's doc comment.
   let hardFailureCount = 0;
 
-  async function stampAtomsScanHash(item: AtomPageInput): Promise<void> {
-    await writeAtomPageState(engine, sourceId, item, 'complete');
+  /** Stamp the zero-yield/complete tombstone (hash-keyed; edits re-eligibilize). */
+  async function stampAtomsScanHash(item: { slug: string; contentHash: string }): Promise<void> {
+    try {
+      await enforcePrivatePageWrite(engine, { requestedSourceId: sourceId, slug: item.slug });
+      await engine.executeRaw(
+        `UPDATE pages
+            SET frontmatter = frontmatter || jsonb_build_object('atoms_scan_hash', $1::text)
+          WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL`,
+        [item.contentHash.slice(0, 16), sourceId, item.slug],
+      );
+    } catch { /* fail-soft: page stays rediscoverable */ }
   }
 
   /**
@@ -1056,11 +1066,22 @@ export async function runPhaseExtractAtoms(
       }
     }
     try {
-      return await writeAtomPageState(engine, sourceId, item, 'failure');
-    } catch (err) {
-      const error = err instanceof AtomPageStateError ? err.message : new AtomPageStateError('storage').message;
-      failures.push({ source: item.slug, error });
-      console.error(`[extract_atoms] ${item.slug}: ${error}`);
+      await enforcePrivatePageWrite(engine, { requestedSourceId: sourceId, slug: item.slug });
+      const rows = await engine.executeRaw<{ cnt: number | string }>(
+        `UPDATE pages
+            SET frontmatter = frontmatter
+              || jsonb_build_object('atoms_fail_hash', $1::text)
+              || jsonb_build_object('atoms_fail_count',
+                   CASE WHEN COALESCE(frontmatter->>'atoms_fail_hash', '') = $1::text
+                        THEN COALESCE((frontmatter->>'atoms_fail_count')::int, 0) + 1
+                        ELSE 1 END)
+          WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL
+          RETURNING (frontmatter->>'atoms_fail_count')::int AS cnt`,
+        [hash16, sourceId, item.slug],
+      );
+      const cnt = rows[0]?.cnt;
+      return cnt == null ? null : Number(cnt);
+    } catch {
       return null;
     }
   }
@@ -1304,7 +1325,15 @@ export async function runPhaseExtractAtoms(
         // after every atom AND provenance edge persisted), then stamp the
         // source page. A crash between flip and stamp degrades to the legacy
         // atom-rows-mean-done semantics — safe, not lossy.
-        await completeAtomReceipts(engine, sourceId, importedSlugs, hash16, item.kind === 'page' ? item : undefined);
+        for (const slug of importedSlugs) {
+          await enforcePrivatePageWrite(engine, { requestedSourceId: sourceId, slug });
+        }
+        await engine.executeRaw(
+          `UPDATE pages
+              SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
+            WHERE source_id = $2 AND type = 'atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`,
+          [hash16, sourceId, importedSlugs],
+        );
         if (item.kind === 'page') {
           await stampAtomsScanHash(item);
         }

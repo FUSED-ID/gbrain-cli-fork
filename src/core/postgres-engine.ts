@@ -98,7 +98,7 @@ import { ConnectionManager, DEFAULT_DIRECT_POOL_SIZE } from './connection-manage
 import { logConnectionEvent } from './connection-audit.ts';
 import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
-import { assertPrivateRoutingArmed, isAllowlistedCollision, isPersonishPageWrite, resolvePrivateWriteSource, shouldAssertPrivateRouting } from './private-source-routing.ts';
+import { enforcePrivateFactWrite, enforcePrivatePageWrite } from './private-source-routing.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery } from './search/sql-ranking.ts';
 import { privatePagesFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
@@ -723,51 +723,14 @@ export class PostgresEngine implements BrainEngine {
     // migration is exempted here explicitly and only here. See
     // copyPageToTarget in src/commands/migrate-engine.ts, the one caller
     // allowed to set it.
-    if (!opts?.migrationWrite && await shouldAssertPrivateRouting(this, sourceId)) {
-      const personish = await isPersonishPageWrite(this, slug, page);
-      if (personish) {
-        // Fail closed on every personish write, regardless of outcome: a
-        // missing/unreadable policy file or a renamed deny-list heading must
-        // refuse, never silently admit.
-        await assertPrivateRoutingArmed(this);
-        const route = await resolvePrivateWriteSource(this, {
-          requestedSourceId: sourceId,
-          slug,
-          entityType: page.type,
-          entityName: page.title,
-        });
-        // Defect 1 fix (binding NO-GO, twice): the T-LEAK-7 collision
-        // allowlist must not weaken this throw for anyone but the exact
-        // allowlisted slug on the default source, AND only for rule (b)
-        // (existing_private_page). Rule (a), the Family deny-list match
-        // (excluded_people_policy), is NEVER exempted here. This gate is
-        // effective ONLY because resolvePrivateWriteSource itself now
-        // evaluates rule (a) BEFORE rule (b) for personish writes (see the
-        // order-fix comment there): a deny-listed identity always gets
-        // reason: 'excluded_people_policy' when it matches, even when it
-        // also has a live private page, so route.reason === 'existing_private_page'
-        // can never be true for a deny-listed slug and this route.reason
-        // check can never wrongly suppress a rule (a) refusal. Without that
-        // ordering fix, a live private page would shadow the deny-list match
-        // and this check alone would not have protected it -- the ordering
-        // fix and this gate are both required. resolvePrivateWriteSource's
-        // routing decision above is unconditional (route.routed is true for
-        // these slugs either way), so this is the ONLY place the allowlist
-        // exemption applies; it does not touch route.routed/route.sourceId,
-        // so callers that read the route directly (the ops/pages.ts remote
-        // fence) see the write as routed to the private source and still
-        // refuse a remote caller.
-        const collisionExempt = route.reason === 'existing_private_page'
-          && isAllowlistedCollision(sourceId, slug);
-        if (route.routed && !collisionExempt) {
-          throw new Error(
-            `private-write routing is ARMED but engine putPage received a person-shaped write for ` +
-            `world-federated source '${sourceId}' that the privacy policy routes to private source ` +
-            `'${route.sourceId}' (${route.reason}). Slug '${slug}'. ` +
-            'Route it through put_page or write the private source explicitly.',
-          );
-        }
-      }
+    if (!opts?.migrationWrite) {
+      await enforcePrivatePageWrite(this, {
+        requestedSourceId: sourceId,
+        slug,
+        entityType: page.type,
+        entityName: page.title,
+        frontmatter: page.frontmatter,
+      });
     }
     // Tombstone race guard (defects 2 and 4 fix; wording corrected, third
     // binding NO-GO -- defect 3).
@@ -989,6 +952,14 @@ export class PostgresEngine implements BrainEngine {
   async softDeletePage(slug: string, opts?: { sourceId?: string }): Promise<{ slug: string } | null> {
     const sql = this.sql;
     const sourceId = opts?.sourceId;
+    const current = await this.getPage(slug, { includeDeleted: true, ...(sourceId ? { sourceId } : {}) });
+    if (current) await enforcePrivatePageWrite(this, {
+      requestedSourceId: current.source_id,
+      slug,
+      entityType: current.type,
+      entityName: current.title,
+      frontmatter: current.frontmatter,
+    });
     // Idempotent-as-null contract: only flip rows that are currently active.
     // RETURNING projects the slug so we can tell hit-vs-miss without a probe.
     const sourceCondition = sourceId ? sql`AND source_id = ${sourceId}` : sql``;
@@ -1016,6 +987,9 @@ export class PostgresEngine implements BrainEngine {
       );
     }
     const sql = this.sql;
+    for (const slug of slugs) {
+      await enforcePrivatePageWrite(this, { requestedSourceId: opts.sourceId, slug });
+    }
     const rows = await sql<{ slug: string }[]>`
       UPDATE pages SET deleted_at = now()
        WHERE slug = ANY(${slugs}::text[]) AND source_id = ${opts.sourceId} AND deleted_at IS NULL
@@ -1027,6 +1001,14 @@ export class PostgresEngine implements BrainEngine {
   async restorePage(slug: string, opts?: { sourceId?: string }): Promise<boolean> {
     const sql = this.sql;
     const sourceId = opts?.sourceId;
+    const current = await this.getPage(slug, { includeDeleted: true, ...(sourceId ? { sourceId } : {}) });
+    if (current) await enforcePrivatePageWrite(this, {
+      requestedSourceId: current.source_id,
+      slug,
+      entityType: current.type,
+      entityName: current.title,
+      frontmatter: current.frontmatter,
+    });
     const sourceCondition = sourceId ? sql`AND source_id = ${sourceId}` : sql``;
     const rows = await sql`
       UPDATE pages SET deleted_at = NULL
@@ -1077,6 +1059,7 @@ export class PostgresEngine implements BrainEngine {
     timeline: string,
     contentHash: string,
   ): Promise<void> {
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
     const sql = this.sql;
     // Narrow UPDATE — leaves frontmatter, type, chunks, links, embeddings,
     // tags, takes untouched. Skips soft-deleted rows so a redirect retry
@@ -4116,6 +4099,12 @@ export class PostgresEngine implements BrainEngine {
     const conf = obs.confidence ?? 0.7;
     const status = obs.status ?? (isNovelDimension(dimension) ? 'quarantined' : 'active');
     const visibility = obs.visibility ?? 'private';
+    await enforcePrivateFactWrite(this, {
+      sourceId,
+      pageSlug: obs.entitySlug,
+      entitySlug: obs.entitySlug,
+      visibility,
+    });
     const validFrom = obs.validFrom ?? null;
     const validUntil = obs.validTo ?? null;
     const factText = `${dimension}: ${obs.value}`;
@@ -4444,6 +4433,7 @@ export class PostgresEngine implements BrainEngine {
     return {
       get sql() { return self.sql; },
       resolveFactsEmbeddingCast: () => self.resolveFactsEmbeddingCast(),
+      guardFactWrite: (target) => enforcePrivateFactWrite(self, target),
     };
   }
 
@@ -4737,7 +4727,17 @@ export class PostgresEngine implements BrainEngine {
 
   // Versions
   async createVersion(slug: string, opts?: { sourceId?: string }): Promise<PageVersion> {
-    return createPageVersion(this, slug, opts?.sourceId ?? 'default');
+    const sql = this.sql;
+    const sourceId = opts?.sourceId ?? 'default';
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
+    const rows = await sql`
+      INSERT INTO page_versions (page_id, compiled_truth, frontmatter)
+      SELECT id, compiled_truth, frontmatter
+      FROM pages WHERE slug = ${slug} AND source_id = ${sourceId}
+      RETURNING *
+    `;
+    if (rows.length === 0) throw new Error(`createVersion failed: page "${slug}" (source=${sourceId}) not found`);
+    return rows[0] as unknown as PageVersion;
   }
 
   async getVersions(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<PageVersion[]> {
@@ -4780,6 +4780,17 @@ export class PostgresEngine implements BrainEngine {
     opts?: { sourceId?: string },
   ): Promise<void> {
     const sql = this.sql;
+    const current = await this.getPage(slug, {
+      includeDeleted: true,
+      ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
+    });
+    if (current) await enforcePrivatePageWrite(this, {
+      requestedSourceId: current.source_id,
+      slug,
+      entityType: current.type,
+      entityName: current.title,
+      frontmatter: current.frontmatter,
+    });
     // v0.31.8 (D12): two-branch. With opts.sourceId, scope BOTH the page lookup
     // AND the version reference. Without it, multi-source brains can revert
     // the wrong same-slug page.
@@ -5126,6 +5137,14 @@ export class PostgresEngine implements BrainEngine {
     newSlug = validateSlug(newSlug);
     const sql = this.sql;
     const sourceId = opts?.sourceId ?? 'default';
+    const current = await this.getPage(oldSlug, { sourceId, includeDeleted: true });
+    await enforcePrivatePageWrite(this, {
+      requestedSourceId: sourceId,
+      slug: newSlug,
+      entityType: current?.type,
+      entityName: current?.title,
+      frontmatter: current?.frontmatter,
+    });
     // Source-qualify so a rename in source A doesn't sweep up same-slug rows
     // in sources B/C/D (which would either rename them all OR fail the
     // (source_id, slug) UNIQUE if the new slug already exists in another source).
