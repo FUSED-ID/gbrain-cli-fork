@@ -98,7 +98,7 @@ import { ConnectionManager, DEFAULT_DIRECT_POOL_SIZE } from './connection-manage
 import { logConnectionEvent } from './connection-audit.ts';
 import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
-import { assertPrivateRoutingArmed, isPersonishPageWrite, resolvePrivateWriteSource, shouldAssertPrivateRouting } from './private-source-routing.ts';
+import { assertPrivateRoutingArmed, isAllowlistedCollision, isPersonishPageWrite, resolvePrivateWriteSource, shouldAssertPrivateRouting } from './private-source-routing.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery } from './search/sql-ranking.ts';
 import { privatePagesFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
@@ -736,7 +736,24 @@ export class PostgresEngine implements BrainEngine {
           entityType: page.type,
           entityName: page.title,
         });
-        if (route.routed) {
+        // Defect 1 fix (binding NO-GO): the T-LEAK-7 collision allowlist must
+        // not weaken this throw for anyone but the exact allowlisted slug on
+        // the default source, AND only for rule (b) (existing_private_page).
+        // Rule (a), the Family deny-list match (excluded_people_policy), is
+        // NEVER exempted here, matching isAllowlistedCollision's own module
+        // doc: "It never touches rule (a) ... a deny-listed person stays
+        // refused even if a `collision|` row names them." Without the
+        // route.reason check, a collision row for a denied slug would also
+        // suppress the deny-list throw, which is not what the allowlist is
+        // for. resolvePrivateWriteSource's routing decision above is
+        // unconditional (route.routed is true for these slugs either way),
+        // so this is the ONLY place the allowlist exemption applies; it does
+        // not touch route.routed/route.sourceId, so callers that read the
+        // route directly (the ops/pages.ts remote fence) see the write as
+        // routed to the private source and still refuse a remote caller.
+        const collisionExempt = route.reason === 'existing_private_page'
+          && isAllowlistedCollision(sourceId, slug);
+        if (route.routed && !collisionExempt) {
           throw new Error(
             `private-write routing is ARMED but engine putPage received a person-shaped write for ` +
             `world-federated source '${sourceId}' that the privacy policy routes to private source ` +
@@ -746,12 +763,33 @@ export class PostgresEngine implements BrainEngine {
         }
       }
     }
-    // Tombstone race guard: captured before any read/write below.
+    // Tombstone race guard (defects 2 and 4 fix).
     //
-    // What this closes: a soft delete (UPDATE ... SET deleted_at = now())
-    // whose OWN now() value is stamped at or after writeStartedAt. The ON
-    // CONFLICT WHERE below refuses to clear that row's deleted_at back to
-    // NULL and this call throws instead of reporting a fabricated success.
+    // The WHERE clause on the ON CONFLICT upsert below compares deleted_at
+    // against clock_timestamp() evaluated BY POSTGRES, inline, at the moment
+    // that WHERE predicate runs as part of this very statement. There is no
+    // client-captured guard timestamp any more: the previous implementation
+    // captured `new Date()` in this process (millisecond resolution) and sent
+    // it as a bound parameter to compare against a microsecond `timestamptz`.
+    // A soft delete stamped in the same millisecond, or landing anywhere in
+    // the network round trip between that capture and the upsert reaching
+    // Postgres, read as "at or after" the guard and refused a same-millisecond
+    // revival as though it were a genuine concurrent delete (measured: roughly
+    // two thirds of same-millisecond putPage-after-softDelete revivals
+    // refused). Using clock_timestamp() inline removes both the resolution
+    // mismatch and the client/server latency gap: any soft delete already
+    // committed before this statement began evaluating this row's WHERE
+    // clause reads at or before "now" and is cleared, exactly as at
+    // 03436b64b. The comparison is <= rather than strict <: PGLite's clock is
+    // only millisecond-resolution (unlike real Postgres' microsecond
+    // resolution -- see pglite-engine.ts for the measured numbers), so two
+    // statements issued back to back with no artificial delay can read the
+    // exact same clock_timestamp() value; <= resolves that tie toward
+    // "allow". A genuinely future deleted_at (the concurrent-delete guard
+    // test sets it an hour ahead) is unaffected either way.
+    //
+    // What this closes: the false-positive refusal on a same-millisecond (or
+    // any already-committed) revival -- defect 2.
     //
     // What this does NOT close (known gaps, not fixed by this guard):
     //  (a) a HARD delete (DELETE FROM pages) landing between the checks
@@ -759,16 +797,24 @@ export class PostgresEngine implements BrainEngine {
     //      ON CONFLICT to match, so no WHERE clause runs at all; the upsert
     //      just INSERTs a fresh row and the purge is silently undone. This
     //      predicate cannot see a row that no longer exists.
-    //  (b) a soft delete whose UPDATE statement executed (and so captured
-    //      its own now() for deleted_at) BEFORE writeStartedAt, but whose
-    //      transaction committed DURING this call's gap. Its deleted_at is
-    //      less than writeStartedAt, so the WHERE clause reads it as an
-    //      old, already-settled delete and clears it back to NULL,
-    //      resurrecting a row purged concurrently with this write. Only a
-    //      same-transaction existence check plus write (or a row-version
-    //      lock captured during the guard) closes this; a timestamp
-    //      comparison against a value read outside that transaction cannot.
-    const writeStartedAt = new Date();
+    //  (b) a soft delete whose deleted_at is stamped strictly DURING this
+    //      statement's own WHERE-clause evaluation for this row -- i.e. the
+    //      genuinely concurrent case this guard exists to catch at all. That
+    //      race is inherent to a predicate compared against a live clock and
+    //      is not, and cannot be, closed by a timestamp comparison; only a
+    //      row-level lock spanning both transactions would remove it, and
+    //      this guard is not attempting that.
+    //  (c) the D1 private-routing checks above this point
+    //      (isPersonishPageWrite, assertPrivateRoutingArmed,
+    //      resolvePrivateWriteSource -- see the block above) and the
+    //      data-loss guard query immediately below all run, and can await on
+    //      I/O, BEFORE clock_timestamp() is evaluated inside the upsert
+    //      statement. A soft delete landing during any of those earlier
+    //      awaits has already committed by the time the upsert runs, so
+    //      clock_timestamp() reads after it and this guard correctly treats
+    //      it as pre-existing (clears the row) rather than concurrent --
+    //      this is intended, and is part of what the defect 2 fix relies on,
+    //      not a gap it left open.
     const sql = this.sql;
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
@@ -845,21 +891,20 @@ export class PostgresEngine implements BrainEngine {
         source_uri            = COALESCE(EXCLUDED.source_uri,            pages.source_uri),
         ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
         ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at)
-      WHERE pages.deleted_at IS NULL OR pages.deleted_at < ${writeStartedAt}
+      WHERE pages.deleted_at IS NULL OR pages.deleted_at <= clock_timestamp()
       RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at
     `;
     if (rows.length === 0) {
       // The ON CONFLICT WHERE above evaluated false: a live row would have
-      // matched it (deleted_at IS NULL), and a row deleted before this call
-      // started would too (deleted_at < writeStartedAt). Falling to zero rows
-      // means the row was soft-deleted AFTER writeStartedAt was captured, i.e.
-      // concurrently with this call. Do not resurrect it: surface a clear
-      // conflict instead of returning a fabricated Page for a row that was
-      // just, deliberately, purged.
-      // This covers only the window where a soft delete's deleted_at was
-      // stamped at or after writeStartedAt; see the writeStartedAt comment
-      // above this function for the hard-delete and pre-writeStartedAt-
-      // timestamp gaps this does NOT cover.
+      // matched it (deleted_at IS NULL), and a row deleted before this
+      // statement's own clock_timestamp() would too (deleted_at <
+      // clock_timestamp()). Falling to zero rows means the row was
+      // soft-deleted so close to this statement's own WHERE evaluation that
+      // clock_timestamp() still read before it, i.e. genuinely concurrently
+      // with this call. Do not resurrect it: surface a clear conflict
+      // instead of returning a fabricated Page for a row that was just,
+      // deliberately, purged. See the tombstone race guard comment above
+      // this function for the hard-delete gap this does NOT cover.
       throw new Error(
         `putPage: '${slug}' in source '${sourceId}' was deleted concurrently with this write; ` +
           'refusing to resurrect it. Re-check whether the page should exist and retry if so.',
