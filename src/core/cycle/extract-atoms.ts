@@ -76,6 +76,7 @@ import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveTierDefault } from '../model-config.ts';
 import { isUndefinedTableError, warnOncePerProcess } from '../utils.ts';
+import { enforcePrivatePageWrite } from '../private-source-routing.ts';
 import { normalizeForGrounding } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 
@@ -976,6 +977,7 @@ export async function runPhaseExtractAtoms(
   /** Stamp the zero-yield/complete tombstone (hash-keyed; edits re-eligibilize). */
   async function stampAtomsScanHash(item: { slug: string; contentHash: string }): Promise<void> {
     try {
+      await enforcePrivatePageWrite(engine, { requestedSourceId: sourceId, slug: item.slug });
       await engine.executeRaw(
         `UPDATE pages
             SET frontmatter = frontmatter || jsonb_build_object('atoms_scan_hash', $1::text)
@@ -1049,6 +1051,7 @@ export async function runPhaseExtractAtoms(
     }
     if (item.kind !== 'page' || !item.slug) return null;
     try {
+      await enforcePrivatePageWrite(engine, { requestedSourceId: sourceId, slug: item.slug });
       const rows = await engine.executeRaw<{ cnt: number | string }>(
         `UPDATE pages
             SET frontmatter = frontmatter
@@ -1292,6 +1295,9 @@ export async function runPhaseExtractAtoms(
         // after every atom AND provenance edge persisted), then stamp the
         // source page. A crash between flip and stamp degrades to the legacy
         // atom-rows-mean-done semantics — safe, not lossy.
+        for (const slug of importedSlugs) {
+          await enforcePrivatePageWrite(engine, { requestedSourceId: sourceId, slug });
+        }
         await engine.executeRaw(
           `UPDATE pages
               SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)

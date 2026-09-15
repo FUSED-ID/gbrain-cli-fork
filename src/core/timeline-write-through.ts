@@ -1,4 +1,5 @@
 import { bodyWriteChunkVersion } from './search/safe-chunks.ts';
+import { enforcePrivatePageWrite } from './private-source-routing.ts';
 /**
  * #1856 — write-through for manual timeline entries.
  *
@@ -320,6 +321,19 @@ export async function writeTimelineEntryThrough(
   entry: TimelineEntryWriteInput,
   opts: { logger?: WriteThroughLogger } = {},
 ): Promise<TimelineWriteThroughOutcome> {
+  // Policy errors must escape before the best-effort fallback catch below;
+  // otherwise a refused filesystem write would silently fall through to the
+  // legacy timeline-table insert.
+  const currentForGuard = await engine.getPage(slug, { sourceId, includeDeleted: true });
+  if (currentForGuard) {
+    await enforcePrivatePageWrite(engine, {
+      requestedSourceId: sourceId,
+      slug,
+      entityType: currentForGuard.type,
+      entityName: currentForGuard.title,
+      frontmatter: currentForGuard.frontmatter,
+    });
+  }
   // Set the moment the atomic rename lands: from then on the canonical bullet
   // EXISTS on disk, so any later failure must hand the canonical tuple to the
   // caller's DB-only fallback or the next sync re-extract duplicates it.

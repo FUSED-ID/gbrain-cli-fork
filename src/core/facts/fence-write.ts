@@ -51,6 +51,7 @@ import { upsertFactRow, parseFactsFence } from '../facts-fence.ts';
 import { contentHash } from '../utils.ts';
 import { extractFactsFromFenceText } from './extract-from-fence.ts';
 import { logStubGuardEvent } from './stub-guard-audit.ts';
+import { enforcePrivateFactWrite } from '../private-source-routing.ts';
 
 /** Resolved source binding for the entity page. */
 export interface FenceTarget {
@@ -280,6 +281,12 @@ export async function writeFactsToFence(
   if (facts.length === 0) {
     return { inserted: 0, ids: [] };
   }
+  await enforcePrivateFactWrite(engine, {
+    sourceId: target.sourceId,
+    pageSlug: target.slug,
+    entitySlug: target.slug,
+    visibility: facts[0]?.visibility ?? 'private',
+  });
   // `sync.write_through` off values make the brain DB-only by operator
   // choice: no fence file, no stub entity page, no git commit. Same
   // legacyFallback contract as a missing local_path — the caller's DB-only

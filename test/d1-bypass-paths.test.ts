@@ -55,6 +55,22 @@ async function seedDefaultPerson(slug: string): Promise<void> {
   await engine.putPage(slug, PERSON_PAGE, { sourceId: 'default', migrationWrite: true });
 }
 
+// These are fixture-preparation writes. The production page_versions and
+// deleted_at seams are intentionally guarded now, so seed the pre-existing
+// state directly before exercising the operation-level RED/GREEN assertions.
+async function seedVersion(slug: string): Promise<{ id: number }> {
+  const rows = await engine.executeRaw<{ id: number }>(
+    `INSERT INTO page_versions (page_id, compiled_truth, frontmatter)
+     SELECT id, compiled_truth, frontmatter FROM pages
+     WHERE source_id = 'default' AND slug = $1 RETURNING id`, [slug]);
+  return { id: Number(rows[0].id) };
+}
+
+async function seedSoftDeleted(slug: string): Promise<void> {
+  await engine.executeRaw(
+    `UPDATE pages SET deleted_at = now() WHERE source_id = 'default' AND slug = $1`, [slug]);
+}
+
 async function outcome<T>(fn: () => Promise<T>): Promise<{ allowed: true; value: T } | { allowed: false; message: string }> {
   try {
     return { allowed: true, value: await fn() };
@@ -104,7 +120,7 @@ describe('D1 private-routing bypass paths', () => {
   test('revert_version refuses deny-listed local and remote writes, while an ordinary slug works', async () => {
     const denied = 'people/d1-bypass-denylisted-revert';
     await seedDefault(denied);
-    const version = await engine.createVersion(denied, { sourceId: 'default' });
+    const version = await seedVersion(denied);
     await engine.putPage(denied, { ...PAGE, compiled_truth: 'changed body' }, { sourceId: 'default', migrationWrite: true });
 
     const localRed = await outcome(() => revertVersion.handler(context(false), { slug: denied, version_id: version.id }));
@@ -119,7 +135,7 @@ describe('D1 private-routing bypass paths', () => {
 
     const ordinary = 'notes/d1-bypass-ordinary-revert';
     await seedDefault(ordinary);
-    const ordinaryVersion = await engine.createVersion(ordinary, { sourceId: 'default' });
+    const ordinaryVersion = await seedVersion(ordinary);
     await engine.putPage(ordinary, { ...PAGE, compiled_truth: 'ordinary changed' }, { sourceId: 'default' });
     const green = await outcome(() => revertVersion.handler(context(false), { slug: ordinary, version_id: ordinaryVersion.id }));
     expect(green.allowed).toBe(true);
@@ -129,7 +145,7 @@ describe('D1 private-routing bypass paths', () => {
   test('restore_page refuses a private collision locally and remotely, while an ordinary slug works', async () => {
     const denied = 'people/d1-bypass-denylisted-restore';
     await seedDefault(denied);
-    await engine.softDeletePage(denied, { sourceId: 'default' });
+    await seedSoftDeleted(denied);
 
     const localRed = await outcome(() => restorePage.handler(context(false), { slug: denied }));
     expect(localRed.allowed).toBe(false);
@@ -143,7 +159,7 @@ describe('D1 private-routing bypass paths', () => {
 
     const ordinary = 'notes/d1-bypass-ordinary-restore';
     await seedDefault(ordinary);
-    await engine.softDeletePage(ordinary, { sourceId: 'default' });
+    await seedSoftDeleted(ordinary);
     const green = await outcome(() => restorePage.handler(context(false), { slug: ordinary }));
     expect(green.allowed).toBe(true);
     console.log(`GREEN restore_page ordinary slug: ${green.allowed ? 'allowed' : failureMessage(green)}`);
@@ -176,7 +192,7 @@ describe('D1 private-routing bypass paths', () => {
   test('restore_page and add_timeline_entry refuse a deny-listed person row outside a person prefix', async () => {
     const denied = 'wiki/d1-bypass-denylisted-x';
     await seedDefaultPerson(denied);
-    await engine.softDeletePage(denied, { sourceId: 'default' });
+    await seedSoftDeleted(denied);
 
     const restoreLocal = await outcome(() => restorePage.handler(context(false), { slug: denied }));
     console.log(`${restoreLocal.allowed ? 'RED-BEFORE-FIX' : 'GREEN'} restore_page wiki person local: ${restoreLocal.allowed ? 'ALLOWED' : failureMessage(restoreLocal)}`);
@@ -203,7 +219,7 @@ describe('D1 private-routing bypass paths', () => {
   test('revert_version refuses a deny-listed person row outside a person prefix', async () => {
     const denied = 'wiki/d1-bypass-denylisted-revert-person';
     await seedDefaultPerson(denied);
-    const version = await engine.createVersion(denied, { sourceId: 'default' });
+    const version = await seedVersion(denied);
     await engine.putPage(denied, { ...PERSON_PAGE, compiled_truth: 'changed person body' }, { sourceId: 'default', migrationWrite: true });
 
     const local = await outcome(() => revertVersion.handler(context(false), { slug: denied, version_id: version.id }));
@@ -220,7 +236,7 @@ describe('D1 private-routing bypass paths', () => {
   test('revert_version refuses a deny-listed person title on an innocuous slug', async () => {
     const denied = 'wiki/d1-bypass-innocuous-revert-person';
     await seedDefaultPerson(denied);
-    const version = await engine.createVersion(denied, { sourceId: 'default' });
+    const version = await seedVersion(denied);
     await engine.putPage(denied, { ...PERSON_PAGE, compiled_truth: 'changed titled person body' }, { sourceId: 'default', migrationWrite: true });
 
     const local = await outcome(() => revertVersion.handler(context(false), { slug: denied, version_id: version.id }));
@@ -238,7 +254,7 @@ describe('D1 private-routing bypass paths', () => {
     const allowed = 'wiki/d1-bypass-ordinary-revert-person';
     await seedDefaultPerson(allowed);
     await engine.putPage(allowed, { ...PERSON_PAGE, title: 'Ordinary D1 Person' }, { sourceId: 'default', migrationWrite: true });
-    const version = await engine.createVersion(allowed, { sourceId: 'default' });
+    const version = await seedVersion(allowed);
     await engine.putPage(allowed, { ...PERSON_PAGE, title: 'Ordinary D1 Person', compiled_truth: 'changed ordinary person body' }, { sourceId: 'default', migrationWrite: true });
 
     const local = await outcome(() => revertVersion.handler(context(false), { slug: allowed, version_id: version.id }));
@@ -253,7 +269,7 @@ describe('D1 private-routing bypass paths', () => {
   test('person-shaped writes refuse when the policy directory is missing', async () => {
     const denied = 'wiki/d1-bypass-arm-missing-policy';
     await seedDefaultPerson(denied);
-    await engine.softDeletePage(denied, { sourceId: 'default' });
+    await seedSoftDeleted(denied);
     rmSync(policyDir, { recursive: true, force: true });
     try {
       const result = await outcome(() => restorePage.handler(context(false), { slug: denied }));
@@ -269,7 +285,7 @@ describe('D1 private-routing bypass paths', () => {
   test('all three operations refuse a non-allowlisted private collision', async () => {
     const revertSlug = 'people/d1-bypass-collision-revert';
     await seedDefault(revertSlug);
-    const version = await engine.createVersion(revertSlug, { sourceId: 'default' });
+    const version = await seedVersion(revertSlug);
     await engine.putPage(revertSlug, { ...PAGE, compiled_truth: 'collision changed' }, { sourceId: 'default', migrationWrite: true });
     await addPrivateCollision(revertSlug);
     writeFileSync(allowlistPath, '');
@@ -284,7 +300,7 @@ describe('D1 private-routing bypass paths', () => {
 
     const restoreSlug = 'people/d1-bypass-collision-restore';
     await seedDefault(restoreSlug);
-    await engine.softDeletePage(restoreSlug, { sourceId: 'default' });
+    await seedSoftDeleted(restoreSlug);
     await addPrivateCollision(restoreSlug);
     const restoreLocal = await outcome(() => restorePage.handler(context(false), { slug: restoreSlug }));
     const restoreRemote = await outcome(() => restorePage.handler(context(true), { slug: restoreSlug }));
@@ -313,7 +329,7 @@ describe('D1 private-routing bypass paths', () => {
   test('revert_version follows put_page collision allowlist behavior', async () => {
     for (const { slug, privateSlug } of ALLOWLISTED_COLLISIONS) {
       await seedDefault(slug);
-      const version = await engine.createVersion(slug, { sourceId: 'default' });
+      const version = await seedVersion(slug);
       await engine.putPage(slug, { ...PAGE, compiled_truth: 'changed body' }, { sourceId: 'default', migrationWrite: true });
       await addPrivateCollision(privateSlug);
       writeFileSync(allowlistPath, `collision|${slug}\n`);
@@ -330,7 +346,7 @@ describe('D1 private-routing bypass paths', () => {
   test('restore_page follows put_page collision allowlist behavior', async () => {
     for (const { slug, privateSlug } of ALLOWLISTED_COLLISIONS) {
       await seedDefault(slug);
-      await engine.softDeletePage(slug, { sourceId: 'default' });
+      await seedSoftDeleted(slug);
       await addPrivateCollision(privateSlug);
       writeFileSync(allowlistPath, `collision|${slug}\n`);
 

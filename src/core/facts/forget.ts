@@ -47,6 +47,7 @@ import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fen
 import { parseMarkdown } from '../markdown.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { contentHash } from '../utils.ts';
+import { enforcePrivateFactWrite } from '../private-source-routing.ts';
 
 export interface ForgetFactResult {
   /** True iff the row was found AND a forget was applied (fence or DB). */
@@ -164,6 +165,16 @@ export async function forgetFactInFence(
     return { ok: false, path: 'not_found', reason };
   }
   const row = rows[0];
+
+  // Preflight before touching the canonical fence. The DB expiry statement
+  // has the same guard, but waiting until after rename would leave the file
+  // changed when a private-routing refusal is raised.
+  await enforcePrivateFactWrite(engine, {
+    sourceId: row.source_id,
+    pageSlug: row.source_markdown_slug,
+    entitySlug: row.entity_slug,
+    visibility: row.visibility,
+  });
 
   if (row.expired_at !== null) {
     return { ok: false, path: 'already_expired', reason };

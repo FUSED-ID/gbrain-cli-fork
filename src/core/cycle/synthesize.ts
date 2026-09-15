@@ -48,6 +48,7 @@
  */
 
 import type Anthropic from '@anthropic-ai/sdk';
+import { enforcePrivatePageWrite } from '../private-source-routing.ts';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { chat as gatewayChat, validateModelId, type ChatResult } from '../ai/gateway.ts';
@@ -2920,6 +2921,7 @@ async function stampDreamProvenance(
     // failures and must not swallow the cancellation unwind.
     throwIfAborted(signal, '[dream] synthesize provenance');
     try {
+      await enforcePrivatePageWrite(engine, { requestedSourceId: source_id, slug });
       await executeRawJsonb(
         engine,
         `UPDATE pages

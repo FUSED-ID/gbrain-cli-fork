@@ -24,6 +24,7 @@
  */
 
 import type { BrainEngine, FactInsertStatus, NewFact } from '../engine.ts';
+import { enforcePrivateFactWrite } from '../private-source-routing.ts';
 
 const DEDUP_THRESHOLD = 0.95;
 const DEDUP_CANDIDATE_LIMIT = 5;
@@ -248,6 +249,16 @@ async function expireSuperseded(engine: BrainEngine, oldId: number, newId: numbe
     /* best-effort */
   }
   try {
+    const rows = await engine.executeRaw<{
+      source_id: string; entity_slug: string | null; source_markdown_slug: string | null; visibility: string | null;
+    }>('SELECT source_id, entity_slug, source_markdown_slug, visibility FROM facts WHERE id = $1', [oldId]);
+    const old = rows[0];
+    if (old) await enforcePrivateFactWrite(engine, {
+      sourceId: old.source_id,
+      pageSlug: old.source_markdown_slug,
+      entitySlug: old.entity_slug,
+      visibility: old.visibility,
+    });
     await engine.executeRaw(`UPDATE facts SET superseded_by = $1 WHERE id = $2`, [newId, oldId]);
   } catch {
     /* best-effort */

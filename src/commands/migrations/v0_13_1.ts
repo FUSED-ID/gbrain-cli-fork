@@ -42,6 +42,7 @@ import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhase
 import { loadConfig, toEngineConfig, gbrainPath } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
 import type { BrainEngine } from '../../core/engine.ts';
+import { enforcePrivatePageWrite } from '../../core/private-source-routing.ts';
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
 
 // Lazy: GBRAIN_HOME may be set after module load.
@@ -155,6 +156,16 @@ export async function phaseCGrandfather(
           [chunk],
         );
         appendRollbackBatch(snap);
+
+        for (const row of snap) {
+          await enforcePrivatePageWrite(engine, {
+            requestedSourceId: row.source_id ?? 'default',
+            slug: row.slug,
+            entityType: undefined,
+            entityName: undefined,
+            frontmatter: row.frontmatter,
+          });
+        }
 
         await engine.executeRaw(
           `UPDATE pages SET frontmatter = jsonb_set(COALESCE(frontmatter, '{}'::jsonb), '{validate}', 'false'::jsonb) ` +
