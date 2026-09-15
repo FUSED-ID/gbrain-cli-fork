@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { gbrainPath } from './config.ts';
 import type { BrainEngine } from './engine.ts';
 import { loadAllSources, parseSourceConfig, type SourceRow } from './sources-load.ts';
 import { warnOncePerProcess } from './utils.ts';
@@ -43,10 +43,21 @@ const COLLISION_ALLOWLIST_PATH_ENV = 'GBRAIN_PRIVACY_ALLOWLIST_PATH';
  * Format: one `collision|<exact slug>` row per line. Lines starting with `#`
  * (after trimming leading whitespace) are comments. No globs, no patterns,
  * the slug is matched verbatim against the write's own requested slug.
+ * Padding on the row, a space after the pipe, CRLF line endings, and a
+ * leading UTF-8 BOM on the file's first row are all tolerated (trimmed away
+ * before matching). This is deliberately MORE permissive than the deploy
+ * gate's `grep -qxF` exact-line check on the same file: that asymmetry is
+ * safe-direction only (a row this parser exempts but the gate's exact-line
+ * grep does not recognize makes the gate conservative -- it flags a
+ * collision as unexpected and fails loudly, never the reverse), but the two
+ * readers disagreeing is worth knowing if the gate and this code ever seem
+ * to disagree about a slug. See
+ * test/private-source-routing-allowlist-parser.test.ts for the exact matrix.
  *
  * Path is overridable via GBRAIN_PRIVACY_ALLOWLIST_PATH (tests use this),
- * defaulting to ~/.gbrain/privacy-allowlist.tsv. A missing file means zero
- * exemptions, not a failure: fail-closed belongs to the deny-list (a missing
+ * defaulting to `${configDir()}/privacy-allowlist.tsv` (honors GBRAIN_HOME).
+ * A missing file means zero exemptions, not a failure: fail-closed belongs
+ * to the deny-list (a missing
  * DENY-list should refuse writes); a missing ALLOWlist should not, because
  * failing closed on an allowlist would refuse writes an allowlist exists to
  * permit, the opposite of its purpose.
@@ -54,7 +65,13 @@ const COLLISION_ALLOWLIST_PATH_ENV = 'GBRAIN_PRIVACY_ALLOWLIST_PATH';
 function collisionAllowlistPath(): string {
   const override = process.env[COLLISION_ALLOWLIST_PATH_ENV]?.trim();
   if (override) return override;
-  return join(homedir(), '.gbrain', 'privacy-allowlist.tsv');
+  // Defect 3 fix: must honor GBRAIN_HOME (via configDir()/gbrainPath()),
+  // like every other gbrain-home-relative path, so a unit test run with
+  // GBRAIN_HOME pointed at a temp dir never resolves to the operator's real
+  // ~/.gbrain/privacy-allowlist.tsv. bunfig.toml preloads
+  // test/helpers/gbrain-home-preload.ts precisely so tests never see the
+  // real file; this function must respect that.
+  return gbrainPath('privacy-allowlist.tsv');
 }
 
 function loadCollisionAllowlist(): Set<string> {
@@ -79,7 +96,15 @@ function loadCollisionAllowlist(): Set<string> {
   return slugs;
 }
 
-function isAllowlistedCollision(requestedSourceId: string, slug: string): boolean {
+/**
+ * Defect 1 fix: the ONLY consumer of this outside resolvePrivateWriteSource's
+ * (now-unconditional) rule (b) check is the engine-level D1 throw guard in
+ * postgres-engine.ts / pglite-engine.ts putPage. It suppresses that throw for
+ * an allowlisted (source === 'default', exact slug) collision only; it must
+ * never be consulted by resolvePrivateWriteSource's routing decision or by
+ * the ops/pages.ts remote fence.
+ */
+export function isAllowlistedCollision(requestedSourceId: string, slug: string): boolean {
   if (requestedSourceId !== DEFAULT_SOURCE_ID) return false;
   return loadCollisionAllowlist().has(slug);
 }
@@ -259,15 +284,21 @@ export async function resolvePrivateWriteSource(
     );
     return { sourceId: requested, routed: false, privateSourceId: privateSource.id };
   }
-  if (!isAllowlistedCollision(requested, input.slug)) {
-    try {
-      for (const key of candidateKeys(input)) {
-        if (await engine.getPage(key, { sourceId: privateSource.id })) {
-          return { sourceId: privateSource.id, routed: true, reason: 'existing_private_page', privateSourceId: privateSource.id };
-        }
+  // T-LEAK-7 fix (defect 1, binding NO-GO): the collision allowlist must
+  // NOT change this routing decision. An allowlisted slug still routes to
+  // the private source here, exactly as at 03436b64b. The exemption lives
+  // only at the engine putPage throw site (see isAllowlistedCollision call
+  // sites in postgres-engine.ts / pglite-engine.ts), which is the one place
+  // it is safe to narrow: it never affects route.routed or route.sourceId,
+  // so the remote fence in ops/pages.ts keeps refusing remote callers for
+  // these slugs.
+  try {
+    for (const key of candidateKeys(input)) {
+      if (await engine.getPage(key, { sourceId: privateSource.id })) {
+        return { sourceId: privateSource.id, routed: true, reason: 'existing_private_page', privateSourceId: privateSource.id };
       }
-    } catch { /* policy-file matching remains authoritative */ }
-  }
+    }
+  } catch { /* policy-file matching remains authoritative */ }
   if (!isPersonishWrite(input)) return { sourceId: requested, routed: false, privateSourceId: privateSource.id };
   if (matchesExcludedPeople(privateSource, input)) {
     return { sourceId: privateSource.id, routed: true, reason: 'excluded_people_policy', privateSourceId: privateSource.id };
