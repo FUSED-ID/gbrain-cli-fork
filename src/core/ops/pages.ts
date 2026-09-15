@@ -885,6 +885,8 @@ const restore_page: Operation = {
     await enforcePrivateWriteGuard(ctx, 'restore_page', {
       requestedSourceId: sourceOpts.sourceId ?? 'default',
       slug,
+      entityType: current?.type,
+      entityName: current?.title,
     }, current ?? undefined);
     const ok = await ctx.engine.restorePage(slug, sourceOpts);
     if (!ok) {
