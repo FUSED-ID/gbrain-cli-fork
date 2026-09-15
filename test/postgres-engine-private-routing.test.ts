@@ -134,6 +134,91 @@ describeIfDb('PostgresEngine: D1 private-write policy guard', () => {
     expect(raw[0]?.compiled_truth).toBe('original body');
   });
 
+  test('collision allowlist exempts rule (b) only, never rule (a) (T-LEAK-7)', async () => {
+    await pointPrivateSource(policyDir);
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `pg-d1-denylisted*` | PG D1 Denylisted |\n');
+    const allowlistPath = join(policyDir, 'privacy-allowlist.tsv');
+    const priorAllowlistPath = process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH;
+    process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH = allowlistPath;
+    try {
+      // Mirrors the live shape: the private profile lives at the BARE slug
+      // in lg-private (see person/chris-hooper's real private page,
+      // 'chris-hooper', no /_author suffix); the public stub is written to
+      // `default` at the /_author-suffixed slug. Rule (b) matches these via
+      // candidateKeys' stripAuthorSuffix walk, not an exact-string match.
+      const stubSlug = 'pg-d1-chris-hooper/_author';
+      const privateSlug = 'pg-d1-chris-hooper';
+      await engine.putPage(privateSlug, {
+        type: 'concept', title: 'PG D1 Chris Hooper', compiled_truth: 'private stub', timeline: '', frontmatter: {},
+      }, { sourceId: 'lg-private' });
+
+      // No allowlist file at all yet: rule (b) refuses, matching the plain
+      // existing-private-page test above.
+      await expect(engine.putPage(stubSlug, {
+        type: 'concept', title: 'PG D1 Chris Hooper', compiled_truth: 'public stub attempt 1', timeline: '', frontmatter: {},
+      }, { sourceId: 'default' })).rejects.toThrow(/existing_private_page/);
+
+      // Add the exact-slug collision row: rule (b) is exempted, the write
+      // to `default` succeeds even though the identity is live in lg-private.
+      writeFileSync(allowlistPath, '# T-LEAK-7 collision exemptions\ncollision|' + stubSlug + '\n');
+      const written = await engine.putPage(stubSlug, {
+        type: 'concept', title: 'PG D1 Chris Hooper', compiled_truth: 'public stub attempt 2', timeline: '', frontmatter: {},
+      }, { sourceId: 'default' });
+      expect(written.slug).toBe(stubSlug);
+
+      // Remove the row: rule (b) refuses again.
+      writeFileSync(allowlistPath, '# T-LEAK-7 collision exemptions\n');
+      await engine.executeRaw(`DELETE FROM pages WHERE source_id = 'default' AND slug = $1`, [stubSlug]);
+      await expect(engine.putPage(stubSlug, {
+        type: 'concept', title: 'PG D1 Chris Hooper', compiled_truth: 'public stub attempt 3', timeline: '', frontmatter: {},
+      }, { sourceId: 'default' })).rejects.toThrow(/existing_private_page/);
+
+      // Rule (a), the deny-list match, is NEVER exempted by a collision row,
+      // even one naming the exact denied slug.
+      const deniedSlug = 'people/pg-d1-denylisted';
+      writeFileSync(allowlistPath, 'collision|' + deniedSlug + '\n');
+      await expect(engine.putPage(deniedSlug, {
+        type: 'concept', title: 'PG D1 Denylisted', compiled_truth: 'body', timeline: '', frontmatter: {},
+      }, { sourceId: 'default' })).rejects.toThrow(/excluded_people_policy/);
+    } finally {
+      if (priorAllowlistPath === undefined) delete process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH;
+      else process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH = priorAllowlistPath;
+    }
+  });
+
+  test('KNOWN GAP: a HARD delete in the write gap is not covered, the page is recreated', async () => {
+    // Documents a gap the tombstone-race guard does NOT close (see the
+    // writeStartedAt comment in postgres-engine.ts putPage): a hard DELETE
+    // landing between this write's checks and its INSERT ... ON CONFLICT
+    // leaves no conflicting row for the guard's WHERE clause to evaluate at
+    // all, so the purge is silently undone as an ordinary INSERT. This is
+    // the shape that actually happened here: person/chris-hooper was
+    // hard-purged, and a routine sync write recreated it.
+    await pointPrivateSource(policyDir);
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated` | Unrelated |\n');
+    const slug = 'pg-d1-hard-deleted';
+    const page = {
+      type: 'concept', title: 'PG D1 Hard Deleted', compiled_truth: 'original body', timeline: '', frontmatter: {},
+    } as const;
+
+    await engine.putPage(slug, page, { sourceId: 'default' });
+    // Simulate the hard purge landing in the write gap: no row survives for
+    // ON CONFLICT to match against.
+    await engine.executeRaw(`DELETE FROM pages WHERE source_id = 'default' AND slug = $1`, [slug]);
+
+    const recreated = await engine.putPage(slug, {
+      ...page, compiled_truth: 'recreated after hard purge',
+    }, { sourceId: 'default' });
+    expect(recreated.slug).toBe(slug);
+
+    const raw = await engine.executeRaw<{ deleted_at: string | null; compiled_truth: string }>(
+      `SELECT deleted_at, compiled_truth FROM pages WHERE source_id = 'default' AND slug = $1`,
+      [slug],
+    );
+    expect(raw[0]?.deleted_at).toBeNull();
+    expect(raw[0]?.compiled_truth).toBe('recreated after hard purge');
+  });
+
   test('migrationWrite exempts a personish write from the guard on PostgresEngine', async () => {
     await pointPrivateSource(policyDir);
     writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `pg-d1-migrate-exempt*` | PG D1 Migrate Exempt |\n');
