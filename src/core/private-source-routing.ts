@@ -36,8 +36,11 @@ const COLLISION_ALLOWLIST_PATH_ENV = 'GBRAIN_PRIVACY_ALLOWLIST_PATH';
  * private profile of the same identity). Exempts ONLY rule (b), the
  * existing-live-page-in-private-source check in `resolvePrivateWriteSource`.
  * It never touches rule (a), the Family deny-list match in
- * `matchesExcludedPeople`, a deny-listed person stays refused even if a
- * `collision|` row names them; the two rules are independent gates and this
+ * `matchesExcludedPeople`: `resolvePrivateWriteSource` evaluates rule (a)
+ * BEFORE rule (b) for personish writes, so a deny-listed person who matches
+ * rule (a) always gets reason: 'excluded_people_policy', a reason this
+ * allowlist's callers never exempt, and stays refused even if a
+ * `collision|` row names them. The two rules are independent gates and this
  * file only ever widens the narrower of the two.
  *
  * Format: one `collision|<exact slug>` row per line. Lines starting with `#`
@@ -284,14 +287,30 @@ export async function resolvePrivateWriteSource(
     );
     return { sourceId: requested, routed: false, privateSourceId: privateSource.id };
   }
-  // T-LEAK-7 fix (defect 1, binding NO-GO): the collision allowlist must
-  // NOT change this routing decision. An allowlisted slug still routes to
-  // the private source here, exactly as at 03436b64b. The exemption lives
-  // only at the engine putPage throw site (see isAllowlistedCollision call
-  // sites in postgres-engine.ts / pglite-engine.ts), which is the one place
-  // it is safe to narrow: it never affects route.routed or route.sourceId,
-  // so the remote fence in ops/pages.ts keeps refusing remote callers for
-  // these slugs.
+  // Order fix (defect 1, second binding NO-GO): rule (a), the Family
+  // deny-list match, MUST be evaluated before rule (b), the existing-
+  // private-page lookup, for personish writes. The previous order checked
+  // rule (b) first and returned reason: 'existing_private_page' as soon as
+  // ANY candidate key had a live private page, so rule (a) was unreachable
+  // for exactly the people it exists to protect: everyone who is both
+  // deny-listed and already has a private page. Both engines gate the
+  // T-LEAK-7 collision-allowlist exemption on route.reason ===
+  // 'existing_private_page' specifically so it can never suppress a rule
+  // (a) refusal; with rule (a) checked first, a deny-listed identity now
+  // always gets reason: 'excluded_people_policy' when it matches, so that
+  // gate is effective in practice, not just in intent.
+  //
+  // The collision allowlist still must NOT change the ROUTING decision
+  // either way: an allowlisted slug still routes to the private source
+  // here, exactly as at 03436b64b. The exemption lives only at the engine
+  // putPage throw site (see isAllowlistedCollision call sites in
+  // postgres-engine.ts / pglite-engine.ts), which is the one place it is
+  // safe to narrow: it never affects route.routed or route.sourceId, so the
+  // remote fence in ops/pages.ts keeps refusing remote callers for these
+  // slugs.
+  if (isPersonishWrite(input) && matchesExcludedPeople(privateSource, input)) {
+    return { sourceId: privateSource.id, routed: true, reason: 'excluded_people_policy', privateSourceId: privateSource.id };
+  }
   try {
     for (const key of candidateKeys(input)) {
       if (await engine.getPage(key, { sourceId: privateSource.id })) {
@@ -299,10 +318,6 @@ export async function resolvePrivateWriteSource(
       }
     }
   } catch { /* policy-file matching remains authoritative */ }
-  if (!isPersonishWrite(input)) return { sourceId: requested, routed: false, privateSourceId: privateSource.id };
-  if (matchesExcludedPeople(privateSource, input)) {
-    return { sourceId: privateSource.id, routed: true, reason: 'excluded_people_policy', privateSourceId: privateSource.id };
-  }
   return { sourceId: requested, routed: false, privateSourceId: privateSource.id };
 }
 

@@ -180,6 +180,25 @@ describeIfDb('PostgresEngine: D1 private-write policy guard', () => {
       await expect(engine.putPage(deniedSlug, {
         type: 'concept', title: 'PG D1 Denylisted', compiled_truth: 'body', timeline: '', frontmatter: {},
       }, { sourceId: 'default' })).rejects.toThrow(/excluded_people_policy/);
+
+      // Defect 1 fix, second binding NO-GO: the case above passes even with
+      // the bug present, because it seeds no private page for the denied
+      // slug, so rule (b) never fires and never has a chance to shadow rule
+      // (a). Repeat it WITH a live private page for the same identity, so a
+      // regression to "rule (b) evaluated before rule (a)" would flip this
+      // back to reason: 'existing_private_page' and the collisionExempt
+      // check below would wrongly admit it.
+      const deniedBareSlug = 'pg-d1-denylisted-with-private-page';
+      const deniedSlugWithPrivatePage = 'people/pg-d1-denylisted-with-private-page';
+      await engine.putPage(deniedBareSlug, {
+        type: 'concept', title: 'PG D1 Denylisted With Private Page', compiled_truth: 'private copy', timeline: '', frontmatter: {},
+      }, { sourceId: 'lg-private' });
+      writeFileSync(allowlistPath, 'collision|' + deniedSlugWithPrivatePage + '\n');
+      await expect(engine.putPage(deniedSlugWithPrivatePage, {
+        type: 'concept', title: 'PG D1 Denylisted With Private Page', compiled_truth: 'leaked shape', timeline: '', frontmatter: {},
+      }, { sourceId: 'default' })).rejects.toThrow(/excluded_people_policy/);
+      const stillNotInDefault = await engine.getPage(deniedSlugWithPrivatePage, { sourceId: 'default' });
+      expect(stillNotInDefault).toBeNull();
     } finally {
       if (priorAllowlistPath === undefined) delete process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH;
       else process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH = priorAllowlistPath;
@@ -188,12 +207,16 @@ describeIfDb('PostgresEngine: D1 private-write policy guard', () => {
 
   test('KNOWN GAP: a HARD delete in the write gap is not covered, the page is recreated', async () => {
     // Documents a gap the tombstone-race guard does NOT close (see the
-    // writeStartedAt comment in postgres-engine.ts putPage): a hard DELETE
-    // landing between this write's checks and its INSERT ... ON CONFLICT
-    // leaves no conflicting row for the guard's WHERE clause to evaluate at
-    // all, so the purge is silently undone as an ordinary INSERT. This is
-    // the shape that actually happened here: person/chris-hooper was
-    // hard-purged, and a routine sync write recreated it.
+    // Tombstone race guard comment in postgres-engine.ts putPage): a hard
+    // DELETE landing between this write's checks and its INSERT ... ON
+    // CONFLICT leaves no conflicting row for the guard's WHERE clause to
+    // evaluate at all, so the purge is silently undone as an ordinary
+    // INSERT. This is a synthetic reproduction of that shape; it is not a
+    // claim that this happened to any specific real page (defect 4
+    // correction, binding NO-GO 20260915: the live database has no
+    // 'default' row, live or tombstoned, for person/chris-hooper -- only an
+    // lg-private one -- so the earlier claim that this "actually happened"
+    // to it was unsupported and has been removed).
     await pointPrivateSource(policyDir);
     writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated` | Unrelated |\n');
     const slug = 'pg-d1-hard-deleted';

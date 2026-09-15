@@ -278,6 +278,87 @@ describe('private routing armed guard at the put_page write path', () => {
     console.log(`GREEN slug not live in lg-private write to default: allowed, slug=${green.slug}`);
   });
 
+  // Defect 1 fix, round 2 (binding NO-GO, second pass): rule (a), the
+  // Family deny-list match, was unreachable behind rule (b) for anyone both
+  // deny-listed AND live in lg-private, because resolvePrivateWriteSource
+  // checked rule (b) first and returned as soon as any candidate key had a
+  // live private page. Both engines gate the T-LEAK-7 collision-allowlist
+  // exemption on route.reason === 'existing_private_page' specifically so
+  // it can never suppress a rule (a) refusal -- but with rule (a)
+  // unreachable, route.reason was NEVER 'excluded_people_policy' for these
+  // people, so a collision row for a denied person admitted them anyway.
+  // These two tests cover the case the pre-fix suite missed: they seed a
+  // live private page for the denied slug BEFORE writing the collision row,
+  // so a regression back to "rule (b) first" would silently pass again.
+  test('defect 1 fix: a deny-listed slug that ALSO has a live private page is refused even with a collision row for it', async () => {
+    await pointPrivateSource(policyDir);
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `arm-writepath-denylisted-and-private*` | Denylisted And Private |\n');
+    const bareSlug = 'arm-writepath-denylisted-and-private';
+    const requestedSlug = 'people/arm-writepath-denylisted-and-private';
+    await engine.putPage(bareSlug, {
+      type: 'concept', title: 'Denylisted And Private', compiled_truth: 'Private copy.', timeline: '', frontmatter: {},
+    }, { sourceId: 'lg-private' });
+
+    const allowlistPath = join(policyDir, 'privacy-allowlist.tsv');
+    const priorAllowlistPath = process.env[ALLOWLIST_PATH_ENV];
+    process.env[ALLOWLIST_PATH_ENV] = allowlistPath;
+    try {
+      // The collision row names the EXACT requested slug: before the order
+      // fix this made resolvePrivateWriteSource return reason:
+      // 'existing_private_page' (rule (b) found the live private copy
+      // first), which the engine's collisionExempt check then waved through.
+      writeFileSync(allowlistPath, 'collision|' + requestedSlug + '\n');
+      const page = {
+        type: 'concept', title: 'Denylisted And Private', compiled_truth: 'Leaked shape.', timeline: '', frontmatter: {},
+      } as const;
+      const outcome = await engine.putPage(requestedSlug, page, { sourceId: 'default' })
+        .then(() => ({ allowed: true, message: '' }))
+        .catch((error: unknown) => ({ allowed: false, message: String(error) }));
+      expect(outcome.allowed).toBe(false);
+      expect(outcome.message).toMatch(/excluded_people_policy/);
+      await expect(engine.getPage(requestedSlug, { sourceId: 'default' })).resolves.toBeNull();
+    } finally {
+      if (priorAllowlistPath === undefined) delete process.env[ALLOWLIST_PATH_ENV];
+      else process.env[ALLOWLIST_PATH_ENV] = priorAllowlistPath;
+    }
+  });
+
+  // Decision (defect 2): a collision-allowlisted slug whose write TITLE
+  // matches a deny-listed NAME must be REFUSED, not admitted. The
+  // allowlist's only legitimate purpose is exempting rule (b) for an exact,
+  // pre-approved slug collision (a public stub coexisting with a private
+  // profile under the identical slug); it says nothing about the identity
+  // of the content being written under that slug. matchesExcludedPeople
+  // matches on the write's title/entityName as well as its slug (see
+  // candidateKeys), precisely so a denied person cannot be published by
+  // reusing an unrelated, allowlisted slug and simply naming them in the
+  // title. Exempting that would turn the collision allowlist into a
+  // deny-list bypass, which is not what it is for.
+  test('defect 2: a collision-allowlisted slug is still refused when its TITLE matches a deny-listed name', async () => {
+    await pointPrivateSource(policyDir);
+    writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `no-slug-match-here` | Named Not By Slug |\n');
+    const slug = 'people/arm-writepath-allowlisted-title-collision';
+
+    const allowlistPath = join(policyDir, 'privacy-allowlist.tsv');
+    const priorAllowlistPath = process.env[ALLOWLIST_PATH_ENV];
+    process.env[ALLOWLIST_PATH_ENV] = allowlistPath;
+    try {
+      writeFileSync(allowlistPath, 'collision|' + slug + '\n');
+      const page = {
+        type: 'concept', title: 'Named Not By Slug', compiled_truth: 'body', timeline: '', frontmatter: {},
+      } as const;
+      const outcome = await engine.putPage(slug, page, { sourceId: 'default' })
+        .then(() => ({ allowed: true, message: '' }))
+        .catch((error: unknown) => ({ allowed: false, message: String(error) }));
+      expect(outcome.allowed).toBe(false);
+      expect(outcome.message).toMatch(/excluded_people_policy/);
+      await expect(engine.getPage(slug, { sourceId: 'default' })).resolves.toBeNull();
+    } finally {
+      if (priorAllowlistPath === undefined) delete process.env[ALLOWLIST_PATH_ENV];
+      else process.env[ALLOWLIST_PATH_ENV] = priorAllowlistPath;
+    }
+  });
+
   test('regression: a brand new ordinary business-contact page is ALLOWED', async () => {
     // This is exactly the shape com.lgv.capture-contact creates every night
     // (bryan-y/_author, mirko/_author, ...): a person-shaped write to
