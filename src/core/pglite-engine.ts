@@ -1777,17 +1777,26 @@ export class PGLiteEngine implements BrainEngine {
           entityType: page.type,
           entityName: page.title,
         });
-        // Defect 1 fix (binding NO-GO): mirrors postgres-engine.ts. The
-        // T-LEAK-7 collision allowlist must not weaken this throw for anyone
-        // but the exact allowlisted slug on the default source, and only for
-        // rule (b) (existing_private_page) -- rule (a), the Family deny-list
-        // match (excluded_people_policy), is NEVER exempted here.
-        // resolvePrivateWriteSource's routing decision above is unconditional
-        // (route.routed is true for these slugs either way), so this is the
-        // ONLY place the allowlist exemption applies; it does not touch
-        // route.routed/route.sourceId, so callers that read the route
-        // directly (the ops/pages.ts remote fence) see the write as routed to
-        // the private source and still refuse a remote caller.
+        // Defect 1 fix (binding NO-GO, twice): mirrors postgres-engine.ts.
+        // The T-LEAK-7 collision allowlist must not weaken this throw for
+        // anyone but the exact allowlisted slug on the default source, and
+        // only for rule (b) (existing_private_page) -- rule (a), the Family
+        // deny-list match (excluded_people_policy), is NEVER exempted here.
+        // This gate is effective ONLY because resolvePrivateWriteSource
+        // itself now evaluates rule (a) BEFORE rule (b) for personish writes
+        // (see the order-fix comment there): a deny-listed identity always
+        // gets reason: 'excluded_people_policy' when it matches, even when it
+        // also has a live private page, so route.reason === 'existing_private_page'
+        // can never be true for a deny-listed slug. Without that ordering
+        // fix, a live private page would shadow the deny-list match and this
+        // check alone would not have protected it -- the ordering fix and
+        // this gate are both required. resolvePrivateWriteSource's routing
+        // decision above is unconditional (route.routed is true for these
+        // slugs either way), so this is the ONLY place the allowlist
+        // exemption applies; it does not touch route.routed/route.sourceId,
+        // so callers that read the route directly (the ops/pages.ts remote
+        // fence) see the write as routed to the private source and still
+        // refuse a remote caller.
         const collisionExempt = route.reason === 'existing_private_page'
           && isAllowlistedCollision(sourceId, slug);
         if (route.routed && !collisionExempt) {
@@ -1800,7 +1809,8 @@ export class PGLiteEngine implements BrainEngine {
         }
       }
     }
-    // Tombstone race guard (defects 2 and 4 fix), mirrors postgres-engine.ts.
+    // Tombstone race guard (defects 2 and 4 fix; wording corrected, third
+    // binding NO-GO -- defect 3), mirrors postgres-engine.ts.
     //
     // The WHERE clause on the ON CONFLICT upsert below compares deleted_at
     // against clock_timestamp() evaluated BY POSTGRES (PGlite is a real
@@ -1826,37 +1836,43 @@ export class PGLiteEngine implements BrainEngine {
     // clock_timestamp() value; <= resolves that tie toward "allow" (measured:
     // strict < still left this engine refusing roughly a quarter of a
     // same-millisecond revival loop even after switching to clock_timestamp();
-    // <= brought it to 0/300, matching PostgresEngine and upstream). A
-    // genuinely future deleted_at (the concurrent-delete guard test sets it
-    // an hour ahead) is unaffected either way.
+    // <= brought it to 0/300, matching PostgresEngine and upstream).
     //
     // What this closes: the false-positive refusal on a same-millisecond (or
     // any already-committed) revival -- defect 2.
     //
-    // What this does NOT close (known gaps, not fixed by this guard):
+    // What this does NOT close, and this guard cannot fire for any real soft
+    // delete (defect 3 correction): softDeletePage/softDeletePages stamp
+    // `deleted_at = now()`, i.e. Postgres' transaction_timestamp(), fixed at
+    // that transaction's START. By the time a concurrent putPage's WHERE
+    // clause runs clock_timestamp() -- which happens after this statement
+    // acquires the row lock, i.e. after the soft-delete transaction has
+    // already committed and released it -- clock_timestamp() is always later
+    // than that committed deleted_at. So the WHERE clause's
+    // `deleted_at <= clock_timestamp()` reads true and the row is treated as
+    // pre-existing and cleared (deleted_at set back to NULL), same as before
+    // this guard existed: the soft delete is silently overwritten, not
+    // refused. The zero-rows/refusal path below fires ONLY for a deleted_at
+    // that is strictly in the FUTURE relative to this statement's
+    // clock_timestamp() -- which only a synthetic test (or clock skew)
+    // produces, never a real soft delete through softDeletePage/
+    // softDeletePages. This guard is not, and was never claimed by the code
+    // itself to be, a fix for a real delete-write race; only the comment
+    // overclaimed that. This matches 03436b64b, which had no WHERE clause on
+    // this upsert at all, so it is not a regression -- it is an unchanged,
+    // pre-existing gap. Known related gaps, also not fixed by this guard:
     //  (a) a HARD delete (DELETE FROM pages) landing between the checks
     //      above and the upsert below. There is no conflicting row left for
     //      ON CONFLICT to match, so no WHERE clause runs at all; the upsert
     //      just INSERTs a fresh row and the purge is silently undone. This
     //      predicate cannot see a row that no longer exists.
-    //  (b) a soft delete whose deleted_at is stamped strictly DURING this
-    //      statement's own WHERE-clause evaluation for this row -- i.e. the
-    //      genuinely concurrent case this guard exists to catch at all. That
-    //      race is inherent to a predicate compared against a live clock and
-    //      is not, and cannot be, closed by a timestamp comparison; only a
-    //      row-level lock spanning both transactions would remove it, and
-    //      this guard is not attempting that.
-    //  (c) the D1 private-routing checks above this point
+    //  (b) the D1 private-routing checks above this point
     //      (isPersonishPageWrite, assertPrivateRoutingArmed,
     //      resolvePrivateWriteSource -- see the block above) and the
     //      data-loss guard query immediately below all run, and can await on
     //      I/O, BEFORE clock_timestamp() is evaluated inside the upsert
     //      statement. A soft delete landing during any of those earlier
-    //      awaits has already committed by the time the upsert runs, so
-    //      clock_timestamp() reads after it and this guard correctly treats
-    //      it as pre-existing (clears the row) rather than concurrent --
-    //      this is intended, and is part of what the defect 2 fix relies on,
-    //      not a gap it left open.
+    //      awaits reads the same way: cleared, not refused.
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
 
@@ -1941,15 +1957,16 @@ export class PGLiteEngine implements BrainEngine {
     // re-read instead of crashing.
     //
     // The ON CONFLICT WHERE above adds a second, deliberate zero-rows case:
-    // a row soft-deleted (a privacy purge, most sensitively) so close to this
-    // statement's own WHERE evaluation that clock_timestamp() still read
-    // before it, i.e. genuinely concurrently with this call. That row's
-    // deleted_at stays untouched, so the re-read below correctly finds
-    // nothing (getPage excludes deleted rows), and this must NOT be treated
-    // as a "no-op that actually succeeded" shrug: throw, refusing to report
-    // success for a write that was, deliberately, not applied. See the
-    // tombstone race guard comment above this function for the hard-delete
-    // gap this does NOT cover.
+    // a row whose deleted_at is strictly in the FUTURE relative to this
+    // statement's own clock_timestamp() -- see the tombstone race guard
+    // comment above this function (defect 3 correction) for why a real,
+    // already-committed soft delete does NOT land here and is instead
+    // silently overwritten; only a future-dated deleted_at (synthetic test
+    // or clock skew) does. That row's deleted_at stays untouched, so the
+    // re-read below correctly finds nothing (getPage excludes deleted rows),
+    // and this must NOT be treated as a "no-op that actually succeeded"
+    // shrug: throw, refusing to report success for a write that was,
+    // deliberately, not applied.
     if (rows.length === 0) {
       const reread = await this.getPage(slug, { sourceId });
       if (reread) return reread;
