@@ -26,6 +26,7 @@ import { OperationError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import {
   assertExplicitSourceLive,
+  enforcePrivateWriteGuard,
   enforceSubagentSlugFence,
   slugOutsideCallerFence,
   enforceClientSlugFence,
@@ -870,12 +871,27 @@ const restore_page: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    pageMutationSource(ctx, p, 'restore_page');
-    if (ctx.dryRun) {
-      if (typeof p.slug === 'string') {
-        validatePageSlug(p.slug);
-        enforceClientSlugFence(ctx, p.slug, 'restore_page');
-        enforceSubagentSlugFence(ctx, p.slug, 'restore_page');
+    const slug = p.slug as string;
+    enforceClientSlugFence(ctx, slug, 'restore_page');
+    // #4329: honor a per-call source_id (pre-fix it was silently dropped).
+    const requestedSource = parseSourceIdParam(p.source_id, 'restore_page');
+    if (requestedSource !== undefined) assertSourceInWriteGrant(ctx, requestedSource);
+    if (ctx.dryRun) return { dry_run: true, action: 'restore_page', slug };
+    // v0.31.8 (D7): thread ctx.sourceId.
+    const sourceOpts = requestedSource
+      ? { sourceId: requestedSource }
+      : ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const current = await ctx.engine.getPage(slug, { includeDeleted: true, ...sourceOpts });
+    await enforcePrivateWriteGuard(ctx, 'restore_page', {
+      requestedSourceId: sourceOpts.sourceId ?? 'default',
+      slug,
+    }, current ?? undefined);
+    const ok = await ctx.engine.restorePage(slug, sourceOpts);
+    if (!ok) {
+      // Distinguish "not found" from "already active" (idempotent-as-false).
+      const existing = await ctx.engine.getPage(slug, { includeDeleted: true, ...sourceOpts });
+      if (!existing) {
+        throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug (and source_id on a multi-source brain).');
       }
       return { dry_run: true, action: 'restore_page', slug: p.slug };
     }
