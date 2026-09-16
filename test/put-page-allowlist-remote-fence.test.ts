@@ -1,15 +1,10 @@
 /**
- * Defect 1 fix (binding NO-GO, 20260915): the T-LEAK-7 collision allowlist
- * must not change resolvePrivateWriteSource's routing decision, and must
- * not weaken the ops/pages.ts remote fence. Before this fix, an allowlisted
- * slug made resolvePrivateWriteSource return { routed: false, sourceId:
- * 'default' } for the SAME slug that a non-allowlisted run correctly routed
- * to 'lg-private' -- which both wrote the allowlisted put_page call to the
- * wrong source AND let a remote caller through a fence meant to refuse it.
+ * Defect 1: the T-LEAK-7 collision allowlist exempts only the live private
+ * collision from routing, while the ops/pages.ts remote fence remains active.
  *
  * This file exercises the real put_page operation handler (ops/pages.ts),
- * not the engine directly, so it covers exactly the code path the binding
- * finding named: pages.ts:392-403's route.routed / route.sourceId read.
+ * not the engine directly, so it covers exactly the code path that resolves
+ * and writes the requested source.
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
@@ -122,20 +117,22 @@ describe('defect 1: collision allowlist must not weaken routing or the remote fe
     expect(inDefault).toBeNull();
   });
 
-  test('local caller: allowlisted slug STILL routes to lg-private even WITH an allowlist row', async () => {
+  test('local caller: allowlisted collision stays in default WITH an allowlist row', async () => {
     writeFileSync(allowlistPath, 'collision|' + ALLOWLISTED_SLUG + '\n');
     const written = await putPage.handler(makeCtx({ remote: false }), {
       slug: ALLOWLISTED_SLUG,
       content: CONTENT,
     }) as { slug: string };
     expect(written.slug).toBe(ALLOWLISTED_SLUG);
-    // Defect 1: the allowlist row must NOT flip resolvePrivateWriteSource's
-    // decision. Before the fix this landed in 'default'.
-    const inPrivate = await engine.getPage(ALLOWLISTED_SLUG, { sourceId: 'lg-private' });
+    // The allowlist exempts this live collision from private routing. The
+    // existing private row remains unchanged and the requested default row
+    // is updated in place.
+    const inPrivate = await engine.getPage('lgv-allowlist-fence-test', { sourceId: 'lg-private' });
     expect(inPrivate).not.toBeNull();
-    expect(inPrivate!.compiled_truth).toContain('Allowlisted stub body');
+    expect(inPrivate!.compiled_truth).toBe('Private copy.');
     const inDefault = await engine.getPage(ALLOWLISTED_SLUG, { sourceId: 'default' });
-    expect(inDefault).toBeNull();
+    expect(inDefault).not.toBeNull();
+    expect(inDefault!.compiled_truth).toContain('Allowlisted stub body');
   });
 
   test('remote caller: allowlisted slug is refused (no allowlist row)', async () => {

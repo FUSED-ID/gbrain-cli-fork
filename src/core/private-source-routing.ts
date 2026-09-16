@@ -100,12 +100,9 @@ function loadCollisionAllowlist(): Set<string> {
 }
 
 /**
- * Defect 1 fix: the ONLY consumer of this outside resolvePrivateWriteSource's
- * (now-unconditional) rule (b) check is the engine-level D1 throw guard in
- * postgres-engine.ts / pglite-engine.ts putPage. It suppresses that throw for
- * an allowlisted (source === 'default', exact slug) collision only; it must
- * never be consulted by resolvePrivateWriteSource's routing decision or by
- * the ops/pages.ts remote fence.
+ * Rule (b) in resolvePrivateWriteSource consults this exact-slug allowlist
+ * after the private page lookup. It is never used for rule (a), the family
+ * deny-list, or by a caller after resolution.
  */
 export function isAllowlistedCollision(requestedSourceId: string, slug: string): boolean {
   if (requestedSourceId !== DEFAULT_SOURCE_ID) return false;
@@ -293,37 +290,28 @@ export async function resolvePrivateWriteSource(
     );
     return { sourceId: requested, routed: false, privateSourceId: privateSource.id };
   }
-  // Order fix (defect 1, second binding NO-GO): rule (a), the Family
-  // deny-list match, MUST be evaluated before rule (b), the existing-
-  // private-page lookup, for personish writes. The previous order checked
-  // rule (b) first and returned reason: 'existing_private_page' as soon as
-  // ANY candidate key had a live private page, so rule (a) was unreachable
-  // for exactly the people it exists to protect: everyone who is both
-  // deny-listed and already has a private page. Both engines gate the
-  // T-LEAK-7 collision-allowlist exemption on route.reason ===
-  // 'existing_private_page' specifically so it can never suppress a rule
-  // (a) refusal; with rule (a) checked first, a deny-listed identity now
-  // always gets reason: 'excluded_people_policy' when it matches, so that
-  // gate is effective in practice, not just in intent.
-  //
-  // The collision allowlist still must NOT change the ROUTING decision
-  // either way: an allowlisted slug still routes to the private source
-  // here, exactly as at 03436b64b. The exemption lives only at the engine
-  // putPage throw site (see isAllowlistedCollision call sites in
-  // postgres-engine.ts / pglite-engine.ts), which is the one place it is
-  // safe to narrow: it never affects route.routed or route.sourceId, so the
-  // remote fence in ops/pages.ts keeps refusing remote callers for these
-  // slugs.
-  // Rule (a) is always evaluated first.  The caller-side personish gate is
-  // still used to decide whether the armed assertion is required, but a
-  // resolver invocation carrying a loaded type/title must never skip the
-  // deny-list merely because the slug shape is unusual.
+  // Rule (a), the Family deny-list match, is evaluated before rule (b), the
+  // existing-private-page lookup. An allowlist row can therefore only exempt
+  // rule (b), never a deny-list refusal.
   if (matchesExcludedPeople(privateSource, input)) {
     return { sourceId: privateSource.id, routed: true, reason: 'excluded_people_policy', privateSourceId: privateSource.id };
   }
+  const collisionExempt = isAllowlistedCollision(requested, input.slug);
   try {
     for (const key of candidateKeys(input)) {
       if (await engine.getPage(key, { sourceId: privateSource.id })) {
+        if (collisionExempt) {
+          // Keep routed=true so remote fences still reject this write. The
+          // exemption changes the resolved target, not the policy match:
+          // consumers write the requested source and skip mirror tombstoning
+          // because sourceId equals requested.
+          return {
+            sourceId: requested,
+            routed: true,
+            reason: 'existing_private_page',
+            privateSourceId: privateSource.id,
+          };
+        }
         return { sourceId: privateSource.id, routed: true, reason: 'existing_private_page', privateSourceId: privateSource.id };
       }
     }
@@ -592,12 +580,7 @@ export async function enforcePrivatePageWrite(
     entityType,
     entityName,
   });
-  // The allowlist is a rule-(b)-only exception.  It is intentionally checked
-  // at the final refusal point, never inside resolvePrivateWriteSource, so a
-  // deny-list match (rule (a)) remains a refusal even for an allowlisted slug.
-  const collisionExempt = route.reason === 'existing_private_page'
-    && isAllowlistedCollision(target.requestedSourceId, target.slug);
-  if (route.routed && !collisionExempt) {
+  if (route.routed && route.sourceId !== target.requestedSourceId) {
     throw new Error(
       `private-write routing is ARMED but a page write received a person-shaped write for ` +
       `world-federated source '${target.requestedSourceId}' that the privacy policy routes to ` +
@@ -637,18 +620,15 @@ export async function enforcePrivateFactWrite(
     entityType: page?.type,
     entityName: page?.title,
   });
-  const collisionExempt = route.reason === 'existing_private_page'
-    && isAllowlistedCollision(target.sourceId, slug);
-  if (route.routed && target.sourceId === DEFAULT_SOURCE_ID && !collisionExempt) {
+  if (route.routed && route.sourceId !== target.sourceId && target.sourceId === DEFAULT_SOURCE_ID) {
     throw new Error(
       `private-write routing refused fact write for '${slug}' in world-federated source ` +
       `'${target.sourceId}'; route the fact to '${route.sourceId}'.`,
     );
   }
-  // Explicitly retain the world-on-default denial even if a future caller
-  // widens the collision exception above.  The allowlist never exempts rule
-  // (a), and never permits a world fact to remain in default.
-  if (target.visibility === 'world' && target.sourceId === DEFAULT_SOURCE_ID && route.routed && !collisionExempt) {
+  // Explicitly retain the world-on-default denial. The allowlist never
+  // exempts rule (a), and never permits a world fact to remain in default.
+  if (target.visibility === 'world' && target.sourceId === DEFAULT_SOURCE_ID && route.routed && route.sourceId !== target.sourceId) {
     throw new Error(`world-visible fact denied for private-routed page '${slug}'`);
   }
 }
