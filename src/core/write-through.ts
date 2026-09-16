@@ -22,7 +22,7 @@ import { hasSourceFilesystemLock, withSourceFilesystemLock, assertSourceFilesyst
  * only does "row exists + repo is a real dir → render + atomic write".
  */
 
-import { existsSync, statSync, mkdirSync, unlinkSync, readdirSync } from 'fs';
+import { accessSync, existsSync, statSync, mkdirSync, writeFileSync, renameSync, unlinkSync, readdirSync, constants as fsConstants } from 'fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { atomicWriteFileSync } from './atomic-write.ts';
 import type { BrainEngine } from './engine.ts';
@@ -368,6 +368,33 @@ export async function resolvePageWriteTarget(
   }
 
   return { ok: true, filePath, writeRoot, sourcePathToBind: scannerSourcePath(scanRoot, filePath) };
+}
+
+/**
+ * Preflight a routed page write before the database transaction starts.
+ * Routed private writes require a usable file sink; a missing or read-only
+ * private repo must therefore reject the write without creating a row.
+ */
+export async function assertPageWriteThroughReady(
+  engine: BrainEngine,
+  slug: string,
+  sourceId: string,
+): Promise<void> {
+  const target = await resolvePageWriteTarget(engine, slug, sourceId);
+  if (!target.ok) {
+    throw new Error(`write-through preflight failed (${target.skipped})`);
+  }
+  try {
+    accessSync(target.writeRoot, fsConstants.W_OK);
+    const parent = dirname(target.filePath);
+    if (existsSync(parent)) {
+      if (!statSync(parent).isDirectory()) throw new Error(`${parent} is not a directory`);
+      accessSync(parent, fsConstants.W_OK);
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`write-through preflight failed (repo_not_writable): ${detail}`);
+  }
 }
 
 /**
