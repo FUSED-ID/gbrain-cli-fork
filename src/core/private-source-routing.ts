@@ -173,6 +173,11 @@ function globMatches(pattern: string, keys: Set<string>): boolean {
   const normalized = normalizeSlugish(pattern);
   if (!normalized) return false;
   const escape = (value: string) => value.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+  // A policy entry without `*` is a prefix by default. This makes a newly
+  // named page safe without requiring every policy author to remember a
+  // trailing wildcard. Entries with `*` retain their existing anchored glob
+  // semantics.
+  if (!normalized.includes('*')) return [...keys].some((key) => key.startsWith(normalized));
   const re = new RegExp(`^${normalized.split('*').map(escape).join('.*')}$`);
   return [...keys].some((key) => re.test(key));
 }
