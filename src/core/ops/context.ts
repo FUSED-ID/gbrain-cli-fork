@@ -23,7 +23,6 @@ import type { SearchResult, HybridSearchMeta, PageReadScope, PageReadPolicy } fr
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import {
   assertPrivateRoutingArmed,
-  isAllowlistedCollision,
   isPersonishPageWrite,
   resolvePrivateWriteSource,
   shouldAssertPrivateRouting,
@@ -251,8 +250,8 @@ export function enforceClientSlugFence(ctx: OperationContext, slug: string, opNa
 
 /**
  * D1 guard for write operations that do not call putPage. The direct page
- * writers must use the same route decision, arm check, collision allowlist,
- * and remote fence as putPage before they mutate a page or its timeline.
+ * writers must use the same route decision, arm check, and remote fence as
+ * putPage before they mutate a page or its timeline.
  */
 export async function enforcePrivateWriteGuard(
   ctx: OperationContext,
@@ -271,9 +270,7 @@ export async function enforcePrivateWriteGuard(
   }
 
   const route = await resolvePrivateWriteSource(ctx.engine, input);
-  const collisionExempt = route.reason === 'existing_private_page'
-    && isAllowlistedCollision(requestedSourceId, input.slug);
-  if (!route.routed || (ctx.remote === false && collisionExempt)) return route;
+  if (!route.routed || (ctx.remote === false && route.sourceId === requestedSourceId)) return route;
 
   if (ctx.remote !== false) {
     throw new OperationError(
