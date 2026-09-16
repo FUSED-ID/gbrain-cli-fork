@@ -54,6 +54,7 @@ import { runGuardrails } from './guardrails.ts';
 import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
 import { scanFencedBlocks, MAX_FENCES_PER_PAGE } from './fence-scan.ts';
 import { resolvePrivateWriteSource } from './private-source-routing.ts';
+import { assertPageWriteThroughReady } from './write-through.ts';
 
 /**
  * v0.20.0 Cathedral II Layer 8 D2 — markdown fence extraction helper.
@@ -421,6 +422,9 @@ export async function importFromContent(
     ? requestedSourceId
     : null;
   if (route.routed) sourceId = route.sourceId;
+  if (routedFromSourceId && sourceId) {
+    await assertPageWriteThroughReady(engine, slug, sourceId);
+  }
   const reconcileRoutedMirror = async (): Promise<void> => {
     if (routedFromSourceId) {
       await engine.softDeletePage(slug, { sourceId: routedFromSourceId });

@@ -12,7 +12,7 @@ import { clampSearchLimit } from '../engine.ts';
 import type { Page, PageType } from '../types.ts';
 import { importFromContent } from '../import-file.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { writePageThrough, deletePageThrough, resolvePageWriteTarget, type WriteThroughResult } from '../write-through.ts';
+import { assertPageWriteThroughReady, writePageThrough, deletePageThrough, resolvePageWriteTarget, type WriteThroughResult } from '../write-through.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from '../link-extraction.ts';
 // #3190: pack-aware link typing on the put_page auto-link path.
 import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
@@ -402,6 +402,22 @@ const put_page: Operation = {
       );
     }
     const writeSourceId = route.sourceId;
+
+    // A routed private write must have a usable file sink before importFromContent
+    // can create or update any database rows. A missing private repo is a
+    // refusal, not a database-only write.
+    if (route.routed && writeSourceId !== (ctx.sourceId ?? 'default')) {
+      try {
+        await assertPageWriteThroughReady(ctx.engine, slug, writeSourceId);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new OperationError(
+          'storage_error',
+          `put_page: the routed page cannot be written before its file target is ready (${detail}).`,
+          'Check that the private source repo exists and is writable, then retry.',
+        );
+      }
+    }
 
     // Empty-overwrite guard: empty/whitespace-only content over an existing
     // non-empty page is almost always an input-plumbing failure (e.g. a

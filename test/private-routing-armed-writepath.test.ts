@@ -530,7 +530,7 @@ describe('private routing armed guard at the put_page write path', () => {
     await expect(putPage.handler(putContext(), {
       slug: 'people/peer-person',
       content: PERSON_CONTENT,
-    })).resolves.toBeDefined();
-    await expect(engine.getPage('people/peer-person', { sourceId: 'lg-private' })).resolves.toBeDefined();
+    })).rejects.toThrow(/storage_error|repo_not_found|preflight/i);
+    await expect(engine.getPage('people/peer-person', { sourceId: 'lg-private' })).resolves.toBeNull();
   });
 });
