@@ -297,7 +297,7 @@ describe('private queue terminal reconciliation', () => {
   });
 
   test('startup recovery never cancels a private queue whose owner job is live', async () => {
-    const owner = await queue.add('autopilot-cycle', {});
+    const owner = await queue.add('autopilot-cycle', {}, undefined, { allowProtectedSubmit: true });
     const ownerToken = nextToken();
     const claimedOwner = await queue.claim(ownerToken, 30_000, 'default', ['autopilot-cycle']);
     expect(claimedOwner?.id).toBe(owner.id);
@@ -320,7 +320,7 @@ describe('private queue terminal reconciliation', () => {
   });
 
   test('startup recovery cancels when the owner job is terminal even if the lease has not expired', async () => {
-    const owner = await queue.add('autopilot-cycle', {});
+    const owner = await queue.add('autopilot-cycle', {}, undefined, { allowProtectedSubmit: true });
     await claimAndComplete('autopilot-cycle', { ok: true });
     const privateQueue = `dream-inline-${Date.now()}-termown`;
     const child = await queue.add('private-waiting', {}, {
@@ -356,7 +356,7 @@ describe('private queue terminal reconciliation', () => {
   });
 
   test('startup recovery uses normal cancellation semantics for descendants and aggregators', async () => {
-    const owner = await queue.add('autopilot-cycle', {});
+    const owner = await queue.add('autopilot-cycle', {}, undefined, { allowProtectedSubmit: true });
     await claimAndComplete('autopilot-cycle', { ok: true });
     const aggregator = await queue.add('aggregator', {});
     const privateQueue = `dream-inline-${Date.now()}-tree001`;
@@ -399,7 +399,7 @@ describe('recovery freshness guard (fix-wave review)', () => {
     // but the drain loop survived and still renews/claims — updated_at is
     // fresh. Recovery must classify live and touch nothing; the queue becomes
     // orphaned only after 2 minutes of silence.
-    const owner = await queue.add('autopilot-cycle', {});
+    const owner = await queue.add('autopilot-cycle', {}, undefined, { allowProtectedSubmit: true });
     await claimAndComplete('autopilot-cycle', { ok: true });
     const privateQueue = `dream-inline-${Date.now()}-fresh01`;
     const child = await queue.add('private-waiting', {}, {
@@ -427,7 +427,7 @@ describe('recovery freshness guard (fix-wave review)', () => {
   });
 
   test('owner nonterminal without a lease classifies not_orphan and is skipped', async () => {
-    const owner = await queue.add('autopilot-cycle', {}); // stays waiting (non-terminal)
+    const owner = await queue.add('autopilot-cycle', {}, undefined, { allowProtectedSubmit: true }); // stays waiting (non-terminal)
     const privateQueue = `dream-inline-${Date.now()}-pend01`;
     const child = await queue.add('private-waiting', {}, {
       queue: privateQueue,
@@ -706,7 +706,7 @@ describe('private queue recovery classification + lease hardening (lane A backfi
   });
 
   test('reconcileOrphanedPrivateQueues default reason is the exact startup-recovery literal', async () => {
-    const owner = await queue.add('autopilot-cycle', {});
+    const owner = await queue.add('autopilot-cycle', {}, undefined, { allowProtectedSubmit: true });
     await claimAndComplete('autopilot-cycle', { ok: true });
     const q = `dream-inline-${Date.now()}-defreason`;
     const job = await queue.add('private-waiting', {}, {

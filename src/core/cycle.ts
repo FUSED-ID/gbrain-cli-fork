@@ -191,7 +191,7 @@ export const ALL_PHASES: CyclePhase[] = [
   // by default; LLM only when chat provider configured).
   'schema-suggest',
   // v0.26.5: hard-deletes soft-deleted pages and expired archived sources past
-  // the 72h recovery window. Runs last so the rest of the cycle sees the
+  // the caller-supplied recovery window. Runs last so the rest of the cycle sees the
   // recoverable set; the purge then drops what's expired.
   'purge',
 ];
@@ -572,6 +572,8 @@ export interface CycleOpts {
   deadlineAtMs?: number | null;
   /** Internal: minion job id that owns any phase-created private dream-inline queues. */
   privateQueueOwnerJobId?: number | null;
+  /** Explicit operator/scheduler consent and cutoff for the hard-delete phase. */
+  purgeConsent?: { olderThanHours: number };
 }
 
 // ─── Lock primitives ───────────────────────────────────────────────
@@ -1670,7 +1672,7 @@ async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean, signal?: Abor
  * v0.26.5 — purge phase. Hard-deletes:
  *  - source rows where `archived = true AND archive_expires_at <= now()`
  *    (paired with the cascade FK to `pages`, this also drops the source's pages)
- *  - page rows where `deleted_at` is older than 72h
+ *  - page rows where `deleted_at` is older than the caller-supplied cutoff
  *
  * Cascade on `pages` covers `content_chunks`, `page_links`, `chunk_relations`.
  * `dryRun` short-circuits — no DELETEs are issued.
@@ -1714,8 +1716,28 @@ async function purgeOrphanClones(staleHours: number): Promise<{ count: number; b
   return { count: removed.length, bytes, names: removed };
 }
 
-async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<PhaseResult> {
+async function runPhasePurge(
+  engine: BrainEngine,
+  dryRun: boolean,
+  purgeConsent?: CycleOpts['purgeConsent'],
+): Promise<PhaseResult> {
   try {
+    if (
+      purgeConsent === undefined ||
+      !Number.isFinite(purgeConsent.olderThanHours) ||
+      purgeConsent.olderThanHours < 0
+    ) {
+      return {
+        phase: 'purge',
+        status: 'skipped',
+        duration_ms: 0,
+        summary: 'purge skipped: explicit --yes-i-mean-it is required',
+        details: {
+          reason: 'missing_purge_consent',
+          required_flag: '--yes-i-mean-it',
+        },
+      };
+    }
     if (dryRun) {
       return {
         phase: 'purge',
@@ -1730,8 +1752,8 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     // oauth_client, v64) is reported and skipped instead of aborting the sweep.
     const purgeResult = await purgeExpiredSources(engine);
     const purgedSources = purgeResult.purged;
-    const purgedPages = await engine.purgeDeletedPages(SOFT_DELETE_TTL_HOURS_FOR_PURGE);
-    const purgedClones = await purgeOrphanClones(SOFT_DELETE_TTL_HOURS_FOR_PURGE);
+    const purgedPages = await engine.purgeDeletedPages(purgeConsent.olderThanHours);
+    const purgedClones = await purgeOrphanClones(purgeConsent.olderThanHours);
     // v0.36+ folded scope item +C: GC stale op_checkpoints rows.
     // 7-day TTL is deliberately generous; any reasonable long-running op
     // finishes inside that window. Cheap (few KB per row).
@@ -1810,10 +1832,6 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     };
   }
 }
-
-/** v0.26.5: matches SOFT_DELETE_TTL_HOURS in destructive-guard.ts. Inlined here
- *  to avoid a static import (purge phase is only loaded in the autopilot path). */
-const SOFT_DELETE_TTL_HOURS_FOR_PURGE = 72;
 
 async function runPhaseOrphans(engine: BrainEngine, sourceId?: string): Promise<PhaseResult> {
   try {
@@ -2927,7 +2945,7 @@ export async function runCycle(
 
     // ── Phase 9: purge (v0.26.5) ────────────────────────────────
     // Hard-delete soft-deleted pages and expired archived sources past the
-    // 72h recovery window. Runs last so the rest of the cycle sees the
+    // caller-supplied recovery window. Runs last so the rest of the cycle sees the
     // recoverable set; the purge then drops what's truly expired.
     if (phases.includes('purge')) {
       checkAborted(cycleSignal);
@@ -2941,7 +2959,7 @@ export async function runCycle(
         });
       } else {
         progress.start('cycle.purge');
-        const { result, duration_ms } = await timePhase(() => runPhasePurge(engine, dryRun));
+        const { result, duration_ms } = await timePhase(() => runPhasePurge(engine, dryRun, opts.purgeConsent));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -3204,4 +3222,5 @@ export function deriveStatus(phases: PhaseResult[], totals: CycleReport['totals'
 // Not part of the runtime contract.
 export const __testing = {
   deriveStatus,
+  runPhasePurge,
 };

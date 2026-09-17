@@ -21,6 +21,11 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   // through the worker. Protecting the name restores the local-only boundary
   // the operation already claimed to have.
   'purge',
+  // R4, 2026-09-17. Both autopilot jobs run ALL_PHASES, ending in purge.
+  // They are submitted by trusted in-process scheduler paths only; a remote
+  // admin token must not be able to enqueue either destructive cycle.
+  'autopilot-cycle',
+  'autopilot-global-maintenance',
   // v0.15: subagent + aggregator are protected because they call the
   // Anthropic API. MCP callers can't submit them directly; only the
   // `gbrain agent run` CLI path (which sets allowProtectedSubmit) or a

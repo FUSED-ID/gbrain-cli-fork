@@ -57,7 +57,7 @@ describe('jobs stats — Backpressure line + suppression hint wiring', () => {
     // One ACTIVE autopilot-cycle with a LIVE lock, 30 minutes in (> 15m
     // threshold), zero waiting rows — the exact post-maxPending suppression
     // shape that used to be invisible to the waiting>0 wedge detectors.
-    const job = await queue.add('autopilot-cycle', {});
+    const job = await queue.add('autopilot-cycle', {}, undefined, { allowProtectedSubmit: true });
     await engine.executeRaw(
       `UPDATE minion_jobs SET status = 'active', lock_token = 'live-worker',
               lock_until = now() + interval '5 minutes',

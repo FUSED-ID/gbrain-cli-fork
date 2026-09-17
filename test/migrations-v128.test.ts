@@ -115,7 +115,7 @@ describe('migration v128 — backfill + cleanup semantics (PGLite)', () => {
     // timeout_at must STAY NULL (Codex C7 — no 1x kill armed mid-flight).
     const legacyActive = await queue.add('autopilot-cycle', { source_id: 'src-active' }, {
       idempotency_key: 'autopilot-cycle:src-active:slot-0',
-    });
+    }, { allowProtectedSubmit: true });
     await forceRow(legacyActive.id,
       `timeout_ms = NULL, timeout_at = NULL, status = 'active',
        lock_token = 'legacy-worker', lock_until = now() + interval '30 seconds',
@@ -134,32 +134,32 @@ describe('migration v128 — backfill + cleanup semantics (PGLite)', () => {
     // newest must survive, older two cancelled.
     const dupOld = await queue.add('autopilot-cycle', { source_id: 'src-dup' }, {
       idempotency_key: 'autopilot-cycle:src-dup:slot-1',
-    });
+    }, { allowProtectedSubmit: true });
     await forceRow(dupOld.id, `timeout_ms = NULL, created_at = now() - interval '3 hours'`);
     const dupMid = await queue.add('autopilot-cycle', { source_id: 'src-dup' }, {
       idempotency_key: 'autopilot-cycle:src-dup:slot-2',
-    });
+    }, { allowProtectedSubmit: true });
     await forceRow(dupMid.id, `timeout_ms = NULL, created_at = now() - interval '2 hours'`);
     const dupNew = await queue.add('autopilot-cycle', { source_id: 'src-dup' }, {
       idempotency_key: 'autopilot-cycle:src-dup:slot-3',
-    });
+    }, { allowProtectedSubmit: true });
     await forceRow(dupNew.id, `timeout_ms = NULL, created_at = now() - interval '1 hour'`);
     // A DIFFERENT source keeps its own newest row (scope isolation).
     const otherSrc = await queue.add('autopilot-cycle', { source_id: 'src-other' }, {
       idempotency_key: 'autopilot-cycle:src-other:slot-1',
-    });
+    }, { allowProtectedSubmit: true });
     await forceRow(otherSrc.id, `created_at = now() - interval '4 hours'`);
     // Global maintenance duplicates (NULL source scope) dedupe independently.
     const globalOld = await queue.add('autopilot-global-maintenance', {}, {
       idempotency_key: 'autopilot-global:slot-1',
-    });
+    }, { allowProtectedSubmit: true });
     await forceRow(globalOld.id, `created_at = now() - interval '2 hours'`);
     const globalNew = await queue.add('autopilot-global-maintenance', {}, {
       idempotency_key: 'autopilot-global:slot-2',
-    });
+    }, { allowProtectedSubmit: true });
     // Manual submission: same name + source as the dup scope, custom phases,
     // NO ticker key — must never be touched (Codex C5).
-    const manual = await queue.add('autopilot-cycle', { source_id: 'src-dup', phases: ['sync'] });
+    const manual = await queue.add('autopilot-cycle', { source_id: 'src-dup', phases: ['sync'] }, undefined, { allowProtectedSubmit: true });
     await forceRow(manual.id, `created_at = now() - interval '5 hours'`);
     // Ticker-mimicking key but camelCase sourceId payload: the ticker never
     // writes sourceId, so this row is not ticker-provenance — the cleanup's
@@ -168,14 +168,14 @@ describe('migration v128 — backfill + cleanup semantics (PGLite)', () => {
     // sourceId scopes would collapse into the empty source_id group).
     const camelMimic = await queue.add('autopilot-cycle', { sourceId: 'camel-src' }, {
       idempotency_key: 'autopilot-cycle:camel-mimic:slot-1',
-    });
+    }, { allowProtectedSubmit: true });
     await forceRow(camelMimic.id, `created_at = now() - interval '7 hours'`);
     // Parented row with a ticker-looking key: guarded by parent_job_id IS NULL.
     // Parent is seeded by direct UPDATE — add()'s parent_job_id opt would flip
     // the parent row to 'waiting-children' and pollute the dup-scope fixtures.
     const parented = await queue.add('autopilot-cycle', { source_id: 'src-dup' }, {
       idempotency_key: 'autopilot-cycle:src-dup:slot-child',
-    });
+    }, { allowProtectedSubmit: true });
     await forceRow(parented.id,
       `created_at = now() - interval '6 hours', parent_job_id = $1`, [dupNew.id]);
 

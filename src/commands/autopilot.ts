@@ -46,6 +46,7 @@ import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { inspectLock } from '../core/db-lock.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
 import { loadAllSources, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning, relativeSourceLocalPathSkipWarning } from '../core/sources-load.ts';
+import { SOFT_DELETE_TTL_HOURS } from '../core/destructive-guard.ts';
 import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 import {
   autopilotRemediationIdempotencyKey,
@@ -1487,6 +1488,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           // for cron safety; that choice is scoped to dream only.
           pull: true,
           signal: shutdownAbort.signal,
+          purgeConsent: { olderThanHours: SOFT_DELETE_TTL_HOURS },
           yieldBetweenPhases: async () => {
             await new Promise(r => setImmediate(r));
           },

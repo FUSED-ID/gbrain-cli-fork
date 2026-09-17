@@ -29,7 +29,13 @@ describe('R4 fourth route — the purge job is remote-submittable', () => {
   });
 
   test('the names that were already protected stay protected', () => {
-    for (const name of ['shell', 'subagent', 'subagent_aggregator']) {
+    for (const name of [
+      'shell',
+      'subagent',
+      'subagent_aggregator',
+      'autopilot-cycle',
+      'autopilot-global-maintenance',
+    ]) {
       expect(PROTECTED_JOB_NAMES.has(name)).toBe(true);
     }
   });

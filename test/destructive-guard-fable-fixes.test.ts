@@ -4,6 +4,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { DestructiveConsentError, requireDestructiveConsent } from '../src/core/destructive-guard.ts';
+import { __testing as cycleTesting } from '../src/core/cycle.ts';
 
 function consentFor(args: string[]) {
   return () => requireDestructiveConsent({
@@ -65,5 +66,54 @@ describe('Fable #6 — the corrected-command suggestion', () => {
       expect(message).toContain('migrate embeddings');
       expect((error as DestructiveConsentError).exitCode).toBe(2);
     }
+  });
+
+  test('a dry-run-capable refusal suggests the safe probe first', () => {
+    try {
+      requireDestructiveConsent({
+        command: 'sources remove',
+        scopeFlags: [],
+        positionalScope: { name: 'id', required: true },
+        args: ['source-a'],
+        consentFlags: ['--yes', '--confirm-destructive'],
+        allowDryRun: true,
+      });
+      throw new Error('expected a refusal');
+    } catch (error) {
+      expect(error).toBeInstanceOf(DestructiveConsentError);
+      const consentError = error as DestructiveConsentError;
+      expect(consentError.correctedCommand).toBe('gbrain sources remove source-a --dry-run');
+      expect(consentError.correctedCommand).not.toContain('--yes-i-mean-it');
+    }
+  });
+});
+
+describe('R4 cycle purge consent', () => {
+  test('bare dream-shaped purge skips before touching the delete arm', async () => {
+    let deleteCalls = 0;
+    const engine = {
+      purgeDeletedPages: async () => {
+        deleteCalls++;
+        return { count: 0, slugs: [], pages: [] };
+      },
+    } as never;
+    const result = await cycleTesting.runPhasePurge(engine, false);
+    expect(result.status).toBe('skipped');
+    expect(result.summary).toContain('--yes-i-mean-it');
+    expect(deleteCalls).toBe(0);
+  });
+
+  test('autopilot-shaped purge accepts an explicit cutoff and reaches the stub delete arm', async () => {
+    const hours: number[] = [];
+    const engine = {
+      executeRaw: async () => [],
+      purgeDeletedPages: async (cutoff: number) => {
+        hours.push(cutoff);
+        return { count: 0, slugs: [], pages: [] };
+      },
+    } as never;
+    const result = await cycleTesting.runPhasePurge(engine, false, { olderThanHours: 72 });
+    expect(result.status).toBe('ok');
+    expect(hours).toEqual([72]);
   });
 });
