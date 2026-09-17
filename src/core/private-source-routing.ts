@@ -103,6 +103,32 @@ function loadCollisionAllowlist(): Set<string> {
  * Rule (b) in resolvePrivateWriteSource consults this exact-slug allowlist
  * after the private page lookup. It is never used for rule (a), the family
  * deny-list, or by a caller after resolution.
+ *
+ * R1, 2026-09-17. THE TWO MATCHERS AGREE ON EXACT, AND THAT IS DELIBERATE.
+ * DO NOT "ALIGN" THIS TO A PREFIX MATCH.
+ *
+ * The register carried this as an asymmetry defect: rule (a) prefix-matches
+ * while this exact-matches, with the predicted consequence that
+ * `person/lgv-2026` would land in lg-private unexpectedly. Measured on
+ * 14d3b8759 (test/r1r3-matcher-alignment.test.ts), that consequence is FALSE:
+ * `person/lgv-2026` and `person/lgv-suffix` both resolve to `default`,
+ * routed:false.
+ *
+ * They never collide, because they operate on different things:
+ *   - Rule (a) prefix-matches deny-list PATTERNS from _excluded-people.md, and
+ *     runs FIRST. An allowlist row can never exempt a deny-list refusal.
+ *   - Rule (b) fires on an EXACT candidate-key hit against a live private page
+ *     (engine.getPage per key). There is no prefix behaviour on that side for
+ *     this allowlist to be asymmetric with.
+ *
+ * So the alignment is: both arms that an allowlist row can touch are exact.
+ * Widening this to a prefix match is the one direction that leaks:
+ * `collision|person/lgv` would then exempt `person/lgv-2026`,
+ * `person/lgv-medical`, and every future suffix from rule (b), silently
+ * publishing to the world-visible source pages nobody allowlisted. The
+ * deny-list prefix-matches because broad is safe there; the allowlist
+ * exact-matches because broad is a leak here. Every asymmetry in this file
+ * resolves toward privacy, and that is the invariant, not flag symmetry.
  */
 export function isAllowlistedCollision(requestedSourceId: string, slug: string): boolean {
   if (requestedSourceId !== DEFAULT_SOURCE_ID) return false;
@@ -121,6 +147,37 @@ function normalizeSlugish(value: string): string {
 }
 
 function normalizeName(value: string): string { return normalizeSlugish(value).replace(/\*/g, ''); }
+
+/**
+ * R3, 2026-09-17. A deny-list Name cell can hold MORE THAN ONE name.
+ * `G. Pavlov / Kuna Family` is one table cell naming two parties, and
+ * normalizeName collapsed it to the single key `g-pavlov-kuna-family`, so a
+ * page about either party on its own matched NOTHING. Measured before the fix:
+ * `person/g-pavlov` and `person/kuna-family` both resolved to `default`.
+ *
+ * Split on `/` and key each part independently, keeping the whole-cell key too
+ * so the combined form keeps matching. The separator is only ever a separator
+ * HERE: a Name cell is prose, never a path, so there is no slug to damage. Slug
+ * patterns are deliberately NOT split, because `/` is a real path separator
+ * there.
+ *
+ * Fixed in the parser rather than by splitting the row in _excluded-people.md,
+ * because that file is content-hashed into sources.config.private_routing and
+ * any edit to it trips policyContentMismatch and fail-closes the estate until
+ * every node is re-provisioned. A parser fix needs no re-provision.
+ */
+function excludedNameKeys(name: string): string[] {
+  const keys = new Set<string>();
+  const whole = normalizeName(name);
+  if (whole) keys.add(whole);
+  for (const part of name.split('/')) {
+    const n = normalizeName(part);
+    // Guard against a stray separator producing a 1-2 character key that would
+    // sweep in unrelated pages. A real name part is longer than that.
+    if (n && n.length > 2) keys.add(n);
+  }
+  return [...keys];
+}
 function stripAuthorSuffix(slug: string): string { return slug.replace(/\/_author$/, ''); }
 
 function candidateKeys(input: PrivateWriteRouteInput): Set<string> {
@@ -276,7 +333,8 @@ function matchesExcludedPeople(source: SourceRow, input: PrivateWriteRouteInput)
     entries = parseExcludedPeople(documents.excludedPeople);
   } catch { return false; }
   const keys = candidateKeys(input);
-  return entries.some((entry) => globMatches(entry.slugPattern, keys) || keys.has(normalizeName(entry.name)));
+  return entries.some((entry) => globMatches(entry.slugPattern, keys)
+    || excludedNameKeys(entry.name).some((nameKey) => keys.has(nameKey)));
 }
 
 export async function resolvePrivateWriteSource(
