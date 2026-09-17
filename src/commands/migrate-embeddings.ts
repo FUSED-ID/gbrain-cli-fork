@@ -30,6 +30,7 @@ import { embedBackfillLockId, EMBED_BACKFILL_LOCK_TTL_MIN } from '../core/embed-
 import { PGVECTOR_HNSW_VECTOR_MAX_DIMS } from '../core/vector-index.ts';
 import { redactPgUrl } from '../core/url-redact.ts';
 import { parsePaceArgs, runEmbedCore, type EmbedResult } from './embed.ts';
+import { DESTRUCTIVE_HELP_REQUESTED, DestructiveConsentError, requireDestructiveConsent } from '../core/destructive-guard.ts';
 
 /**
  * Brain-wide migration lock (round-2 #4): serializes whole migrations so two
@@ -66,7 +67,7 @@ export function parseMigrateEmbeddingsFlags(args: string[]): MigrateEmbeddingsFl
   return {
     to: toIdx >= 0 ? args[toIdx + 1] : undefined,
     dim: Number.isFinite(dimRaw) && dimRaw > 0 ? dimRaw : undefined,
-    yes: args.includes('--yes') || args.includes('--non-interactive'),
+    yes: args.includes('--yes') || args.includes('--non-interactive') || args.includes('--yes-i-mean-it'),
     dryRun: args.includes('--dry-run'),
     json: args.includes('--json'),
     noEmbed: args.includes('--no-embed'),
@@ -747,9 +748,17 @@ export async function runMigrateEmbeddings(
   // Explicit `never` annotation so TS control-flow analysis treats every
   // exit() call as terminal (required for narrowing after the guard blocks).
   const exit: (code: number) => never = opts.exit ?? ((code: number) => process.exit(code));
-  if (args.includes('--help') || args.includes('-h')) {
-    printHelp();
-    exit(0);
+  if (args.includes('--help') || args.includes('-h') || args.includes('help')) {
+    const consent = requireDestructiveConsent({
+      command: 'migrate embeddings',
+      scopeFlags: [],
+      args,
+      usage: `Usage: gbrain migrate embeddings --to <provider:model> [flags]
+
+Run gbrain migrate embeddings --help for the complete flag list.`,
+      enforceConsent: false,
+    });
+    if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
   }
   const flags = parseMigrateEmbeddingsFlags(args);
 
@@ -837,6 +846,31 @@ export async function runMigrateEmbeddings(
     }
     exit(0);
   }
+
+  let consent;
+  try {
+    consent = requireDestructiveConsent({
+      command: 'migrate embeddings',
+      scopeFlags: ['--to'],
+      valueFlags: ['--dim', '--reranker', '--batch-size'],
+      args,
+      usage: `Usage: gbrain migrate embeddings --to <provider:model> [flags]
+
+Re-embed the whole brain. --dry-run plans without changing it; executing requires
+--yes (the existing confirmation) or --yes-i-mean-it.`,
+      allowedFlags: ['--dry-run', '--json', '--no-embed', '--ignore-env-override', '--force-sunset-target', '--retarget', '--pace'],
+      allowedPrefixes: ['--pace'],
+      consentFlags: ['--yes', '--non-interactive'],
+      allowDryRun: true,
+    });
+  } catch (error) {
+    if (error instanceof DestructiveConsentError) {
+      serr(error.message);
+      exit(error.exitCode);
+    }
+    throw error;
+  }
+  if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
 
   if (!flags.to) {
     serr('Missing --to <provider:model>. Example: gbrain migrate embeddings --to openai:text-embedding-3-small');

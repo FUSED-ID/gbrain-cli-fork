@@ -304,7 +304,7 @@ describe('sources remove', () => {
     expect(code).toBe(3);
   });
 
-  test('refuses without --yes', async () => {
+  test('refuses without explicit consent', async () => {
     const { engine } = makeStub({
       'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [
         { id: 'gstack', name: 'gstack', local_path: '/tmp/g', last_commit: null, last_sync_at: null, config: '{}', created_at: new Date() },
@@ -312,7 +312,7 @@ describe('sources remove', () => {
       'COUNT(*)::int AS n FROM pages': [{ n: 10 }],
     });
     const code = await withExitCapture(() => runSources(engine, ['remove', 'gstack']));
-    expect(code).toBe(5);
+    expect(code).toBe(2);
   });
 
   test('--dry-run reports but does not DELETE', async () => {

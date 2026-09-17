@@ -42,6 +42,9 @@ import {
   formatSoftDelete,
   clientsReferencingSource,
   formatClientReferentsBlock,
+  DESTRUCTIVE_HELP_REQUESTED,
+  DestructiveConsentError,
+  requireDestructiveConsent,
   SOFT_DELETE_TTL_HOURS,
 } from '../core/destructive-guard.ts';
 import {
@@ -814,6 +817,27 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
 // ── Subcommand: remove ──────────────────────────────────────
 
 async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
+  let consent;
+  try {
+    consent = requireDestructiveConsent({
+    command: 'sources remove',
+    scopeFlags: [],
+    positionalScope: { name: 'id', required: true },
+    args,
+    usage: 'Usage: gbrain sources remove <id> [--yes] [--confirm-destructive] [--dry-run] [--keep-storage]',
+    allowedFlags: ['--keep-storage'],
+    consentFlags: ['--yes', '--confirm-destructive'],
+    allowDryRun: true,
+    });
+  } catch (error) {
+    if (error instanceof DestructiveConsentError) {
+      console.error(error.message);
+      process.exit(error.exitCode);
+    }
+    throw error;
+  }
+  if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+
   const id = args[0];
   if (!id) {
     console.error('Usage: gbrain sources remove <id> [--yes] [--confirm-destructive] [--dry-run] [--keep-storage]');
@@ -821,7 +845,7 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   }
   const yes = args.includes('--yes');
   const dryRun = args.includes('--dry-run');
-  const confirmDestructive = args.includes('--confirm-destructive');
+  const confirmDestructive = args.includes('--confirm-destructive') || args.includes('--yes-i-mean-it');
   const _keepStorage = args.includes('--keep-storage');
   void _keepStorage;
 
@@ -1074,8 +1098,27 @@ async function runRestore(engine: BrainEngine, args: string[]): Promise<void> {
 // ── Subcommand: purge ───────────────────────────────────────
 
 async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
-  const id = args[0];
-  const confirmDestructive = args.includes('--confirm-destructive');
+  const id = args[0] && !args[0].startsWith('-') ? args[0] : undefined;
+  let consent;
+  try {
+    consent = requireDestructiveConsent({
+    command: 'sources purge',
+    scopeFlags: id ? [] : ['--scope'],
+    positionalScope: id ? { name: 'id', required: true } : undefined,
+    args,
+    usage: 'Usage: gbrain sources purge <id> --confirm-destructive | --scope expired --confirm-destructive',
+    consentFlags: ['--confirm-destructive'],
+    });
+  } catch (error) {
+    if (error instanceof DestructiveConsentError) {
+      console.error(error.message);
+      process.exit(error.exitCode);
+    }
+    throw error;
+  }
+  if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+
+  const confirmDestructive = args.includes('--confirm-destructive') || args.includes('--yes-i-mean-it');
 
   if (id) {
     // Purge a specific source (must be archived)
@@ -1105,7 +1148,11 @@ async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
     return;
   }
 
-  // No id: purge all expired archives
+  if (args[0] !== '--scope' || args[1] !== 'expired') {
+    throw new Error('gbrain sources purge: --scope must be "expired" when no source id is given.\nCorrected command: gbrain sources purge --scope expired --confirm-destructive');
+  }
+
+  // No id: purge all expired archives, but only with an explicit scope.
   const { purged, blocked } = await purgeExpiredSources(engine);
   if (purged.length === 0 && blocked.length === 0) {
     console.log('No expired archives to purge.');
@@ -1984,9 +2031,9 @@ Subcommands:
                                     --json emits {schema_version:1, ...} on
                                     stdout for monitoring pipelines.
   archived [--json]                 List soft-deleted sources and their expiry.
-  purge [<id>] [--confirm-destructive]
+  purge <id> --confirm-destructive | --scope expired --confirm-destructive
                                     Permanently delete archived sources.
-                                    Without <id>: purge all expired archives.
+                                    --scope expired purges all expired archives.
                                     With <id>: force-purge (requires --confirm-destructive).
   rename <id> <new-name>            Rename display name (id is immutable).
   default <id>                      Set the brain-level default source.

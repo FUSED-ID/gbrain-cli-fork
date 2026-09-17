@@ -23,6 +23,7 @@ import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-gua
 import { existsSync, statSync, rmSync } from 'fs';
 import { dirname } from 'path';
 import { loadConfig, loadConfigFileOnly, gbrainPath } from '../core/config.ts';
+import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent } from '../core/destructive-guard.ts';
 
 interface ReinitOpts {
   embeddingModel: string;
@@ -34,7 +35,28 @@ interface ReinitOpts {
 }
 
 export async function runReinitPglite(args: string[]): Promise<void> {
+  if (args.includes('--help') || args.includes('-h') || args.includes('help')) {
+    const help = requireDestructiveConsent({
+      command: 'reinit-pglite',
+      scopeFlags: [],
+      args,
+      usage: 'Usage: gbrain reinit-pglite [--embedding-model <provider:model>] [--embedding-dimensions <N>] [--path <dir>] [--yes]',
+      enforceConsent: false,
+    });
+    if (help === DESTRUCTIVE_HELP_REQUESTED) return;
+  }
+
   const opts = parseArgs(args);
+  const consent = requireDestructiveConsent({
+    command: 'reinit-pglite',
+    scopeFlags: [],
+    valueFlags: ['--embedding-model', '--embedding-dimensions', '--path'],
+    args,
+    usage: 'Usage: gbrain reinit-pglite [--embedding-model <provider:model>] [--embedding-dimensions <N>] [--path <dir>] [--yes]',
+    allowedFlags: ['--json', '--no-sync'],
+    consentFlags: ['--yes', '-y'],
+  });
+  if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
 
   // Confirm we're on PGLite. Refusing on Postgres because the SQL recipe
   // works there and migrating data is non-destructive — wipe-and-reinit
@@ -213,7 +235,7 @@ function parseArgs(args: string[]): ReinitOpts {
     process.exit(0);
   }
 
-  const yes = args.includes('--yes') || args.includes('-y');
+  const yes = args.includes('--yes') || args.includes('-y') || args.includes('--yes-i-mean-it');
   const jsonOutput = args.includes('--json');
   const noSync = args.includes('--no-sync');
 
