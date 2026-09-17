@@ -3961,7 +3961,7 @@ JOBS (Minions)
   jobs get <id> [--json]              Job details + history
   jobs cancel <id>                    Cancel job
   jobs retry <id>                     Re-queue failed/dead job
-  jobs prune [--older-than 30d]       Clean old jobs
+  jobs prune --older-than Nd          Clean old jobs
   jobs stats [--json]                 Job health dashboard
   jobs watch [--follow]               Live queue dashboard
   jobs work [--queue Q]               Start worker daemon (Postgres only)

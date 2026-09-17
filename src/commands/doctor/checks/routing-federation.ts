@@ -189,7 +189,7 @@ export async function checkOauthConfidentialHealth(engine: BrainEngine): Promise
         message:
           `${broken.length} confidential OAuth client(s) have NULL/empty secret hash: ${broken.map(b => b.client_id).slice(0, 5).join(', ')}` +
           (broken.length > 5 ? ` (+${broken.length - 5} more)` : '') +
-          `. Fix: \`gbrain auth revoke-client <id> && gbrain auth register-client …\` for each, OR \`gbrain upgrade\` if pre-v0.37.7.0.`,
+          `. Fix: \`gbrain auth revoke-client <id> --yes-i-mean-it && gbrain auth register-client …\` for each, OR \`gbrain upgrade\` if pre-v0.37.7.0.`,
       };
     }
     return {

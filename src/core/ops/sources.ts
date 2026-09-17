@@ -192,7 +192,7 @@ const sources_list: Operation = {
 const sources_remove: Operation = {
   name: 'sources_remove',
   description:
-    'Hard-remove a source (cascades pages/chunks/embeddings). Refuses to ' +
+    'Hard-remove a source (cascades pages/facts/chunks/embeddings). Refuses to ' +
     'delete the auto-managed clone dir unless its resolved path is confined ' +
     'under $GBRAIN_HOME/clones/ (realpath+lstat — symlink-safe). For most ' +
     'workflows prefer the soft-delete path (`gbrain sources archive`). ' +
@@ -206,7 +206,7 @@ const sources_remove: Operation = {
     confirm_destructive: {
       type: 'boolean',
       description:
-        'Required when the source has data (pages, chunks). Without it the op refuses.',
+        'Required when the source has data (pages, facts, or chunks). Without it the op refuses.',
     },
     dry_run: { type: 'boolean', description: 'Preview impact without side effects.' },
     keep_storage: {
@@ -216,6 +216,8 @@ const sources_remove: Operation = {
   },
   mutating: true,
   scope: 'sources_admin',
+  // This remains remotely reachable because the thin-client source-management
+  // workflow calls it. The handler itself requires confirmation for any data.
   handler: async (ctx, p) => {
     // Source isolation on the DESTRUCTIVE path keys on WRITE authority (O4-1;
     // supersedes the #4433 wave-L read-ladder check that let a federated read

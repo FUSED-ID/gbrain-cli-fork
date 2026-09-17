@@ -4,7 +4,7 @@
  * Two thin-client convenience commands that round-trip through the host's
  * HTTP MCP endpoint:
  *
- *   - `gbrain remote ping`  : submit_job(autopilot-cycle) → poll get_job →
+ *   - `gbrain remote ping`  : submit_job(remote-autopilot-cycle) → poll get_job →
  *                             exit when terminal. The "I just wrote markdown,
  *                             tell the host to re-index" affordance.
  *   - `gbrain remote doctor`: run_doctor MCP op → render the host's
@@ -114,7 +114,7 @@ async function runRemotePing(config: NonNullable<ReturnType<typeof loadConfig>>,
   let submitted: { id: number; name: string; status: string };
   try {
     const res = await callRemoteTool(config, 'submit_job', {
-      name: 'autopilot-cycle',
+      name: 'remote-autopilot-cycle',
       data: { phases: ['sync', 'extract', 'embed'] },
     });
     submitted = unpackToolResult<{ id: number; name: string; status: string }>(res);
