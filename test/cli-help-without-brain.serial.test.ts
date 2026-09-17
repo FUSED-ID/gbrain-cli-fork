@@ -38,6 +38,13 @@ const HELP_WITHOUT_BRAIN = [
   // ZE interim cleanup: the retired ze-switch shim answers --help engine-free
   // (truthful sunset copy + the canonical migration command).
   'ze-switch',
+  // R4, 2026-09-17. Moved up from STILL_NEEDS_A_BRAIN. `pages` was in
+  // CLI_ONLY_SELF_HELP but not SELF_HELP_WITHOUT_ENGINE, so
+  // `gbrain pages purge-deleted --help` connected the engine and applied
+  // pending migrations before reaching the consent guard. runPages answers
+  // --help without touching `engine`, so it belongs here. Help on the command
+  // that hard-deleted 2,582 pages must have no side effects at all.
+  'pages',
 ];
 
 /**
@@ -53,7 +60,6 @@ const STILL_NEEDS_A_BRAIN = [
   'embed',
   'lsd',
   'migrate',
-  'pages',
   'retrieval-upgrade',
 ];
 
