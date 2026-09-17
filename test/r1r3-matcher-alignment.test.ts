@@ -11,12 +11,23 @@
  *     This file measures what each arm actually does rather than restating the
  *     register's claim.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { isAllowlistedCollision, resolvePrivateWriteSource } from '../src/core/private-source-routing.ts';
+
+let originalAllowlistPath: string | undefined;
+
+beforeAll(() => {
+  originalAllowlistPath = process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH;
+});
+
+afterAll(() => {
+  if (originalAllowlistPath === undefined) delete process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH;
+  else process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH = originalAllowlistPath;
+});
 
 /** The real Name cell, slash and all. This is the point of the fixture. */
 function policyDir(): string {
