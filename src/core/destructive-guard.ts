@@ -184,7 +184,13 @@ export function requireDestructiveConsent(c: DestructiveConsent): DestructiveCon
       // everything before the first `=`, so a prefix entry covers its whole
       // flag family in either spelling.
       const argName = arg.includes('=') ? arg.slice(0, arg.indexOf('=')) : arg;
-      const prefixAllowed = c.allowedPrefixes?.some((prefix) => argName.startsWith(prefix)) ?? false;
+      // Boundary-anchored: '--pace' admits '--pace' and '--pace-max-concurrency'
+      // but NOT '--pacex' or '--paces'. A bare startsWith would weaken the
+      // guard's own contract (reject unrecognised arguments) to admit any
+      // spelling sharing the first six characters.
+      const prefixAllowed = c.allowedPrefixes?.some(
+        (prefix) => argName === prefix || argName.startsWith(prefix + '-'),
+      ) ?? false;
       if (!allowed.has(arg) && !prefixAllowed) {
         const line = correctedCommand(c, c.args.filter((a) => a !== arg), false, false);
         throw new DestructiveConsentError(c.command, `a recognized argument instead of ${arg}`, line);
