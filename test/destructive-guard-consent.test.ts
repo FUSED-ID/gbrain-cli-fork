@@ -10,6 +10,7 @@ import { runReinitPglite } from '../src/commands/reinit-pglite.ts';
 import { runAuth } from '../src/commands/auth.ts';
 import { runForget } from '../src/commands/recall.ts';
 import { DestructiveConsentError } from '../src/core/destructive-guard.ts';
+import { requireDestructiveConsent } from '../src/core/destructive-guard.ts';
 
 type PurgeCall = { hours: number; opts?: unknown };
 
@@ -191,5 +192,16 @@ describe('wrapped destructive subcommand help', () => {
   test('forget help never expires a fact', async () => {
     const output = await captureLogs(() => runForget(noTouchEngine, ['help']));
     expect(output).toContain('Usage: gbrain forget');
+  });
+
+  test('forget accepts a fact id without destructive consent', () => {
+    expect(() => requireDestructiveConsent({
+      command: 'forget',
+      scopeFlags: [],
+      positionalScope: { name: 'fact-id', required: true },
+      valueFlags: ['--reason'],
+      args: ['42'],
+      enforceConsent: false,
+    })).not.toThrow();
   });
 });

@@ -27,7 +27,7 @@ import { loadConfig, loadConfigWithEngine, isThinClient } from '../core/config.t
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { parseNiceValue, applyNiceness, getEffectiveNiceness, formatNice } from '../core/minions/niceness.ts';
 import { defaultTimeoutMsFor, defaultLockDurationMsFor, clampLockDurationMs } from '../core/minions/handler-timeouts.ts';
-import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent } from '../core/destructive-guard.ts';
+import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent, SOFT_DELETE_TTL_HOURS } from '../core/destructive-guard.ts';
 
 function parseFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -2781,6 +2781,7 @@ export async function registerBuiltinHandlers(
       signal: job.signal, // propagate abort so cycle bails on timeout/cancel
       deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
       privateQueueOwnerJobId: job.id,
+      purgeConsent: { olderThanHours: SOFT_DELETE_TTL_HOURS },
       ...(sourceId ? { sourceId } : {}),
       ...(effectivePhases !== undefined ? { phases: effectivePhases as any } : {}),
       yieldBetweenPhases: async () => {
@@ -2833,6 +2834,7 @@ export async function registerBuiltinHandlers(
       // owner-less and recovery would degrade to lease-expiry only.
       privateQueueOwnerJobId: job.id,
       phases,
+      purgeConsent: { olderThanHours: SOFT_DELETE_TTL_HOURS },
       forceGlobalOrphans: true,
       yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
     });

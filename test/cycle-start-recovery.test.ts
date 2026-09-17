@@ -50,7 +50,7 @@ beforeEach(async () => {
  */
 async function seedOrphanQueue(): Promise<{ queueName: string; childId: number }> {
   const queueName = `dream-inline-cycle-recovery-${++queueSeq}`;
-  const owner = await queue.add('autopilot-cycle', {});
+  const owner = await queue.add('autopilot-cycle', {}, undefined, { allowProtectedSubmit: true });
   await engine.executeRaw(
     `UPDATE minion_jobs SET status = 'completed', finished_at = now() WHERE id = $1`,
     [owner.id],
