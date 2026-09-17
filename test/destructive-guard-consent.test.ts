@@ -36,14 +36,32 @@ async function expectRefusal(run: () => Promise<unknown>, missing: string): Prom
   }
 }
 
+/**
+ * Captures BOTH streams. The first cut captured console.log only, which made
+ * this helper agree with a two-line stub that the guard printed to stdout and
+ * disagree with the command's REAL printHelp(), which writes to stderr. A help
+ * assertion that only sees stdout silently stops testing help the moment the
+ * real help is restored, which is exactly what happened on 2026-09-17.
+ */
 async function captureLogs(run: () => Promise<unknown>): Promise<string> {
-  const original = console.log;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalOut = process.stdout.write.bind(process.stdout);
+  const originalErrWrite = process.stderr.write.bind(process.stderr);
   const lines: string[] = [];
-  console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+  const push = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+  const write = ((chunk: unknown) => { lines.push(String(chunk)); return true; }) as typeof process.stdout.write;
+  console.log = push;
+  console.error = push;
+  process.stdout.write = write;
+  process.stderr.write = write;
   try {
     await run();
   } finally {
-    console.log = original;
+    console.log = originalLog;
+    console.error = originalError;
+    process.stdout.write = originalOut;
+    process.stderr.write = originalErrWrite;
   }
   return lines.join('\n');
 }
@@ -115,6 +133,23 @@ describe('wrapped destructive subcommand help', () => {
   test('migrate embeddings help never reaches planning', async () => {
     const output = await captureLogs(() => runMigrateEmbeddings(noTouchEngine, ['help']));
     expect(output).toContain('Usage: gbrain migrate embeddings');
+    // It must be the REAL help, not the guard's two-line stub. The stub said
+    // "Run gbrain migrate embeddings --help for the complete flag list", so
+    // --help told you to run --help. Pin a flag only the real help documents,
+    // and pin the stub's self-referential sentence as forbidden.
+    expect(output).toContain('--status');
+    expect(output).toContain('--reranker');
+    expect(output).not.toContain('for the complete flag list');
+  });
+
+  test('reinit-pglite help prints the real help, warning included', async () => {
+    const { runReinitPglite } = await import('../src/commands/reinit-pglite.ts');
+    const output = await captureLogs(() => runReinitPglite(['--help']));
+    expect(output).toContain('Usage: gbrain reinit-pglite');
+    // The destructive-action warning lives in the real printHelp, and cli.ts
+    // requires that it reach the reader.
+    expect(output).toContain('Wipe the PGLite brain');
+    expect(output).toContain('--embedding-dimensions');
   });
 
   test('migrate --help never reaches migration setup', async () => {

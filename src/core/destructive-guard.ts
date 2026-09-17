@@ -177,7 +177,16 @@ export function requireDestructiveConsent(c: DestructiveConsent): DestructiveCon
       continue;
     }
     if (arg.startsWith('-')) {
-      const prefixAllowed = c.allowedPrefixes?.some((prefix) => arg.startsWith(prefix + '=')) ?? false;
+      // R4, 2026-09-17. This used to require `prefix + '='`, so an
+      // allowedPrefixes entry of '--pace' permitted `--pace=balanced` but
+      // REFUSED `--pace-max-concurrency=2`, a flag migrate embeddings actually
+      // consumes (parsePaceArgs in commands/embed.ts accepts both the `=` and
+      // the space-separated form). A guard that rejects a working invocation
+      // is a regression, not a protection. Match on the flag NAME, which is
+      // everything before the first `=`, so a prefix entry covers its whole
+      // flag family in either spelling.
+      const argName = arg.includes('=') ? arg.slice(0, arg.indexOf('=')) : arg;
+      const prefixAllowed = c.allowedPrefixes?.some((prefix) => argName.startsWith(prefix)) ?? false;
       if (!allowed.has(arg) && !prefixAllowed) {
         const line = correctedCommand(c, c.args.filter((a) => a !== arg), false, false);
         throw new DestructiveConsentError(c.command, `a recognized argument instead of ${arg}`, line);
