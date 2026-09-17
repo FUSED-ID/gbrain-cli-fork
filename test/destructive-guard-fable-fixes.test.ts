@@ -40,6 +40,18 @@ describe('Fable #3 — the --pace flag family must not be refused', () => {
     // '--pace' must not admit '--p' or '--purge-everything'.
     expect(consentFor(['--to', 'voyage:voyage-4', '--yes', '--purge-everything'])).toThrow(DestructiveConsentError);
   });
+
+  test('prefix matching is boundary-anchored, not a bare startsWith', () => {
+    // Fable's note on the delta: a bare startsWith would let '--pace' admit any
+    // spelling sharing its first six characters, all of which parsePaceArgs
+    // silently ignores. Only the flag itself and its `-`-separated family pass.
+    for (const bad of ['--pacex', '--paces=1', '--pacemaker', '--pace_max_concurrency=2']) {
+      expect(consentFor(['--to', 'voyage:voyage-4', '--yes', bad])).toThrow(DestructiveConsentError);
+    }
+    for (const good of ['--pace', '--pace=balanced', '--pace-max-concurrency=2', '--pace-batch-size=10']) {
+      expect(consentFor(['--to', 'voyage:voyage-4', '--yes', good])).not.toThrow();
+    }
+  });
 });
 
 describe('Fable #6 — the corrected-command suggestion', () => {

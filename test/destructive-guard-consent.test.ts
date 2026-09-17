@@ -37,11 +37,15 @@ async function expectRefusal(run: () => Promise<unknown>, missing: string): Prom
 }
 
 /**
- * Captures BOTH streams. The first cut captured console.log only, which made
- * this helper agree with a two-line stub that the guard printed to stdout and
- * disagree with the command's REAL printHelp(), which writes to stderr. A help
- * assertion that only sees stdout silently stops testing help the moment the
- * real help is restored, which is exactly what happened on 2026-09-17.
+ * Captures every way these commands print help: console.log (sources,
+ * reinit-pglite) and process.stdout.write (migrate embeddings). The first cut
+ * captured console.log only, which made this helper agree with a two-line stub
+ * and go blank the moment the real printHelp() was restored, which is exactly
+ * what happened on 2026-09-17.
+ *
+ * stderr is DELIBERATELY not captured. Refusal messages go to stderr, and a
+ * refusal message contains the usage line, so capturing both streams would let
+ * a refusal satisfy a help assertion. Help paths must print to stdout.
  */
 async function captureLogs(run: () => Promise<unknown>): Promise<string> {
   const originalLog = console.log;
@@ -51,10 +55,11 @@ async function captureLogs(run: () => Promise<unknown>): Promise<string> {
   const lines: string[] = [];
   const push = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
   const write = ((chunk: unknown) => { lines.push(String(chunk)); return true; }) as typeof process.stdout.write;
+  const stderrLines: string[] = [];
   console.log = push;
-  console.error = push;
+  console.error = (...args: unknown[]) => { stderrLines.push(args.map(String).join(' ')); };
   process.stdout.write = write;
-  process.stderr.write = write;
+  process.stderr.write = ((chunk: unknown) => { stderrLines.push(String(chunk)); return true; }) as typeof process.stderr.write;
   try {
     await run();
   } finally {
@@ -63,6 +68,7 @@ async function captureLogs(run: () => Promise<unknown>): Promise<string> {
     process.stdout.write = originalOut;
     process.stderr.write = originalErrWrite;
   }
+  void stderrLines;
   return lines.join('\n');
 }
 

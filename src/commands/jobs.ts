@@ -2954,24 +2954,61 @@ export async function registerBuiltinHandlers(
     const scope = (typeof job.data.scope === 'string' && ['pages', 'sources', 'all'].includes(job.data.scope))
       ? (job.data.scope as 'pages' | 'sources' | 'all')
       : 'all';
-    const olderThanHours = typeof job.data.olderThanHours === 'number' ? job.data.olderThanHours : 72;
+    // R4 BLOCKER, 2026-09-17, found by the second Fable break pass. This job
+    // was the FOURTH route to the same hard delete, and the worst of them:
+    //
+    //   - it defaulted olderThanHours to 72, the silent default the incident
+    //     was caused by;
+    //   - it computed `dryRun` and then NEVER PASSED IT to purgeDeletedPages,
+    //     so a caller asking for a rehearsal got a real, cascading delete and
+    //     a result object that said `dryRun: true`. A destructive operation
+    //     that lies about having been a rehearsal is worse than one with no
+    //     dry run at all;
+    //   - `purge` is not in PROTECTED_JOB_NAMES, so submit_job over HTTP MCP
+    //     could enqueue it. That defeated purge_deleted_pages's localOnly:true
+    //     and made a remote admin token enough to empty the soft-delete set.
+    //
+    // Now: the cutoff must be supplied explicitly, a real run needs the same
+    // literal consent string as every other route, and dryRun actually runs
+    // the dry-run arm. `purge` is added to PROTECTED_JOB_NAMES alongside this.
+    const olderThanHours = job.data.olderThanHours;
+    if (typeof olderThanHours !== 'number' || !Number.isFinite(olderThanHours) || olderThanHours < 0) {
+      throw new Error(
+        'purge job: olderThanHours is required and must be a non-negative number. '
+        + 'There is deliberately no default: the 72-hour fallback hard-deleted 2,582 pages on 2026-09-16.',
+      );
+    }
     const dryRun = !!job.data.dryRun;
+    if (!dryRun && job.data.confirm !== 'yes-i-mean-it') {
+      throw new Error(
+        "purge job: refusing to hard-delete without explicit consent. Pass confirm='yes-i-mean-it', "
+        + 'or dryRun:true to rehearse. This cascades through content_chunks, page_links and '
+        + 'chunk_relations and is not recoverable.',
+      );
+    }
     let pagesPurged = 0;
     let sourcesPurged: string[] = [];
     if (scope === 'pages' || scope === 'all') {
-      const result = await engine.purgeDeletedPages(olderThanHours);
+      // The dryRun option is what makes the rehearsal a rehearsal. Omitting it
+      // here is the defect this block exists to fix.
+      const result = await engine.purgeDeletedPages(olderThanHours, dryRun ? { dryRun: true } : undefined);
       pagesPurged = result.count;
     }
     let sourcesBlocked: Array<{ id: string; reason: string }> = [];
-    if (scope === 'sources' || scope === 'all') {
+    if (!dryRun && (scope === 'sources' || scope === 'all')) {
       const { purgeExpiredSources } = await import('../core/destructive-guard.ts');
       const purgeResult = await purgeExpiredSources(engine);
       sourcesPurged = purgeResult.purged;
       sourcesBlocked = purgeResult.blocked;
     }
     // GC stale op_checkpoints rows (folded scope item +C from review).
-    const { purgeStaleCheckpoints } = await import('../core/op-checkpoint.ts');
-    const checkpointsPurged = await purgeStaleCheckpoints(engine, 7);
+    // Also skipped on a dry run: a rehearsal that deletes checkpoint rows is
+    // still a delete, which is the whole shape this block is fixing.
+    let checkpointsPurged = 0;
+    if (!dryRun) {
+      const { purgeStaleCheckpoints } = await import('../core/op-checkpoint.ts');
+      checkpointsPurged = await purgeStaleCheckpoints(engine, 7);
+    }
     return { pagesPurged, sourcesPurged, sourcesBlocked, checkpointsPurged, dryRun };
   });
 

@@ -14,6 +14,13 @@
 
 export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   'shell',
+  // R4, 2026-09-17. `purge` hard-deletes pages and sources. The operation
+  // purge_deleted_pages is localOnly:true precisely so it is "not exposed over
+  // HTTP MCP", but submit_job is scope:admin and NOT localOnly, so an OAuth
+  // MCP client could enqueue this job and reach the same cascading delete
+  // through the worker. Protecting the name restores the local-only boundary
+  // the operation already claimed to have.
+  'purge',
   // v0.15: subagent + aggregator are protected because they call the
   // Anthropic API. MCP callers can't submit them directly; only the
   // `gbrain agent run` CLI path (which sets allowProtectedSubmit) or a
