@@ -52,7 +52,7 @@ describe('auth register-client output pin (byte-identical product contract)', ()
       '  Federated reads:     default',
       '',
       'Save the client secret — it will not be shown again.',
-      'Revoke with: gbrain auth revoke-client "gbrain_cl_abc123"',
+      'Revoke with: gbrain auth revoke-client "gbrain_cl_abc123" --yes-i-mean-it',
     ]);
   });
 

@@ -2187,7 +2187,7 @@ export async function buildChecks(
           if (totalChunks > 0) {
             const fix = embeddedCount === 0
               ? `No embeddings yet — drop the empty schema and re-init at the right dim:\n        gbrain init --force --pglite --embedding-model ${configuredModel} --embedding-dimensions ${configuredDims}`
-              : `Non-empty brain (${embeddedCount} embedded chunks). Migrate cleanly:\n        gbrain migrate embeddings --to ${configuredModel} --dim ${configuredDims}`;
+              : `Non-empty brain (${embeddedCount} embedded chunks). Preview the migration first:\n        gbrain migrate embeddings --to ${configuredModel} --dim ${configuredDims} --dry-run`;
 
             checks.push({
               name: 'embedding_provider',

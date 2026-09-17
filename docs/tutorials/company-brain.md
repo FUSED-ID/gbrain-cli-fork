@@ -299,7 +299,7 @@ gbrain search "widget launch plan"
 
 `gbrain whoami` should name the aurora-coder client; the search should return results only from `proj-widget`, `shared`, and its own workspace.
 
-**Renewal.** The minted access token defaults to a 30-day TTL (registration always writes a per-client TTL — the server default for CLI-minted tokens is one hour, which would be useless in a pasted config). When a token expires, rotate with `gbrain agent register --reissue <client_id> --harness claude-code --url https://brain.acme-co.com/mcp`: it rotates the client secret, mints a fresh token, and reprints the block. Rotation is not revocation — outstanding access tokens stay valid until they expire; revoke the client (`gbrain auth revoke-client <client_id>`) to kill them immediately.
+**Renewal.** The minted access token defaults to a 30-day TTL (registration always writes a per-client TTL — the server default for CLI-minted tokens is one hour, which would be useless in a pasted config). When a token expires, rotate with `gbrain agent register --reissue <client_id> --harness claude-code --url https://brain.acme-co.com/mcp`: it rotates the client secret, mints a fresh token, and reprints the block. Rotation is not revocation — outstanding access tokens stay valid until they expire; revoke the client (`gbrain auth revoke-client <client_id> --yes-i-mean-it`) to kill them immediately.
 
 ---
 
@@ -586,7 +586,7 @@ The brain layer is grounded in the retrieved pages. If the retrieved pages conta
 
 ### "OAuth `/token` endpoint returns 401 for my client"
 
-Verify the client secret matches what was printed at register-client time. The server stores only a SHA-256 hash; if you lost the original, you have to revoke the client and re-register. Use `gbrain auth revoke-client <client_id>` and re-run `register-client`.
+Verify the client secret matches what was printed at register-client time. The server stores only a SHA-256 hash; if you lost the original, you have to revoke the client and re-register. Use `gbrain auth revoke-client <client_id> --yes-i-mean-it` and re-run `register-client`.
 
 ### "Postgres connection is exhausting"
 

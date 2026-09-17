@@ -221,7 +221,7 @@ describeE2E('sources-remote-mcp E2E (gstack /setup-gbrain Path 4)', () => {
     const { execSync } = await import('child_process');
     for (const id of [clientId, readOnlyClientId].filter(Boolean) as string[]) {
       try {
-        execSync(`bun run src/cli.ts auth revoke-client ${id}`, {
+        execSync(`bun run src/cli.ts auth revoke-client ${id} --yes-i-mean-it`, {
           cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, GBRAIN_HOME },
         });
       } catch (e) {

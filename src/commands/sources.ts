@@ -1098,16 +1098,27 @@ async function runRestore(engine: BrainEngine, args: string[]): Promise<void> {
 // ── Subcommand: purge ───────────────────────────────────────
 
 async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
-  const id = args[0] && !args[0].startsWith('-') ? args[0] : undefined;
+  // Normalize the equals spelling before the shared guard so --scope is
+  // positional-independent and both accepted CLI spellings validate alike.
+  const normalizedArgs = args.flatMap((arg) => {
+    if (arg.startsWith('--scope=')) return ['--scope', arg.slice('--scope='.length)];
+    return [arg];
+  });
+  const scopeIndex = normalizedArgs.indexOf('--scope');
+  const scopeValue = scopeIndex >= 0 ? normalizedArgs[scopeIndex + 1] : undefined;
+  const scopeValueIndex = scopeIndex >= 0 ? scopeIndex + 1 : -1;
+  const id = normalizedArgs.find((arg, index) =>
+    !arg.startsWith('-') && index !== scopeValueIndex,
+  );
   let consent;
   try {
     consent = requireDestructiveConsent({
-    command: 'sources purge',
-    scopeFlags: id ? [] : ['--scope'],
-    positionalScope: id ? { name: 'id', required: true } : undefined,
-    args,
-    usage: 'Usage: gbrain sources purge <id> --confirm-destructive | --scope expired --confirm-destructive',
-    consentFlags: ['--confirm-destructive'],
+      command: 'sources purge',
+      scopeFlags: id ? [] : ['--scope'],
+      positionalScope: id ? { name: 'id', required: true } : undefined,
+      args: normalizedArgs,
+      usage: 'Usage: gbrain sources purge <id> --confirm-destructive | --scope expired --confirm-destructive',
+      consentFlags: ['--confirm-destructive'],
     });
   } catch (error) {
     if (error instanceof DestructiveConsentError) {
@@ -1118,10 +1129,29 @@ async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
   }
   if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
 
-  const confirmDestructive = args.includes('--confirm-destructive') || args.includes('--yes-i-mean-it');
+  const confirmDestructive = normalizedArgs.includes('--confirm-destructive') || normalizedArgs.includes('--yes-i-mean-it');
+
+  if (scopeIndex >= 0 && (scopeValue !== 'expired' || id !== undefined)) {
+    throw new DestructiveConsentError(
+      'sources purge',
+      'the scope value "expired" without a source id',
+      'gbrain sources purge --scope expired --confirm-destructive',
+    );
+  }
 
   if (id) {
     // Purge a specific source (must be archived)
+    const archivedRows = await engine.executeRaw<{ archived: boolean | null }>(
+      `SELECT archived FROM sources WHERE id = $1`,
+      [id],
+    );
+    if (archivedRows.length > 0 && archivedRows[0].archived !== true) {
+      throw new DestructiveConsentError(
+        'sources purge',
+        'the source to be archived first',
+        `gbrain sources archive "${id}" && gbrain sources purge "${id}" --confirm-destructive`,
+      );
+    }
     const impact = await assessDestructiveImpact(engine, id);
     if (!impact) {
       console.error(`Source "${id}" not found.`);
@@ -1148,8 +1178,12 @@ async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
     return;
   }
 
-  if (args[0] !== '--scope' || args[1] !== 'expired') {
-    throw new Error('gbrain sources purge: --scope must be "expired" when no source id is given.\nCorrected command: gbrain sources purge --scope expired --confirm-destructive');
+  if (scopeIndex < 0) {
+    throw new DestructiveConsentError(
+      'sources purge',
+      'an explicit scope',
+      'gbrain sources purge --scope expired --confirm-destructive',
+    );
   }
 
   // No id: purge all expired archives, but only with an explicit scope.

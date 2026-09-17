@@ -89,6 +89,21 @@ describe('Fable #6 — the corrected-command suggestion', () => {
 });
 
 describe('R4 cycle purge consent', () => {
+  test('dry-run reports a rehearsal before checking purge consent', async () => {
+    let deleteCalls = 0;
+    const engine = {
+      purgeDeletedPages: async () => {
+        deleteCalls++;
+        return { count: 0, slugs: [], pages: [] };
+      },
+    } as never;
+    const result = await cycleTesting.runPhasePurge(engine, true);
+    expect(result.status).toBe('ok');
+    expect(result.summary).toBe('dry-run: skipped purge sweep');
+    expect(result.details?.dry_run).toBe(true);
+    expect(deleteCalls).toBe(0);
+  });
+
   test('bare dream-shaped purge skips before touching the delete arm', async () => {
     let deleteCalls = 0;
     const engine = {

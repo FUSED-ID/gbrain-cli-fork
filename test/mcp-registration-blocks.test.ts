@@ -75,7 +75,7 @@ describe('OAUTH_SECRET_NOTE (moved to core)', () => {
   test('text is unchanged by the move', () => {
     expect(OAUTH_SECRET_NOTE).toBe(
       'Note: the client secret is sensitive — store it like a password. It mints ' +
-        'short-lived, scoped access tokens; revoke with `gbrain auth revoke-client`.',
+        'short-lived, scoped access tokens; revoke with `gbrain auth revoke-client <client-id> --yes-i-mean-it`.',
     );
   });
 

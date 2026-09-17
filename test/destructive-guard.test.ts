@@ -533,7 +533,7 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
     expect(block).toContain('Cannot delete source "fk-soft-only"');
     expect(block).toContain('Revoked-but-retained rows still block the FK');
     expect(block).toContain('hard-deletes them');
-    expect(block).toContain('gbrain auth revoke-client "cl-soft-only"');
+    expect(block).toContain('gbrain auth revoke-client "cl-soft-only" --yes-i-mean-it');
     // No live rows → no live-revoke section.
     expect(block).not.toContain('Revoke each live client first');
   });
@@ -617,10 +617,10 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
     expect(block).toContain('Agent Two (client-2)  [revoked, retained]');
     // Live rows get the hard-delete revoke guidance...
     expect(block).toContain('Revoke each live client first');
-    expect(block).toContain('gbrain auth revoke-client "client-1"');
+    expect(block).toContain('gbrain auth revoke-client "client-1" --yes-i-mean-it');
     // ...soft-deleted rows get the retained-rows-still-block guidance.
     expect(block).toContain('Revoked-but-retained rows still block the FK');
-    expect(block).toContain('gbrain auth revoke-client "client-2"');
+    expect(block).toContain('gbrain auth revoke-client "client-2" --yes-i-mean-it');
   });
 
   test('degrade ladder: missing oauth_clients table → [], missing deleted_at → all referents, other errors propagate', async () => {
