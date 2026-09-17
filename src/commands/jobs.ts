@@ -27,6 +27,7 @@ import { loadConfig, loadConfigWithEngine, isThinClient } from '../core/config.t
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { parseNiceValue, applyNiceness, getEffectiveNiceness, formatNice } from '../core/minions/niceness.ts';
 import { defaultTimeoutMsFor, defaultLockDurationMsFor, clampLockDurationMs } from '../core/minions/handler-timeouts.ts';
+import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent } from '../core/destructive-guard.ts';
 
 function parseFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -1027,8 +1028,18 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
     }
 
     case 'prune': {
-      const olderThanStr = parseFlag(args, '--older-than') ?? '30d';
-      const days = parseInt(olderThanStr, 10);
+      const consent = requireDestructiveConsent({
+        command: 'jobs prune',
+        scopeFlags: ['--older-than'],
+        args: args.slice(1),
+        usage: 'Usage: gbrain jobs prune --older-than Nd [--dry-run] [--yes]',
+        consentFlags: ['--yes'],
+        allowDryRun: true,
+      });
+      if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+
+      const olderThanStr = parseFlag(args, '--older-than');
+      const days = parseInt(olderThanStr ?? '', 10);
       if (isNaN(days) || days <= 0) {
         console.error('Error: --older-than must be a positive number (days). Example: --older-than 30d');
         process.exit(1);

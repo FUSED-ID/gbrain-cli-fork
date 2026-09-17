@@ -28,8 +28,7 @@ import { generateToken, isUndefinedColumnError, isUndefinedTableError } from '..
 import { TOKEN_ID_RE } from '../core/token-mint.ts';
 import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { sqlQueryForEngine, executeRawJsonb, type SqlQuery } from '../core/sql-query.ts';
-import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPatch } from '../core/grants/service.ts';
-import { parseRescopeGrantArgs } from '../core/grants/cli.ts';
+import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent } from '../core/destructive-guard.ts';
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -1181,7 +1180,18 @@ export async function runAuth(args: string[]): Promise<void> {
     }
     case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
     case 'rescope-client': await rescopeClient(rest[0], rest.slice(1)); return;
-    case 'revoke-client': await revokeClient(rest[0]); return;
+    case 'revoke-client': {
+      const consent = requireDestructiveConsent({
+        command: 'auth revoke-client',
+        scopeFlags: [],
+        positionalScope: { name: 'client_id', required: true },
+        args: rest,
+        usage: 'Usage: gbrain auth revoke-client <client_id> --yes-i-mean-it',
+      });
+      if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+      await revokeClient(rest[0]);
+      return;
+    }
     case 'clients': await clientsCmd(rest); return;
     case 'test': {
       const tokenIdx = rest.indexOf('--token');

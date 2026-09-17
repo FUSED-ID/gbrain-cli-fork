@@ -8,6 +8,7 @@ import { sqlQueryForEngine, executeRawJsonb, FILES_METADATA_MERGE_SQL } from '..
 import { humanSize } from '../core/file-resolver.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent } from '../core/destructive-guard.ts';
 
 /** Size threshold: files >= 100 MB use TUS resumable upload */
 const SIZE_THRESHOLD = 100 * 1024 * 1024;
@@ -673,6 +674,16 @@ async function unmirrorFiles(args: string[]) {
 }
 
 async function redirectFiles(args: string[]) {
+  const consent = requireDestructiveConsent({
+    command: 'files redirect',
+    scopeFlags: [],
+    positionalScope: { name: 'dir', required: true },
+    args,
+    usage: 'Usage: gbrain files redirect <dir> [--dry-run] [--yes-i-mean-it]',
+    allowDryRun: true,
+  });
+  if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+
   const dir = args.find(a => !a.startsWith('--'));
   const dryRun = args.includes('--dry-run');
   if (!dir || !existsSync(dir)) { console.error('Usage: gbrain files redirect <dir> [--dry-run]'); process.exit(1); }
@@ -798,11 +809,23 @@ async function restoreFiles(args: string[]) {
 }
 
 async function cleanFiles(args: string[]) {
+  const consent = requireDestructiveConsent({
+    command: 'files clean',
+    scopeFlags: [],
+    positionalScope: { name: 'dir', required: true },
+    args,
+    usage: 'Usage: gbrain files clean <dir> [--dry-run] [--yes] [--yes-i-mean-it]',
+    consentFlags: ['--yes'],
+    allowDryRun: true,
+  });
+  if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+
   const dir = args.find(a => !a.startsWith('--'));
   const confirmed = args.includes('--yes');
+  const dryRun = args.includes('--dry-run');
   if (!dir || !existsSync(dir)) { console.error('Usage: gbrain files clean <dir> [--yes]'); process.exit(1); }
 
-  if (!confirmed) {
+  if (!confirmed && !dryRun && !args.includes('--yes-i-mean-it')) {
     console.error('WARNING: This permanently removes redirect pointers.');
     console.error('After this, files are only accessible from cloud storage.');
     console.error('Git history still has the originals if you need them.');
@@ -823,12 +846,15 @@ async function cleanFiles(args: string[]) {
       }
       if (stat.isSymbolicLink()) continue;
       if (stat.isDirectory()) findAndClean(full);
-      else if (entry.endsWith('.redirect.yaml') || entry.endsWith('.redirect')) { assertManagedFilesystemWrite(full); unlinkSync(full); cleaned++; }
+      else if (entry.endsWith('.redirect.yaml') || entry.endsWith('.redirect')) {
+        if (!dryRun) unlinkSync(full);
+        cleaned++;
+      }
     }
   }
   findAndClean(dir);
 
-  console.log(`Cleaned ${cleaned} redirect breadcrumbs. Cloud storage is now the only source.`);
+  console.log(`${dryRun ? '(dry-run) Would clean' : 'Cleaned'} ${cleaned} redirect breadcrumbs.${dryRun ? ' Nothing deleted.' : ' Cloud storage is now the only source.'}`);
 }
 
 async function filesStatus(args: string[]) {
