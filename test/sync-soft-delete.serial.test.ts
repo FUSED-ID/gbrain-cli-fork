@@ -38,6 +38,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { performSync } from '../src/commands/sync.ts';
+import { SOFT_DELETE_TTL_HOURS } from '../src/core/destructive-guard.ts';
 
 let engine: PGLiteEngine;
 const repos: string[] = [];
@@ -410,9 +411,14 @@ describe('#4587: full-sync reconcile + unsyncable lane are SOFT, purge window is
       `UPDATE pages SET deleted_at = now() - INTERVAL '71 hours' WHERE source_id = 'default' AND slug = 'notes/recent'`,
     );
 
-    // The CYCLE purge phase owns the eventual hard delete (72h constant).
+    // The CYCLE purge phase owns the eventual hard delete; this test supplies
+    // the same explicit cutoff the autopilot scheduler supplies.
     const { runCycle } = await import('../src/core/cycle.ts');
-    const report = await runCycle(engine, { brainDir: null, phases: ['purge'] });
+    const report = await runCycle(engine, {
+      brainDir: null,
+      phases: ['purge'],
+      purgeConsent: { olderThanHours: SOFT_DELETE_TTL_HOURS },
+    });
     const purgePhase = report.phases.find((p) => p.phase === 'purge');
     expect(purgePhase).toBeDefined();
     expect(purgePhase!.status).not.toBe('failed');

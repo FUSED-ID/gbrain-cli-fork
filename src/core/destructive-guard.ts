@@ -127,7 +127,7 @@ function correctedCommand(c: DestructiveConsent, args: string[], needsScope: boo
     if (c.scopeFlags.length > 0) next.push(c.scopeFlags[0], '<value>');
     else if (c.positionalScope) next.unshift(`<${c.positionalScope.name}>`);
   }
-  if (needsConsent) next.push('--yes-i-mean-it');
+  if (needsConsent) next.push(c.allowDryRun ? '--dry-run' : '--yes-i-mean-it');
   return `gbrain ${c.command}${next.length > 0 ? ` ${next.map(shellQuote).join(' ')}` : ''}`;
 }
 
