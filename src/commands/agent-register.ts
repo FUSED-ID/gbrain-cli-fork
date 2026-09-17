@@ -380,7 +380,7 @@ function fail(json: boolean, reason: RegisterFailReason, message: string, exitCo
   } else {
     console.error(`Error: ${message}`);
     if (clientId) {
-      console.error(`The OAuth client was created before the failure. Revoke with: gbrain auth revoke-client "${clientId}"`);
+      console.error(`The OAuth client was created before the failure. Revoke with: gbrain auth revoke-client "${clientId}" --yes-i-mean-it`);
     }
   }
   process.exit(exitCode);
@@ -539,7 +539,7 @@ export async function runAgentRegister(engine: BrainEngine | null, args: string[
         : await txSql`SELECT client_id FROM oauth_clients WHERE client_name = ${name}`;
       if (dupRows.length > 0) {
         throw new RegisterError('duplicate_name',
-          `an OAuth client named "${name}" already exists (${String(dupRows[0].client_id)}). Revoke it first (gbrain auth revoke-client "${String(dupRows[0].client_id)}") or rotate its secret with --reissue.`);
+          `an OAuth client named "${name}" already exists (${String(dupRows[0].client_id)}). Revoke it first (gbrain auth revoke-client "${String(dupRows[0].client_id)}" --yes-i-mean-it) or rotate its secret with --reissue.`);
       }
 
       if (preset.workspaceDerived) {
@@ -929,7 +929,7 @@ function printOutput(flags: AgentRegisterArgs, out: RegisterOutput): void {
   console.log(floorLine);
   console.log('');
   console.log(OAUTH_SECRET_NOTE);
-  console.log(`Revoke with: gbrain auth revoke-client "${r.clientId}"`);
+  console.log(`Revoke with: gbrain auth revoke-client "${r.clientId}" --yes-i-mean-it`);
 }
 
 // ── help ──────────────────────────────────────────────────────────────────

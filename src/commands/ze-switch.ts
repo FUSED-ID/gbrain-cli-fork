@@ -194,8 +194,8 @@ export function buildUndoCommands(
       : snapshot.search_reranker_model
         ? ` --reranker ${snapshot.search_reranker_model}`
         : '';
-  const live = `gbrain migrate embeddings --to ${snapshot.embedding_model} --dim ${snapshot.embedding_dimensions}${rerankerArg}${brainArg}`;
-  return { live, preview: `${live} --dry-run` };
+  const base = `gbrain migrate embeddings --to ${snapshot.embedding_model} --dim ${snapshot.embedding_dimensions}${rerankerArg}${brainArg}`;
+  return { live: `${base} --yes`, preview: `${base} --dry-run` };
 }
 
 /** cli.ts SELF_HELP_WITHOUT_ENGINE adapter: that record's handlers take

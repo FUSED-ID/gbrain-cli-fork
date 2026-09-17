@@ -146,6 +146,13 @@ function registerBuiltinJob(
   });
 }
 
+// Shape (a) of the R4 remote-cycle guard: this name is intentionally not in
+// PROTECTED_JOB_NAMES. Its handler below owns a fixed, non-destructive phase
+// list and ignores all caller-supplied job data, so remote ping has a safe
+// queue surface without giving MCP callers a path to purge.
+const REMOTE_AUTOPILOT_PHASES = ['sync', 'extract', 'embed'] as const;
+const REMOTE_AUTOPILOT_JOB_NAME = 'remote-autopilot-cycle';
+
 /** Parse `--max-waiting N` from CLI args. Returns undefined if absent.
  *  Throws on malformed input (caller should surface the error and exit).
  *  Clamps to [1, 100] to match the queue-layer clamp in MinionQueue.add.
@@ -383,7 +390,7 @@ USAGE
   gbrain jobs get <id> [--json]
   gbrain jobs cancel <id>
   gbrain jobs retry <id>
-  gbrain jobs prune [--older-than 30d] [--dry-run]
+  gbrain jobs prune --older-than Nd [--dry-run]
   gbrain jobs delete <id>
   gbrain jobs stats [--queue Q] [--cluster-errors] [--json]
                     (dream-inline-* queues report ABANDONED/live only with an
@@ -587,12 +594,11 @@ OPTIONS
   prune: `gbrain jobs prune — delete old terminal jobs
 
 USAGE
-  gbrain jobs prune [--older-than 30d] [--dry-run]
+  gbrain jobs prune --older-than Nd [--dry-run]
 
 OPTIONS
-  --older-than AGE  Delete completed/failed/dead/cancelled jobs older than
-                    AGE in days (default 30d; bare N or Nd — hour forms
-                    are not supported)
+  --older-than AGE  Required. Delete completed/failed/dead/cancelled jobs older
+                    than AGE in days (bare N or Nd — hour forms are not supported)
   --dry-run         Report what would be deleted without deleting
 `,
 };
@@ -2755,6 +2761,25 @@ export async function registerBuiltinHandlers(
       ...(phasesRejectedByNormalization.length > 0
         ? { phases_rejected_by_normalization: phasesRejectedByNormalization }
         : {}),
+    };
+  });
+
+  registerBuiltinJob(worker, engine, REMOTE_AUTOPILOT_JOB_NAME, async (job) => {
+    const { runCycle } = await import('../core/cycle.ts');
+    const repoPath = (await engine.getConfig('sync.repo_path')) ?? null;
+    const report = await runCycle(engine, {
+      brainDir: repoPath,
+      pull: true,
+      signal: job.signal,
+      deadlineAtMs: job.deadlineAtMs,
+      privateQueueOwnerJobId: job.id,
+      phases: [...REMOTE_AUTOPILOT_PHASES],
+      yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
+    });
+    return {
+      partial: report.status === 'partial' || report.status === 'failed',
+      status: report.status,
+      report,
     };
   });
 

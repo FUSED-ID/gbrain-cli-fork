@@ -758,7 +758,7 @@ export function formatRegisterClientOutput(name: string, r: RegisteredClient, pa
   } else {
     lines.push('Public client (PKCE-only) — no secret needed.');
   }
-  lines.push(`Revoke with: gbrain auth revoke-client "${r.clientId}"`);
+  lines.push(`Revoke with: gbrain auth revoke-client "${r.clientId}" --yes-i-mean-it`);
   return lines;
 }
 
@@ -1159,7 +1159,7 @@ Usage:
                                                           from mcp_request_log (default 30d window; HTTP clients
                                                           only — stdio use is not logged). Automation-shaped
                                                           clients (>90% context_pack/delta) are flagged.
-  gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
+  gbrain auth revoke-client <client_id> --yes-i-mean-it   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `;
 

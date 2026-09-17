@@ -278,14 +278,6 @@ async function fetchSourceRow(engine: BrainEngine, id: string): Promise<SourceRo
   return { ...r, config: parseConfig(r.config) };
 }
 
-async function countAllPages(engine: BrainEngine, id: string): Promise<number> {
-  const rows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1`,
-    [id],
-  );
-  return rows[0]?.n ?? 0;
-}
-
 async function countVisiblePages(engine: BrainEngine, id: string): Promise<number> {
   const rows = await engine.executeRaw<{ n: number }>(
     `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL`,
@@ -931,7 +923,23 @@ export async function removeSource(
     throw new SourceOpError('not_found', `Source "${opts.id}" not found.`);
   }
 
-  const pageCount = await countAllPages(engine, opts.id);
+  const dataRows = await engine.executeRaw<{
+    page_count: number;
+    fact_count: number;
+    chunk_count: number;
+  }>(
+    `SELECT
+       (SELECT COUNT(*)::int FROM pages WHERE source_id = $1) AS page_count,
+       (SELECT COUNT(*)::int FROM facts WHERE source_id = $1) AS fact_count,
+       (SELECT COUNT(*)::int
+          FROM content_chunks cc
+          JOIN pages p ON cc.page_id = p.id
+         WHERE p.source_id = $1) AS chunk_count`,
+    [opts.id],
+  );
+  const pageCount = dataRows[0]?.page_count ?? 0;
+  const factCount = dataRows[0]?.fact_count ?? 0;
+  const chunkCount = dataRows[0]?.chunk_count ?? 0;
 
   if (opts.dryRun) {
     return {
@@ -945,10 +953,10 @@ export async function removeSource(
 
   // Confirmation gate (caller should usually have already shown the impact
   // preview from destructive-guard.ts).
-  if (pageCount > 0 && !opts.confirmDestructive && !opts.yes) {
+  if ((pageCount > 0 || factCount > 0 || chunkCount > 0) && !opts.confirmDestructive && !opts.yes) {
     throw new SourceOpError(
       'protected_id', // closest existing code; caller can frame as "needs confirm"
-      `Refusing to remove source "${opts.id}" with ${pageCount} pages without --confirm-destructive or --yes.`,
+      `Refusing to remove source "${opts.id}" with ${pageCount} pages, ${factCount} facts, and ${chunkCount} chunks without --confirm-destructive or --yes.`,
     );
   }
 

@@ -303,14 +303,14 @@ export function formatClientReferentsBlock(
     lines.push(``);
     lines.push(`Revoke each live client first (hard delete), then retry:`);
     for (const r of live) {
-      lines.push(`  gbrain auth revoke-client "${r.clientId}"`);
+      lines.push(`  gbrain auth revoke-client "${r.clientId}" --yes-i-mean-it`);
     }
   }
   if (dead.length > 0) {
     lines.push(``);
-    lines.push(`Revoked-but-retained rows still block the FK — \`gbrain auth revoke-client "<id>"\` hard-deletes them:`);
+    lines.push(`Revoked-but-retained rows still block the FK — \`gbrain auth revoke-client "<id>" --yes-i-mean-it\` hard-deletes them:`);
     for (const r of dead) {
-      lines.push(`  gbrain auth revoke-client "${r.clientId}"`);
+      lines.push(`  gbrain auth revoke-client "${r.clientId}" --yes-i-mean-it`);
     }
   }
   lines.push(``);
@@ -668,7 +668,7 @@ export async function purgeExpiredSources(
           id,
           reason:
             'still referenced by a RESTRICT foreign key (revoked oauth_client not yet purged? the FK is physical, so soft-deleted clients also block) — ' +
-            'review with `gbrain auth clients`, revoke with `gbrain auth revoke-client "<client-id>"`, then retry',
+            'review with `gbrain auth clients`, revoke with `gbrain auth revoke-client "<client-id>" --yes-i-mean-it`, then retry',
         });
         continue;
       }
@@ -706,7 +706,7 @@ export function formatImpact(impact: DestructiveImpact): string {
   // the box (variable-width padding inside would misalign the frame).
   if ((impact.oauthClientCount ?? 0) > 0) {
     lines.push(`⚠️  ${impact.oauthClientCount} OAuth client(s) reference this source — a hard delete is`);
-    lines.push(`   blocked (FK RESTRICT) until they are revoked: gbrain auth revoke-client "<client-id>"`);
+    lines.push(`   blocked (FK RESTRICT) until they are revoked: gbrain auth revoke-client "<client-id>" --yes-i-mean-it`);
     lines.push(``);
   }
   return lines.join('\n');

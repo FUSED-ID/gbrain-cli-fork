@@ -1722,6 +1722,15 @@ async function runPhasePurge(
   purgeConsent?: CycleOpts['purgeConsent'],
 ): Promise<PhaseResult> {
   try {
+    if (dryRun) {
+      return {
+        phase: 'purge',
+        status: 'ok',
+        duration_ms: 0,
+        summary: 'dry-run: skipped purge sweep',
+        details: { dry_run: true, purged_sources_count: 0, purged_pages_count: 0, purged_orphan_clones_count: 0 },
+      };
+    }
     if (
       purgeConsent === undefined ||
       !Number.isFinite(purgeConsent.olderThanHours) ||
@@ -1736,15 +1745,6 @@ async function runPhasePurge(
           reason: 'missing_purge_consent',
           required_flag: '--yes-i-mean-it',
         },
-      };
-    }
-    if (dryRun) {
-      return {
-        phase: 'purge',
-        status: 'ok',
-        duration_ms: 0,
-        summary: 'dry-run: skipped purge sweep',
-        details: { dry_run: true, purged_sources_count: 0, purged_pages_count: 0, purged_orphan_clones_count: 0 },
       };
     }
     const { purgeExpiredSources } = await import('./destructive-guard.ts');
