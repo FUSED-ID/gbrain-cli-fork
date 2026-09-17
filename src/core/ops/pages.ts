@@ -932,16 +932,53 @@ const restore_page: Operation = {
 
 const purge_deleted_pages: Operation = {
   name: 'purge_deleted_pages',
-  description: 'v0.26.5 — admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72). Cascades through content_chunks, page_links, chunk_relations. Local CLI only (not exposed over HTTP MCP). Manual escape hatch alongside the autopilot purge phase.',
+  description: "v0.26.5 — admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours. REQUIRES an explicit older_than_hours (no default) and confirm='yes-i-mean-it'; a dry run needs the cutoff but not the consent. Cascades through content_chunks, page_links, chunk_relations and is not recoverable. Local CLI only (not exposed over HTTP MCP).",
   params: {
-    older_than_hours: { type: 'number', description: 'Age cutoff in hours. Default 72.' },
+    older_than_hours: { type: 'number', description: 'Age cutoff in hours. REQUIRED, no default.' },
+    confirm: { type: 'string', description: "Must be the literal string 'yes-i-mean-it' for a real purge. Not needed for a dry run." },
   },
   mutating: true,
   scope: 'admin',
   localOnly: true,
+  // R4 BLOCKER, 2026-09-17. THIS IS THE SECOND ROUTE TO THE PURGE.
+  //
+  // `gbrain pages purge-deleted` is guarded in src/commands/pages.ts. This
+  // operation is the OTHER way in, and it was left wide open: cliHints below
+  // registers it as the TOP-LEVEL command `gbrain purge-deleted` (cli.ts
+  // builds cliOps from every unhidden cliHints.name), and `gbrain call
+  // purge_deleted_pages` reaches the same handler. Neither passes through the
+  // command-layer guard. Before this change:
+  //
+  //   gbrain pages purge-deleted              -> refused, exit 2
+  //   gbrain purge-deleted                    -> DELETED, silent 72h default
+  //   gbrain call purge_deleted_pages         -> DELETED, silent 72h default
+  //   gbrain purge-deleted --older-than-hours 0 -> deleted EVERY soft-deleted page
+  //
+  // That is the 2026-09-16 incident shape under a shorter name, and the docs
+  // spell it the unguarded way. A guard on one spelling of a destructive
+  // operation is not a guard.
+  //
+  // Enforced HERE, in the operation, rather than in the CLI dispatcher,
+  // because that is the single point every route passes through: CLI alias,
+  // `gbrain call`, and any local MCP caller. The silent default is gone with
+  // it: an omitted cutoff is now a refusal, never 72 hours.
   handler: async (ctx, p) => {
-    const olderThanHours = (p.older_than_hours as number | undefined) ?? 72;
+    const olderThanHours = p.older_than_hours as number | undefined;
+    if (olderThanHours === undefined || !Number.isFinite(olderThanHours) || olderThanHours < 0) {
+      throw new Error(
+        'purge_deleted_pages: older_than_hours is required and must be a non-negative number. ' +
+        'There is deliberately no default: the 72-hour fallback hard-deleted 2,582 pages on 2026-09-16. ' +
+        'Preview first with a dry run, then pass the cutoff explicitly.',
+      );
+    }
     if (ctx.dryRun) return { dry_run: true, action: 'purge_deleted_pages', older_than_hours: olderThanHours };
+    if (p.confirm !== 'yes-i-mean-it') {
+      throw new Error(
+        'purge_deleted_pages: refusing to hard-delete without explicit consent. ' +
+        "Pass confirm='yes-i-mean-it' (CLI: --confirm yes-i-mean-it) once a dry run shows the set you expect. " +
+        'This operation cascades through content_chunks, page_links and chunk_relations and is NOT recoverable.',
+      );
+    }
     const result = await ctx.engine.purgeDeletedPages(olderThanHours);
     return { status: 'purged', count: result.count, slugs: result.slugs };
   },

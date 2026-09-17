@@ -748,17 +748,15 @@ export async function runMigrateEmbeddings(
   // Explicit `never` annotation so TS control-flow analysis treats every
   // exit() call as terminal (required for narrowing after the guard blocks).
   const exit: (code: number) => never = opts.exit ?? ((code: number) => process.exit(code));
+  // R4, 2026-09-17. Help must print the REAL help. The first cut of this guard
+  // routed --help through requireDestructiveConsent with a two-line stub whose
+  // text said "Run gbrain migrate embeddings --help for the complete flag
+  // list", so --help told you to run --help and printHelp() below became dead
+  // code. The guard's job here is only to stop --help falling through to the
+  // executing path, which returning does. The help text itself stays local.
   if (args.includes('--help') || args.includes('-h') || args.includes('help')) {
-    const consent = requireDestructiveConsent({
-      command: 'migrate embeddings',
-      scopeFlags: [],
-      args,
-      usage: `Usage: gbrain migrate embeddings --to <provider:model> [flags]
-
-Run gbrain migrate embeddings --help for the complete flag list.`,
-      enforceConsent: false,
-    });
-    if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+    printHelp();
+    return;
   }
   const flags = parseMigrateEmbeddingsFlags(args);
 
@@ -852,7 +850,10 @@ Run gbrain migrate embeddings --help for the complete flag list.`,
     consent = requireDestructiveConsent({
       command: 'migrate embeddings',
       scopeFlags: ['--to'],
-      valueFlags: ['--dim', '--reranker', '--batch-size'],
+      // --pace-max-concurrency also has a space-separated form, so it needs to
+      // be a valueFlag as well as prefix-allowed, or its value token is read as
+      // a stray positional and refused.
+      valueFlags: ['--dim', '--reranker', '--batch-size', '--pace-max-concurrency'],
       args,
       usage: `Usage: gbrain migrate embeddings --to <provider:model> [flags]
 

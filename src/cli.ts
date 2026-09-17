@@ -288,6 +288,13 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, () => Promise<(engine: never, arg
   // configured, matching the reader who runs `sources --help` because they
   // have no brain yet.
   sources: async () => (await import('./commands/sources.ts')).runSources as never,
+  // R4, 2026-09-17. `pages` was in CLI_ONLY_SELF_HELP but not here, so
+  // `gbrain pages purge-deleted --help` fell past the pre-dispatch help scan,
+  // called connectEngine() (which runs pending migrations and takes the PGLite
+  // writer lock) and only THEN hit the consent guard. Help with side effects on
+  // the command that deleted 2,582 pages is the wrong shape even when nothing
+  // is deleted. runPages answers --help before touching `engine`.
+  pages: async () => (await import('./commands/pages.ts')).runPages as never,
   // runConnectors's --help / no-subcommand / `providers` / `logout` branches
   // never touch `engine` — safe engine-free for the reader with no brain yet.
   connectors: async () => (await import('./commands/connectors/index.ts')).runConnectors as never,

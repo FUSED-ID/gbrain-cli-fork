@@ -35,15 +35,13 @@ interface ReinitOpts {
 }
 
 export async function runReinitPglite(args: string[]): Promise<void> {
+  // R4, 2026-09-17. Print the REAL help, not a one-line stub. printHelp() is
+  // where the destructive-action warning lives, and cli.ts requires that
+  // warning reach the reader. Returning here is what stops --help falling
+  // through to the wipe.
   if (args.includes('--help') || args.includes('-h') || args.includes('help')) {
-    const help = requireDestructiveConsent({
-      command: 'reinit-pglite',
-      scopeFlags: [],
-      args,
-      usage: 'Usage: gbrain reinit-pglite [--embedding-model <provider:model>] [--embedding-dimensions <N>] [--path <dir>] [--yes]',
-      enforceConsent: false,
-    });
-    if (help === DESTRUCTIVE_HELP_REQUESTED) return;
+    printHelp();
+    return;
   }
 
   const opts = parseArgs(args);
