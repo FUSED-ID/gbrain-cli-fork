@@ -37,6 +37,7 @@ import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { readCursor, writeCursor } from '../core/recall-cursor-state.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
+import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent } from '../core/destructive-guard.ts';
 
 // Same kebab-case shape gate the source-resolver applies. v0.32: applied
 // locally on thin-client where the canonical resolver's assertSourceExists
@@ -718,6 +719,16 @@ function factRowToJson(r: FactRow): Record<string, unknown> {
 }
 
 export async function runForget(engine: BrainEngine, args: string[]): Promise<void> {
+  const consent = requireDestructiveConsent({
+    command: 'forget',
+    scopeFlags: [],
+    positionalScope: { name: 'fact-id', required: true },
+    valueFlags: ['--reason'],
+    args,
+    usage: 'Usage: gbrain forget <fact-id> [--reason <text>] --yes-i-mean-it',
+  });
+  if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+
   const idArg = args.find(a => /^\d+$/.test(a));
   if (!idArg) {
     process.stderr.write('Usage: gbrain forget <fact-id> [--reason <text>]\n');

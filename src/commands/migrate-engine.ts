@@ -24,6 +24,7 @@ import { registerCleanup } from '../core/process-cleanup.ts';
 import { autopilotPausedMarkerPath, autopilotLockPath, markerHolderAlive, MIGRATE_PAUSE_MARKER_PREFIX } from '../core/autopilot-paths.ts';
 export { MIGRATE_PAUSE_MARKER_PREFIX };
 import { listLiveLocks } from '../core/db-lock.ts';
+import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent } from '../core/destructive-guard.ts';
 
 interface MigrateOpts {
   targetEngine: 'postgres' | 'pglite';
@@ -802,6 +803,18 @@ export async function quiesceAutopilot(engine?: BrainEngine): Promise<(() => voi
 }
 
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
+  const consent = requireDestructiveConsent({
+    command: 'migrate',
+    scopeFlags: ['--to'],
+    valueFlags: ['--url', '--path'],
+    args,
+    usage: 'Usage: gbrain migrate --to <supabase|pglite> [--url <url>] [--path <path>] [--force]',
+    allowedFlags: [],
+    consentFlags: ['--force'],
+    enforceConsent: args.includes('--force'),
+  });
+  if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+
   const opts = parseArgs(args);
   const config = loadConfig();
   if (!config) {

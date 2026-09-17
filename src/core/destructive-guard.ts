@@ -69,6 +69,142 @@ export interface SoftDeletedSource {
   pageCount: number;
 }
 
+/** Sentinel returned when a destructive command was asked for help. */
+export const DESTRUCTIVE_HELP_REQUESTED = Symbol('destructive-help-requested');
+
+/** Exit-2 error raised for a destructive command that is not explicitly scoped/consented. */
+export class DestructiveConsentError extends Error {
+  readonly exitCode = 2;
+  readonly command: string;
+  readonly missing: string;
+  readonly correctedCommand: string;
+
+  constructor(command: string, missing: string, correctedCommand: string) {
+    super(
+      `gbrain ${command}: refusing destructive operation; missing ${missing}.\n` +
+      `Corrected command: ${correctedCommand}`,
+    );
+    this.name = 'DestructiveConsentError';
+    this.command = command;
+    this.missing = missing;
+    this.correctedCommand = correctedCommand;
+  }
+}
+
+export interface DestructiveConsent {
+  command: string;
+  scopeFlags: string[];
+  args: string[];
+  /** Command-specific usage printed before returning the help sentinel. */
+  usage?: string;
+  /** Additional recognized flags, including flags with values. */
+  allowedFlags?: string[];
+  /** Recognized flags whose following token is their value. */
+  valueFlags?: string[];
+  /** Recognized `--flag=value` forms. */
+  allowedPrefixes?: string[];
+  /** Existing explicit confirmations accepted for compatibility. */
+  consentFlags?: string[];
+  /** Set false for a non-destructive arm that still needs strict parsing/help. */
+  enforceConsent?: boolean;
+  /** Whether this command implements the read-only dry-run arm. */
+  allowDryRun?: boolean;
+  /** A positional argument can be the explicit scope for legacy grammars. */
+  positionalScope?: { name: string; required?: boolean };
+}
+
+export type DestructiveConsentResult = typeof DESTRUCTIVE_HELP_REQUESTED | void;
+
+function shellQuote(arg: string): string {
+  return /^[A-Za-z0-9_./:@%+=,-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`;
+}
+
+function correctedCommand(c: DestructiveConsent, args: string[], needsScope: boolean, needsConsent: boolean): string {
+  const next = [...args];
+  if (needsScope) {
+    if (c.scopeFlags.length > 0) next.push(c.scopeFlags[0], '<value>');
+    else if (c.positionalScope) next.unshift(`<${c.positionalScope.name}>`);
+  }
+  if (needsConsent) next.push('--yes-i-mean-it');
+  return `gbrain ${c.command}${next.length > 0 ? ` ${next.map(shellQuote).join(' ')}` : ''}`;
+}
+
+/**
+ * Common fail-closed gate for destructive CLI arms.
+ *
+ * Help is deliberately handled before argument validation and before any
+ * caller can touch an engine. The returned sentinel is the caller's signal
+ * to return immediately; refusal is a typed exit-2 error for the CLI seam.
+ */
+export function requireDestructiveConsent(c: DestructiveConsent): DestructiveConsentResult {
+  const usage = c.usage ?? `Usage: gbrain ${c.command} ...`;
+  if (c.args.some((arg) => arg === '--help' || arg === '-h' || arg === 'help')) {
+    console.log(usage.trimEnd());
+    return DESTRUCTIVE_HELP_REQUESTED;
+  }
+
+  const consentFlags = c.consentFlags ?? [];
+  const allowed = new Set([
+    ...c.scopeFlags,
+    ...(c.allowedFlags ?? []),
+    ...consentFlags,
+    '--yes-i-mean-it',
+    ...(c.allowDryRun ? ['--dry-run'] : []),
+  ]);
+  const scopeIndexes: number[] = [];
+  let positionalScopeSeen = false;
+  for (let i = 0; i < c.args.length; i++) {
+    const arg = c.args[i];
+    if (c.scopeFlags.includes(arg)) {
+      scopeIndexes.push(i);
+      const value = c.args[i + 1];
+      if (value === undefined || value.startsWith('--') || value === '-h') {
+        const line = correctedCommand(c, c.args.filter((a) => a !== arg), true, false);
+        throw new DestructiveConsentError(c.command, `a value for ${arg}`, line);
+      }
+      i++;
+      continue;
+    }
+    if (c.valueFlags?.includes(arg)) {
+      const value = c.args[i + 1];
+      if (value === undefined || value.startsWith('--') || value === '-h') {
+        const line = correctedCommand(c, c.args.filter((a) => a !== arg), false, false);
+        throw new DestructiveConsentError(c.command, `a value for ${arg}`, line);
+      }
+      i++;
+      continue;
+    }
+    if (arg.startsWith('-')) {
+      const prefixAllowed = c.allowedPrefixes?.some((prefix) => arg.startsWith(prefix + '=')) ?? false;
+      if (!allowed.has(arg) && !prefixAllowed) {
+        const line = correctedCommand(c, c.args.filter((a) => a !== arg), false, false);
+        throw new DestructiveConsentError(c.command, `a recognized argument instead of ${arg}`, line);
+      }
+      continue;
+    }
+    if (c.positionalScope && !positionalScopeSeen) {
+      positionalScopeSeen = true;
+      continue;
+    }
+    const line = correctedCommand(c, c.args.filter((a) => a !== arg), false, false);
+    throw new DestructiveConsentError(c.command, `a recognized argument instead of ${arg}`, line);
+  }
+
+  const hasScope = scopeIndexes.length > 0 || positionalScopeSeen;
+  const scopeRequired = c.scopeFlags.length > 0 || c.positionalScope?.required === true;
+  if (scopeRequired && !hasScope) {
+    const line = correctedCommand(c, c.args, true, !c.args.includes('--dry-run') && consentFlags.every((flag) => !c.args.includes(flag)));
+    throw new DestructiveConsentError(c.command, 'an explicit scope', line);
+  }
+
+  const dryRun = c.args.includes('--dry-run');
+  const hasConsent = consentFlags.some((flag) => c.args.includes(flag)) || c.args.includes('--yes-i-mean-it');
+  if (c.enforceConsent !== false && !dryRun && !hasConsent) {
+    const line = correctedCommand(c, c.args, false, true);
+    throw new DestructiveConsentError(c.command, 'explicit consent', line);
+  }
+}
+
 // ── Constants ───────────────────────────────────────────────
 
 /** Hours before a soft-deleted source is permanently purged. */

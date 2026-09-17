@@ -30,6 +30,7 @@ import type { GBrainConfig } from './core/config.ts';
 import type { AIGatewayConfig } from './core/ai/types.ts';
 import type { BrainEngine } from './core/engine.ts';
 import { operations, OperationError } from './core/operations.ts';
+import { DestructiveConsentError } from './core/destructive-guard.ts';
 import { resolveSourceIdEngineFree } from './core/source-resolver.ts';
 import { formatVolunteeredPage } from './core/context/volunteer.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
@@ -4014,6 +4015,11 @@ if (import.meta.main) {
       if (shouldForceExitAfterMain()) flushThenExit(currentExitCode());
     },
     (e) => {
+      if (e instanceof DestructiveConsentError) {
+        console.error(e.message);
+        flushThenExit(e.exitCode);
+        return;
+      }
       // db-availability loop: this choke point covers CONNECT-TIME failures
       // for every engine-needing command. The happy path redacts (the old
       // bare `e.message` was itself an unredacted-DSN surface); DB-access
