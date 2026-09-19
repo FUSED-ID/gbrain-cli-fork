@@ -195,4 +195,12 @@ describe('dream CLI flag wiring', () => {
       expect(dreamSrc).toContain('Never reads or writes config');
     });
   });
+
+  test('purge has no consent without --yes-i-mean-it, so the phase skips', () => {
+    // The destructive purge phase must receive consent only when the explicit
+    // flag is present; otherwise runPhasePurge returns its guarded skipped
+    // result and never reaches the hard-delete calls.
+    expect(dreamSrc).toContain("yesIMeanIt: args.includes('--yes-i-mean-it')");
+    expect(dreamSrc).toMatch(/\.\.\.\(opts\.yesIMeanIt \? \{ purgeConsent: \{ olderThanHours: SOFT_DELETE_TTL_HOURS \} \} : \{\}\)/);
+  });
 });
