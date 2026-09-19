@@ -152,7 +152,7 @@ function registerBuiltinJob(
 // list and ignores all caller-supplied job data, so remote ping has a safe
 // queue surface without giving MCP callers a path to purge.
 const REMOTE_AUTOPILOT_PHASES = ['sync', 'extract', 'embed'] as const;
-const REMOTE_AUTOPILOT_JOB_NAME = 'remote-autopilot-cycle';
+export const REMOTE_AUTOPILOT_JOB_NAME = 'remote-autopilot-cycle';
 
 /** Parse `--max-waiting N` from CLI args. Returns undefined if absent.
  *  Throws on malformed input (caller should surface the error and exit).

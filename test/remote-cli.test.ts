@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { runRemote } from '../src/commands/remote.ts';
+import { REMOTE_AUTOPILOT_JOB_NAME } from '../src/commands/jobs.ts';
 import { _clearMcpClientTokenCache } from '../src/core/mcp-client.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -242,6 +243,21 @@ describe('remote ping --timeout parsing (behavioral, via the timeout banner)', (
 });
 
 describe('remote ping poll loop', () => {
+  test('submits the registered remote-autopilot job name', async () => {
+    let submittedName: unknown;
+    toolHandler = (name, args) => {
+      if (name === 'submit_job') {
+        submittedName = args.name;
+        return textResult({ id: 8, name: String(args.name), status: 'queued' });
+      }
+      if (name === 'get_job') return textResult({ id: 8, status: 'completed' });
+      throw new Error(`unexpected tool ${name}`);
+    };
+    const r = await runRemoteCli(['ping']);
+    expect(r.exitCode).toBe(0);
+    expect(submittedName).toBe(REMOTE_AUTOPILOT_JOB_NAME);
+  }, 20_000);
+
   test('a poll that throws once then returns completed survives the blip → exit 0', async () => {
     toolHandler = (name) => {
       if (name === 'submit_job') return textResult({ id: 9, name: 'autopilot-cycle', status: 'queued' });

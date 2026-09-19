@@ -21,6 +21,7 @@
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult, RemoteMcpError } from '../core/mcp-client.ts';
 import type { DoctorReport, Check } from './doctor.ts';
+import { REMOTE_AUTOPILOT_JOB_NAME } from './jobs.ts';
 
 interface RemoteFlags {
   json: boolean;
@@ -114,7 +115,7 @@ async function runRemotePing(config: NonNullable<ReturnType<typeof loadConfig>>,
   let submitted: { id: number; name: string; status: string };
   try {
     const res = await callRemoteTool(config, 'submit_job', {
-      name: 'remote-autopilot-cycle',
+      name: REMOTE_AUTOPILOT_JOB_NAME,
       data: { phases: ['sync', 'extract', 'embed'] },
     });
     submitted = unpackToolResult<{ id: number; name: string; status: string }>(res);
