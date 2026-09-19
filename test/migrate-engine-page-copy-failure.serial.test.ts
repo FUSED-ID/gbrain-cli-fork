@@ -362,7 +362,7 @@ describe('runMigrateEngine — per-page failures are surfaced, not swallowed (#3
 
       // --force on an empty target must NOT trust that stale manifest —
       // `real-page` must actually get copied, not skipped as "already done".
-      await runMigrateEngine(source, ['--to', 'pglite', '--path', targetDbPath, '--force']);
+      await runMigrateEngine(source, ['--to', 'pglite', '--path', targetDbPath, '--force', '--yes-i-mean-it']);
       expect(currentExitCode()).toBe(0);
 
       verifyEngine = new PGLiteEngine();
