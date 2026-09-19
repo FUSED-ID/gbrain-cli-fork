@@ -4,7 +4,7 @@
  * Usage:
  *   gbrain migrate --to supabase [--url <connection_string>]
  *   gbrain migrate --to pglite [--path <db_path>]
- *   gbrain migrate --to <engine> --force  (overwrite non-empty target)
+ *   gbrain migrate --to <engine> --force --yes-i-mean-it  (overwrite non-empty target)
  */
 
 import { createEngine } from '../core/engine-factory.ts';
@@ -36,7 +36,7 @@ interface MigrateOpts {
 function parseArgs(args: string[]): MigrateOpts {
   const toIdx = args.indexOf('--to');
   if (toIdx === -1 || !args[toIdx + 1]) {
-    throw new Error('Usage: gbrain migrate --to <supabase|pglite> [--url <url>] [--path <path>] [--force]');
+    throw new Error('Usage: gbrain migrate --to <supabase|pglite> [--url <url>] [--path <path>] [--force --yes-i-mean-it]');
   }
 
   const targetRaw = args[toIdx + 1];
@@ -808,9 +808,9 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     scopeFlags: ['--to'],
     valueFlags: ['--url', '--path'],
     args,
-    usage: 'Usage: gbrain migrate --to <supabase|pglite> [--url <url>] [--path <path>] [--force]',
-    allowedFlags: [],
-    consentFlags: ['--force'],
+    usage: 'Usage: gbrain migrate --to <supabase|pglite> [--url <url>] [--path <path>] [--force --yes-i-mean-it]',
+    allowedFlags: ['--force'],
+    consentFlags: ['--yes-i-mean-it'],
     enforceConsent: args.includes('--force'),
   });
   if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
