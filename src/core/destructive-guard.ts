@@ -212,7 +212,7 @@ export function requireDestructiveConsent(c: DestructiveConsent): DestructiveCon
     throw new DestructiveConsentError(c.command, 'an explicit scope', line);
   }
 
-  const dryRun = c.args.includes('--dry-run');
+  const dryRun = c.allowDryRun === true && c.args.includes('--dry-run');
   const hasConsent = consentFlags.some((flag) => c.args.includes(flag)) || c.args.includes('--yes-i-mean-it');
   if (c.enforceConsent !== false && !dryRun && !hasConsent) {
     const line = correctedCommand(c, c.args, false, true);
