@@ -19,7 +19,7 @@
  */
 
 import { describe, test, expect, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -28,6 +28,7 @@ import {
   copyMigrationFacts,
   copyMigrationConfig,
   MIGRATE_CONFIG_ENGINE_LOCAL_KEYS,
+  migrationTargetId,
 } from '../src/commands/migrate-engine.ts';
 import { saveConfig } from '../src/core/config.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
@@ -257,6 +258,83 @@ describe('runMigrateEngine — facts-only foreign target guard', () => {
       if (prevGbrainDatabaseUrl !== undefined) process.env.GBRAIN_DATABASE_URL = prevGbrainDatabaseUrl;
       rmSync(gbrainHome, { recursive: true, force: true });
       rmSync(join(targetDbPath, '..'), { recursive: true, force: true });
+    }
+  }, 60000);
+});
+
+describe('runMigrateEngine — stale manifest target guard', () => {
+  test('a stale manifest refuses before a fresh migration can delete target facts', async () => {
+    const gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-migrate-home-'));
+    const targetDbPath = join(mkdtempSync(join(tmpdir(), 'gbrain-migrate-target-')), 'brain.pglite');
+    const staleTargetPath = join(mkdtempSync(join(tmpdir(), 'gbrain-migrate-stale-')), 'brain.pglite');
+    const prevGbrainHome = process.env.GBRAIN_HOME;
+    const prevDatabaseUrl = process.env.DATABASE_URL;
+    const prevGbrainDatabaseUrl = process.env.GBRAIN_DATABASE_URL;
+    const prevExitCode = process.exitCode;
+    const originalLog = console.log;
+    const originalError = console.error;
+
+    let source: PGLiteEngine | null = null;
+    let target: PGLiteEngine | null = null;
+
+    try {
+      delete process.env.DATABASE_URL;
+      delete process.env.GBRAIN_DATABASE_URL;
+      process.env.GBRAIN_HOME = gbrainHome;
+      saveConfig({ engine: 'postgres', database_url: 'postgresql://unused/guard-only' });
+      const manifestDir = join(gbrainHome, '.gbrain');
+      mkdirSync(manifestDir, { recursive: true });
+      writeFileSync(join(manifestDir, 'migrate-manifest.json'), JSON.stringify({
+        completed_slugs: ['already-copied'],
+        target_engine: 'pglite',
+        target_id: migrationTargetId({ engine: 'pglite', database_path: staleTargetPath }),
+        schema_version: 2,
+        started_at: new Date().toISOString(),
+      }));
+
+      source = new PGLiteEngine();
+      await source.connect({});
+      await source.initSchema();
+      await source.putPage('fresh-page', {
+        type: 'note', title: 'Fresh', compiled_truth: 'body', timeline: '', frontmatter: {},
+      });
+      await source.insertFact(
+        { fact: 'source memory must not land after stale-manifest refusal', source: 'cli:think' },
+        { source_id: 'default' },
+      );
+
+      const errLines: string[] = [];
+      console.log = () => {};
+      console.error = (...args: unknown[]) => { errLines.push(args.join(' ')); };
+      try {
+        await runMigrateEngine(source, ['--to', 'pglite', '--path', targetDbPath]);
+      } finally {
+        console.log = originalLog;
+        console.error = originalError;
+      }
+
+      expect(currentExitCode()).toBe(1);
+      expect(errLines.join('\n')).toContain('does not match the requested target');
+
+      target = new PGLiteEngine();
+      await target.connect({ database_path: targetDbPath });
+      const facts = await target.executeRaw<{ n: number | string }>('SELECT COUNT(*) AS n FROM facts');
+      const pages = await target.executeRaw<{ n: number | string }>('SELECT COUNT(*) AS n FROM pages');
+      expect(Number(facts[0].n)).toBe(0);
+      expect(Number(pages[0].n)).toBe(0);
+    } finally {
+      console.log = originalLog;
+      console.error = originalError;
+      if (source) await source.disconnect();
+      if (target) await target.disconnect();
+      _resetCliExitVerdictForTests();
+      process.exitCode = prevExitCode;
+      if (prevGbrainHome !== undefined) process.env.GBRAIN_HOME = prevGbrainHome; else delete process.env.GBRAIN_HOME;
+      if (prevDatabaseUrl !== undefined) process.env.DATABASE_URL = prevDatabaseUrl;
+      if (prevGbrainDatabaseUrl !== undefined) process.env.GBRAIN_DATABASE_URL = prevGbrainDatabaseUrl;
+      rmSync(gbrainHome, { recursive: true, force: true });
+      rmSync(join(targetDbPath, '..'), { recursive: true, force: true });
+      rmSync(join(staleTargetPath, '..'), { recursive: true, force: true });
     }
   }, 60000);
 });
