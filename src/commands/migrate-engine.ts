@@ -865,6 +865,15 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   // foreign non-empty brain".
   let manifest = loadManifest();
   if (manifest && !manifestMatchesTarget(manifest, targetId)) {
+    if (!opts.force) {
+      console.error('Previous migration manifest does not match the requested target.');
+      console.error('Refusing to migrate without --force --yes-i-mean-it, or remove the stale manifest.');
+      await targetEngine.disconnect();
+      // Not process.exit: the resume must run (see the quiesce block above).
+      setCliExitVerdict(1);
+      resumeAutopilot();
+      return;
+    }
     console.log('Previous migration was to a different target. Starting fresh.');
     manifest = null;
   }
