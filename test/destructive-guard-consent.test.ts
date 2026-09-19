@@ -73,6 +73,19 @@ async function captureLogs(run: () => Promise<unknown>): Promise<string> {
   return lines.join('\n');
 }
 
+function migrateEngineConsent(args: string[]) {
+  return requireDestructiveConsent({
+    command: 'migrate',
+    scopeFlags: ['--to'],
+    valueFlags: ['--url', '--path'],
+    args,
+    usage: 'Usage: gbrain migrate --to <supabase|pglite> [--url <url>] [--path <path>] [--force --yes-i-mean-it]',
+    allowedFlags: ['--force'],
+    consentFlags: ['--yes-i-mean-it'],
+    enforceConsent: args.includes('--force'),
+  });
+}
+
 describe('pages purge-deleted consent', () => {
   test('--help prints usage and never calls the purge arm', async () => {
     const { engine, calls } = makePurgeStub();
@@ -162,6 +175,26 @@ describe('wrapped destructive subcommand help', () => {
   test('migrate --help never reaches migration setup', async () => {
     const output = await captureLogs(() => runMigrateEngine(noTouchEngine, ['--help']));
     expect(output).toContain('Usage: gbrain migrate');
+  });
+
+  test('migrate --force alone refuses before the executing arm', () => {
+    try {
+      migrateEngineConsent(['--to', 'pglite', '--path', '/tmp/stub-target', '--force']);
+      throw new Error('expected destructive consent refusal');
+    } catch (error) {
+      expect(error).toBeInstanceOf(DestructiveConsentError);
+      expect((error as DestructiveConsentError).exitCode).toBe(2);
+      expect((error as DestructiveConsentError).message).toContain('explicit consent');
+      expect((error as DestructiveConsentError).correctedCommand).toBe(
+        'gbrain migrate --to pglite --path /tmp/stub-target --force --yes-i-mean-it',
+      );
+    }
+  });
+
+  test('migrate --force with literal consent reaches the executing arm', () => {
+    expect(() => migrateEngineConsent([
+      '--to', 'pglite', '--path', '/tmp/stub-target', '--force', '--yes-i-mean-it',
+    ])).not.toThrow();
   });
 
   test('reinit-pglite help never reads config or the brain path', async () => {
