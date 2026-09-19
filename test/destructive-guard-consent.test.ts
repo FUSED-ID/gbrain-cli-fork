@@ -86,6 +86,66 @@ function migrateEngineConsent(args: string[]) {
   });
 }
 
+describe('destructive guard dry-run declaration', () => {
+  test('an allowed flag is not a dry-run capability without allowDryRun', () => {
+    expect(() => requireDestructiveConsent({
+      command: 'latent dry-run trap',
+      scopeFlags: [],
+      args: ['--dry-run'],
+      allowedFlags: ['--dry-run'],
+    })).toThrow(DestructiveConsentError);
+  });
+
+  test('every declared dry-run command still accepts its rehearsal flag', () => {
+    const specs = [
+      {
+        command: 'files redirect',
+        scopeFlags: [],
+        positionalScope: { name: 'dir', required: true },
+        args: ['/tmp/files', '--dry-run'],
+      },
+      {
+        command: 'files clean',
+        scopeFlags: [],
+        positionalScope: { name: 'dir', required: true },
+        args: ['/tmp/files', '--dry-run'],
+        consentFlags: ['--yes'],
+      },
+      {
+        command: 'jobs prune',
+        scopeFlags: ['--older-than'],
+        args: ['--older-than', '30d', '--dry-run'],
+        consentFlags: ['--yes'],
+      },
+      {
+        command: 'pages purge-deleted',
+        scopeFlags: ['--older-than'],
+        args: ['--older-than', '72', '--dry-run'],
+      },
+      {
+        command: 'sources remove',
+        scopeFlags: [],
+        positionalScope: { name: 'id', required: true },
+        args: ['source-a', '--dry-run'],
+        consentFlags: ['--yes', '--confirm-destructive'],
+      },
+      {
+        command: 'migrate embeddings',
+        scopeFlags: ['--to'],
+        valueFlags: ['--dim', '--reranker', '--batch-size', '--pace-max-concurrency'],
+        args: ['--to', 'voyage:voyage-4', '--dry-run'],
+        allowedFlags: ['--dry-run', '--json', '--no-embed', '--ignore-env-override', '--force-sunset-target', '--retarget', '--pace'],
+        allowedPrefixes: ['--pace'],
+        consentFlags: ['--yes', '--non-interactive'],
+      },
+    ];
+
+    for (const spec of specs) {
+      expect(() => requireDestructiveConsent({ ...spec, allowDryRun: true })).not.toThrow();
+    }
+  });
+});
+
 describe('pages purge-deleted consent', () => {
   test('--help prints usage and never calls the purge arm', async () => {
     const { engine, calls } = makePurgeStub();
