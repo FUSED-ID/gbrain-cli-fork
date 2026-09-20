@@ -872,7 +872,9 @@ async function runDowngradeCmd(args: string[]): Promise<void> {
     }
   }
   if (!restoredTo) {
-    restoredTo = 'gbrain-base';
+    console.error(`Cannot downgrade schema pack: no previous active pack is recorded in ${historyPath}. Use --to <pack> to choose an explicit target.`);
+    process.exit(1);
+    return;
   }
   const cfg = loadConfig();
   const updated = { ...cfg, schema_pack: restoredTo };
