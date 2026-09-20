@@ -219,6 +219,9 @@ export const SOURCE_PHASES: CyclePhase[] = ALL_PHASES.filter((p) => PHASE_SCOPE[
 export const MIXED_PHASES: CyclePhase[] = ALL_PHASES.filter((p) => PHASE_SCOPE[p] === 'mixed');
 export const GLOBAL_PHASES: CyclePhase[] = ALL_PHASES.filter((p) => PHASE_SCOPE[p] === 'global');
 export const MAINTENANCE_PHASES: CyclePhase[] = ALL_PHASES.filter((p) => PHASE_SCOPE[p] !== 'source');
+/** Queue cycle phase surfaces deliberately exclude the hard-delete phase. */
+export const QUEUED_AUTOPILOT_PHASES: CyclePhase[] = ALL_PHASES.filter((p) => p !== 'purge');
+export const QUEUED_MAINTENANCE_PHASES: CyclePhase[] = MAINTENANCE_PHASES.filter((p) => p !== 'purge');
 
 /** LLM-backed or unbounded source work that cannot hold freshness hostage. */
 export const SOURCE_BACKGROUND_PHASES: CyclePhase[] = SOURCE_PHASES.filter(
@@ -1139,8 +1142,9 @@ interface SyncPhaseResult extends PhaseResult {
  * everything but name, so dream derives the source id up front and passes
  * it as opts.sourceId — landing the freshness stamp without changing
  * runCycle's stamp/lock semantics for legacy global callers (the
- * autopilot-global-maintenance handler runs MAINTENANCE_PHASES with a brainDir
- * and MUST NOT stamp per-source freshness; see rejected PR #2549).
+ * autopilot-global-maintenance handler runs the queued maintenance phase set
+ * with a brainDir and MUST NOT stamp per-source freshness; see rejected PR
+ * #2549).
  */
 export async function resolveSourceForDir(
   engine: BrainEngine,
