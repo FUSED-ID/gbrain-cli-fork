@@ -26,7 +26,7 @@ import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { parseNiceValue, applyNiceness, getEffectiveNiceness, formatNice } from '../core/minions/niceness.ts';
 import { defaultTimeoutMsFor, defaultLockDurationMsFor, clampLockDurationMs } from '../core/minions/handler-timeouts.ts';
-import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent, SOFT_DELETE_TTL_HOURS } from '../core/destructive-guard.ts';
+import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent } from '../core/destructive-guard.ts';
 
 function parseFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -2695,11 +2695,13 @@ export async function registerBuiltinHandlers(
     // fast cycles). Validates against ALL_PHASES to prevent injection, then
     // normalizes per-source payloads to the freshness set (queue payloads
     // are machine-authored; see normalizeQueuedSourcePhases in cycle.ts).
-    const { ALL_PHASES, normalizeQueuedSourcePhases } = await import('../core/cycle.ts');
+    const { ALL_PHASES, QUEUED_AUTOPILOT_PHASES, normalizeQueuedSourcePhases } = await import('../core/cycle.ts');
     const validPhases = new Set(ALL_PHASES);
-    const requestedPhases = Array.isArray(job.data.phases)
+    const rawRequestedPhases = Array.isArray(job.data.phases)
       ? (job.data.phases as string[]).filter(p => validPhases.has(p as any))
       : undefined;
+    const phasesRejectedBySafety = rawRequestedPhases?.filter((p) => p === 'purge') ?? [];
+    const requestedPhases = rawRequestedPhases?.filter((p) => p !== 'purge');
     const { phases: effectivePhases, rejected: phasesRejectedByNormalization } =
       normalizeQueuedSourcePhases(requestedPhases as any, sourceId);
     // An explicitly-empty phase list (arrived empty, or emptied by the
@@ -2710,10 +2712,13 @@ export async function registerBuiltinHandlers(
         partial: false,
         status: 'skipped',
         report: {
-          reason: phasesRejectedByNormalization.length > 0
+          reason: phasesRejectedBySafety.length > 0 && phasesRejectedByNormalization.length === 0
+            ? 'all_phases_rejected_by_safety'
+            : phasesRejectedByNormalization.length > 0
             ? 'all_phases_rejected_by_normalization'
             : 'empty_phase_list',
           ...(sourceId ? { source_id: sourceId } : {}),
+          phases_rejected_by_safety: phasesRejectedBySafety,
           phases_rejected_by_normalization: phasesRejectedByNormalization,
         },
       };
@@ -2742,9 +2747,10 @@ export async function registerBuiltinHandlers(
       signal: job.signal, // propagate abort so cycle bails on timeout/cancel
       deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
       privateQueueOwnerJobId: job.id,
-      purgeConsent: { olderThanHours: SOFT_DELETE_TTL_HOURS },
       ...(sourceId ? { sourceId } : {}),
-      ...(effectivePhases !== undefined ? { phases: effectivePhases as any } : {}),
+      ...(effectivePhases !== undefined
+        ? { phases: effectivePhases as any }
+        : (sourceId ? {} : { phases: QUEUED_AUTOPILOT_PHASES })),
       yieldBetweenPhases: async () => {
         // Yield to the event loop so worker lock-renewal can fire.
         await new Promise<void>(r => setImmediate(r));
@@ -2758,6 +2764,9 @@ export async function registerBuiltinHandlers(
       // Surfaced so operators can see the queue-boundary normalization at
       // work in job results (runCycle never sees rejected phases, so its
       // excludedPhases skip-reporting cannot cover them).
+      ...(phasesRejectedBySafety.length > 0
+        ? { phases_rejected_by_safety: phasesRejectedBySafety }
+        : {}),
       ...(phasesRejectedByNormalization.length > 0
         ? { phases_rejected_by_normalization: phasesRejectedByNormalization }
         : {}),
@@ -2788,7 +2797,7 @@ export async function registerBuiltinHandlers(
   // No source_id → uses the legacy global cycle lock; stamps autopilot.last_global_at
   // on success so the dispatch gate backs off.
   worker.register('autopilot-global-maintenance', async (job) => {
-    const { runCycle, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } = await import('../core/cycle.ts');
+    const { runCycle, MAINTENANCE_PHASES, QUEUED_MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } = await import('../core/cycle.ts');
     const repoPath: string | null = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
       : (await engine.getConfig('sync.repo_path')) ?? null;
@@ -2800,8 +2809,24 @@ export async function registerBuiltinHandlers(
     const maintenanceSet = new Set<string>(MAINTENANCE_PHASES);
     const requested = Array.isArray(job.data.phases)
       ? (job.data.phases as string[]).filter((p) => maintenanceSet.has(p))
-      : MAINTENANCE_PHASES;
-    const phases = (requested.length > 0 ? requested : MAINTENANCE_PHASES) as typeof MAINTENANCE_PHASES;
+      : undefined;
+    const phasesRejectedBySafety = requested?.filter((p) => p === 'purge') ?? [];
+    const phases = (requested === undefined
+      ? QUEUED_MAINTENANCE_PHASES
+      : requested.filter((p) => p !== 'purge')) as typeof MAINTENANCE_PHASES;
+
+    if (requested !== undefined && phases.length === 0) {
+      return {
+        partial: false,
+        status: 'skipped',
+        report: {
+          reason: phasesRejectedBySafety.length > 0
+            ? 'all_phases_rejected_by_safety'
+            : 'all_phases_rejected_by_normalization',
+          phases_rejected_by_safety: phasesRejectedBySafety,
+        },
+      };
+    }
 
     const report = await runCycle(engine, {
       brainDir: repoPath,
@@ -2814,7 +2839,6 @@ export async function registerBuiltinHandlers(
       // owner-less and recovery would degrade to lease-expiry only.
       privateQueueOwnerJobId: job.id,
       phases,
-      purgeConsent: { olderThanHours: SOFT_DELETE_TTL_HOURS },
       forceGlobalOrphans: true,
       yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
     });
@@ -2833,6 +2857,9 @@ export async function registerBuiltinHandlers(
       partial: report.status === 'partial' || report.status === 'failed',
       status: report.status,
       report,
+      ...(phasesRejectedBySafety.length > 0
+        ? { phases_rejected_by_safety: phasesRejectedBySafety }
+        : {}),
     };
   });
 
