@@ -52,8 +52,18 @@ import type { SchemaPackManifest, PackPrimitive } from '../core/schema-pack/mani
 import { PACK_PRIMITIVES } from '../core/schema-pack/manifest-v1.ts';
 import { bundledPackPath } from '../core/schema-pack/bundled-assets.ts';
 import { gbrainPath, loadConfig, configPath, toEngineConfig } from '../core/config.ts';
+import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent } from '../core/destructive-guard.ts';
 
 export async function runSchema(args: string[]): Promise<void> {
+  const consent = requireDestructiveConsent({
+    command: 'schema',
+    scopeFlags: [],
+    args: args.filter((arg) => arg === '--help' || arg === '-h' || arg === 'help'),
+    usage: schemaHelpText(),
+    enforceConsent: false,
+  });
+  if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+
   const sub = args[0];
   switch (sub) {
     case 'active':   return runActive(args.slice(1));
@@ -100,8 +110,8 @@ export async function runSchema(args: string[]): Promise<void> {
   }
 }
 
-function printHelp(): void {
-  console.log(`gbrain schema — active schema pack management
+function schemaHelpText(): string {
+  return `gbrain schema — active schema pack management
 
 Inspection:
   active                  Show resolved pack + which tier provided it
@@ -164,7 +174,11 @@ Resolution chain (7-tier, tier 1 trust-gated):
   5. gbrain.yml schema: section
   6. ~/.gbrain/config.json schema_pack
   7. Default: gbrain-base
-`);
+`;
+}
+
+function printHelp(): void {
+  console.log(schemaHelpText());
 }
 
 async function runActive(_args: string[]): Promise<void> {
@@ -858,7 +872,9 @@ async function runDowngradeCmd(args: string[]): Promise<void> {
     }
   }
   if (!restoredTo) {
-    restoredTo = 'gbrain-base';
+    console.error(`Cannot downgrade schema pack: no previous active pack is recorded in ${historyPath}. Use --to <pack> to choose an explicit target.`);
+    process.exit(1);
+    return;
   }
   const cfg = loadConfig();
   const updated = { ...cfg, schema_pack: restoredTo };
