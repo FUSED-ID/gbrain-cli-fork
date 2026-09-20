@@ -17,7 +17,7 @@ import {
   InvalidEmbedBackfillSourceIdError,
   NoEmbedBackfillWorkerSurfaceError,
 } from '../minions/embed-backfill-admission.ts';
-import { isProtectedJobName } from '../minions/protected-names.ts';
+import { isProtectedJobName, isPurgeGatedJobName } from '../minions/protected-names.ts';
 
 // --- Jobs (Minions) ---
 
@@ -676,7 +676,7 @@ const retry_job: Operation = {
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
     const target = await queue.getJob(p.id as number);
-    if (target && isProtectedJobName(target.name)) {
+    if (target && isPurgeGatedJobName(target.name)) {
       throw new OperationError(
         'permission_denied',
         `Cannot retry protected job ${p.id}; submit it again through the trusted local submit path.`,

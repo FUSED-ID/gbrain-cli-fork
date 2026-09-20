@@ -77,6 +77,32 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   'extract-atoms-drain',
 ]);
 
+/**
+ * The claim grant and the retry refusal apply to this NARROWER set, not to all
+ * of PROTECTED_JOB_NAMES.
+ *
+ * PROTECTED_JOB_NAMES answers "who may SUBMIT this?", and it is wide because it
+ * also guards the user's Anthropic spend. The claim grant answers "may this
+ * queued row RUN?", and widening that to all of them cost more than it bought:
+ * it made `retry_job` refuse an ordinary failed `subagent`, and it would have
+ * stranded any pre-existing waiting row of any protected name. `subagent`,
+ * `subagent_aggregator` and `extract-atoms-drain` are the everyday workload,
+ * and `extract-atoms-drain` is in the live drainer's GBRAIN_WORKER_ONLY_NAMES.
+ *
+ * These three are the 2026-09-16 incident surface and nothing else. LGV ruled
+ * both narrowings on 2026-09-20 (P22).
+ */
+export const PURGE_GATED_JOB_NAMES: ReadonlySet<string> = new Set([
+  'purge',
+  'autopilot-cycle',
+  'autopilot-global-maintenance',
+]);
+
+/** True for the three names whose queued rows need a trusted-submit grant. */
+export function isPurgeGatedJobName(name: string): boolean {
+  return PURGE_GATED_JOB_NAMES.has(name.trim());
+}
+
 /** Reserved queue metadata that carries the trusted submitter's claim grant. */
 export const PROTECTED_CLAIM_GRANT_KEY = '__gbrain_protected_claim_grant';
 
