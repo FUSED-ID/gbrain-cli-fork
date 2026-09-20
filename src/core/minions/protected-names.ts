@@ -21,9 +21,9 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   // through the worker. Protecting the name restores the local-only boundary
   // the operation already claimed to have.
   'purge',
-  // R4, 2026-09-17. Both autopilot jobs run ALL_PHASES, ending in purge.
-  // They are submitted by trusted in-process scheduler paths only; a remote
-  // admin token must not be able to enqueue either destructive cycle.
+  // R4, 2026-09-17. Both queued autopilot jobs own broad maintenance
+  // surfaces and are submitted by trusted in-process scheduler paths only; a
+  // remote admin token must not be able to enqueue either automatic cycle.
   'autopilot-cycle',
   'autopilot-global-maintenance',
   // v0.15: subagent + aggregator are protected because they call the
@@ -78,6 +78,15 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   // no submit flag exists or is needed) can insert it.
   'extract-atoms-drain',
 ]);
+
+/** Reserved queue metadata that carries the trusted submitter's claim grant. */
+export const PROTECTED_CLAIM_GRANT_KEY = '__gbrain_protected_claim_grant';
+
+/** True only for the queue-owned grant stamped by MinionQueue.add(). */
+export function hasProtectedClaimGrant(data: unknown): boolean {
+  return !!data && typeof data === 'object' &&
+    (data as Record<string, unknown>)[PROTECTED_CLAIM_GRANT_KEY] === true;
+}
 
 /** Check a job name against the protected set. Normalizes whitespace first. */
 export function isProtectedJobName(name: string): boolean {
