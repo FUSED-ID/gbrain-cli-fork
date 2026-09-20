@@ -21,6 +21,8 @@ import {
   PROTECTED_JOB_NAMES,
   hasProtectedClaimGrant,
   isProtectedJobName,
+  isPurgeGatedJobName,
+  PURGE_GATED_JOB_NAMES,
 } from './protected-names.ts';
 import { assertEmbedBackfillQueueAdmission } from './embed-backfill-admission.ts';
 import { lockDelegatedSubmission, checkDelegatedCapacity, prepareDelegatedReplay, admitDelegatedRetry } from './delegated-admission.ts';
@@ -240,13 +242,6 @@ export class MinionQueue {
         `(pass {allowProtectedSubmit: true} as the 4th arg to MinionQueue.add)`,
       );
     }
-    // The submit capability must survive until claim time. Keep it in a
-    // reserved JSONB key because the deployed schema has no separate
-    // admission column; only this queue method can stamp it for ordinary
-    // submissions, and the handler-facing job below strips it back out.
-    const storedData = isProtectedJobName(jobName)
-      ? { ...(data ?? {}), [PROTECTED_CLAIM_GRANT_KEY]: true }
-      : (data ?? {});
     // v0.38 (S1.7 + D6) — capability-based gate replaces the v0.31.12 Anthropic
     // pin. The subagent loop now routes through `gateway.toolLoop()` so any
     // provider whose recipe declares tool calling AND supports_subagent_loop
@@ -340,6 +335,14 @@ export class MinionQueue {
       // match needs no DDL and `jobs get` shows what matched.
       data = { ...(data ?? {}), __param_hash: paramHash };
     }
+
+    // The submit capability must survive until claim time. Keep it in a
+    // reserved JSONB key because the deployed schema has no separate
+    // admission column; only this queue method can stamp it for ordinary
+    // submissions, and the handler-facing job below strips it back out.
+    const storedData = isPurgeGatedJobName(jobName)
+      ? { ...(data ?? {}), [PROTECTED_CLAIM_GRANT_KEY]: true }
+      : (data ?? {});
 
     // Set inside the transaction by a cap-hit coalesce; flushed AFTER commit
     // so audit filesystem I/O never runs while holding the advisory lock.
@@ -1252,7 +1255,7 @@ export class MinionQueue {
        WHERE id = $1 AND status IN ('failed', 'dead')
          AND NOT (name = ANY($2::text[]))
        RETURNING *`,
-      [id, [...PROTECTED_JOB_NAMES]]
+      [id, [...PURGE_GATED_JOB_NAMES]]
     );
     return rows.length > 0 ? rowToMinionJob(rows[0]) : null;
   }
@@ -1513,13 +1516,13 @@ export class MinionQueue {
         registeredNames,
         HANDLER_DEFAULT_TIMEOUT_MS,
         HANDLER_DEFAULT_LOCK_DURATION_MS,
-        [...PROTECTED_JOB_NAMES],
+        [...PURGE_GATED_JOB_NAMES],
         PROTECTED_CLAIM_GRANT_KEY,
       ]
     );
     if (rows.length === 0) return null;
     const job = rowToMinionJob(rows[0]);
-    if (isProtectedJobName(job.name) && hasProtectedClaimGrant(job.data)) {
+    if (isPurgeGatedJobName(job.name) && hasProtectedClaimGrant(job.data)) {
       delete job.data[PROTECTED_CLAIM_GRANT_KEY];
     }
     return job;
