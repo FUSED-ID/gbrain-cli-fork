@@ -69,6 +69,7 @@ export const MAX_RATE_LIMIT_RETRIES = 5;
 export const RATE_LIMIT_FALLBACK_MS = 60_000;
 export const RATE_LIMIT_PAD_MS = 500;
 export const RATE_LIMIT_JITTER = 0.3;
+const TEST_NO_NETWORK_ENV = 'GBRAIN_TEST_NO_NETWORK';
 
 export interface EmbedBatchWithBackoffOpts {
   abortSignal?: AbortSignal;
@@ -144,6 +145,7 @@ export function parseRetryDelayMs(msg: string, rng: () => number = Math.random):
 export const RATE_LIMIT_ATTEMPT_FLOOR_MS = [1_000, 4_000, 10_000, 30_000, 75_000] as const;
 
 let _rateLimitFloorsMs: readonly number[] = RATE_LIMIT_ATTEMPT_FLOOR_MS;
+let _sleepForTests: ((ms: number, signal?: AbortSignal) => Promise<void>) | null = null;
 
 /**
  * Test seam: shrink the #3796 floors so sustained-429 exhaustion tests don't
@@ -152,6 +154,13 @@ let _rateLimitFloorsMs: readonly number[] = RATE_LIMIT_ATTEMPT_FLOOR_MS;
  */
 export function _setRateLimitFloorsForTests(floors: readonly number[] | null): void {
   _rateLimitFloorsMs = floors ?? RATE_LIMIT_ATTEMPT_FLOOR_MS;
+}
+
+/** Test seam for retry-loop tests; null restores the real timer. */
+export function _setAbortableSleepForTests(
+  sleep: ((ms: number, signal?: AbortSignal) => Promise<void>) | null,
+): void {
+  _sleepForTests = sleep;
 }
 
 /**
@@ -185,6 +194,7 @@ export function rateLimitDelayMs(
  * @internal exported for unit tests.
  */
 export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (_sleepForTests) return _sleepForTests(ms, signal);
   return new Promise((resolve) => {
     if (signal?.aborted) {
       resolve();
@@ -201,6 +211,19 @@ export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> 
     };
     signal?.addEventListener('abort', onAbort, { once: true });
   });
+}
+
+/**
+ * Test-only opt-in: preserve the first provider failure but do not issue
+ * retries or wait through the production backoff ladder. The explicit value
+ * avoids treating accidental values such as "0" or "false" as enabled.
+ */
+function testNoNetworkEnabled(): boolean {
+  return process.env[TEST_NO_NETWORK_ENV] === '1';
+}
+
+function testNoNetworkError(cause: unknown): Error {
+  return new Error(`${TEST_NO_NETWORK_ENV}=1: embedding failed without retry`, { cause });
 }
 
 export async function embedBatchWithBackoff(
@@ -233,6 +256,8 @@ export async function embedBatchWithBackoff(
       // plain bounded backoff beside the 429/gateway retry-after path.
       const netTransient = !rateLimitish && isTransientNetworkEmbedError(e);
       if ((!rateLimitish && !netTransient) || attempt === MAX_RATE_LIMIT_RETRIES) throw e;
+
+      if (testNoNetworkEnabled()) throw testNoNetworkError(e);
 
       // #3796: 429s take the attempt-floored wait (rolling-TPM-aware);
       // network blips keep their own bounded exponential ladder.
