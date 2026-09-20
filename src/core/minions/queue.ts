@@ -17,7 +17,6 @@ import { rowToMinionJob, rowToInboxMessage, rowToAttachment } from './types.ts';
 import { validateAttachment } from './attachments.ts';
 import {
   PROTECTED_CLAIM_GRANT_KEY,
-  PROTECTED_JOB_NAMES,
   hasProtectedClaimGrant,
   isProtectedJobName,
   isPurgeGatedJobName,
