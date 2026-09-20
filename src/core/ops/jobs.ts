@@ -24,6 +24,7 @@ import {
   InvalidEmbedBackfillSourceIdError,
   NoEmbedBackfillWorkerSurfaceError,
 } from '../minions/embed-backfill-admission.ts';
+import { isProtectedJobName, isPurgeGatedJobName } from '../minions/protected-names.ts';
 
 // --- Jobs (Minions) ---
 
@@ -547,7 +548,7 @@ const cancel_job: Operation = {
 
 const retry_job: Operation = {
   name: 'retry_job',
-  description: 'Re-queue a failed or dead job for retry',
+  description: 'Re-queue a non-protected failed or dead job for retry',
   params: {
     id: { type: 'number', required: true, description: 'Job ID' },
   },
@@ -557,9 +558,13 @@ const retry_job: Operation = {
     if (ctx.dryRun) return { dry_run: true, action: 'retry_job', id: p.id };
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
-    const prior = await queue.getJob(p.id as number);
-    if (!prior) throw new OperationError('invalid_params', 'Job not found');
-    await assertRemoteJobControl(ctx, prior);
+    const target = await queue.getJob(p.id as number);
+    if (target && isPurgeGatedJobName(target.name)) {
+      throw new OperationError(
+        'permission_denied',
+        `Cannot retry protected job ${p.id}; submit it again through the trusted local submit path.`,
+      );
+    }
     const retried = await queue.retryJob(p.id as number);
     if (!retried) throw new OperationError('invalid_params', `Cannot retry job ${p.id} (must be failed or dead)`);
     // private_queue_owner_token is a capability credential (lease renewal /

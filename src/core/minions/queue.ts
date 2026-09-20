@@ -16,7 +16,13 @@ import type {
 } from './types.ts';
 import { rowToMinionJob, rowToInboxMessage, rowToAttachment } from './types.ts';
 import { validateAttachment } from './attachments.ts';
-import { isProtectedJobName } from './protected-names.ts';
+import {
+  PROTECTED_CLAIM_GRANT_KEY,
+  hasProtectedClaimGrant,
+  isProtectedJobName,
+  isPurgeGatedJobName,
+  PURGE_GATED_JOB_NAMES,
+} from './protected-names.ts';
 import { assertEmbedBackfillQueueAdmission } from './embed-backfill-admission.ts';
 import { lockDelegatedSubmission, checkDelegatedCapacity, prepareDelegatedReplay, admitDelegatedRetry } from './delegated-admission.ts';
 import {
@@ -329,6 +335,14 @@ export class MinionQueue {
       data = { ...(data ?? {}), __param_hash: paramHash };
     }
 
+    // The submit capability must survive until claim time. Keep it in a
+    // reserved JSONB key because the deployed schema has no separate
+    // admission column; only this queue method can stamp it for ordinary
+    // submissions, and the handler-facing job below strips it back out.
+    const storedData = isPurgeGatedJobName(jobName)
+      ? { ...(data ?? {}), [PROTECTED_CLAIM_GRANT_KEY]: true }
+      : (data ?? {});
+
     // Set inside the transaction by a cap-hit coalesce; flushed AFTER commit
     // so audit filesystem I/O never runs while holding the advisory lock.
     let coalesceAudit: CoalesceAuditEvent | null = null;
@@ -626,7 +640,7 @@ export class MinionQueue {
         opts?.queue ?? 'default',
         childStatus,
         opts?.priority ?? 0,
-        data ?? {},
+        storedData,
         opts?.max_attempts ?? 3,
         opts?.backoff_type ?? 'exponential',
         opts?.backoff_delay ?? 1000,
@@ -1232,22 +1246,17 @@ export class MinionQueue {
    * "run this fresh" the same way the unreset attempt counters did.
    */
   async retryJob(id: number): Promise<MinionJob | null> {
-    return this.engine.transaction(async tx => {
-      const [prior] = await tx.executeRaw<Record<string, unknown>>('SELECT * FROM minion_jobs WHERE id = $1', [id]);
-      if (!prior) return null;
-      await authorizeJobExecution(tx, rowToMinionJob(prior));
-      if (!await admitDelegatedRetry(tx, id)) return null;
-      const rows = await tx.executeRaw<Record<string, unknown>>(
-        `UPDATE minion_jobs SET status = 'waiting', error_text = NULL,
-          lock_token = NULL, lock_until = NULL, delay_until = NULL,
-          finished_at = NULL, started_at = NULL, attempts_made = 0,
-          attempts_started = 0, stalled_counter = 0, updated_at = now()
-         WHERE id = $1 AND status IN ('failed', 'dead')
-         RETURNING *`,
-        [id]
-      );
-      return rows.length > 0 ? rowToMinionJob(rows[0]) : null;
-    });
+    const rows = await this.engine.executeRaw<Record<string, unknown>>(
+      `UPDATE minion_jobs SET status = 'waiting', error_text = NULL,
+        lock_token = NULL, lock_until = NULL, delay_until = NULL,
+        finished_at = NULL, started_at = NULL, attempts_made = 0,
+        attempts_started = 0, stalled_counter = 0, updated_at = now()
+       WHERE id = $1 AND status IN ('failed', 'dead')
+         AND NOT (name = ANY($2::text[]))
+       RETURNING *`,
+      [id, [...PURGE_GATED_JOB_NAMES]]
+    );
+    return rows.length > 0 ? rowToMinionJob(rows[0]) : null;
   }
 
   /** Prune old jobs in terminal statuses. Returns count of deleted rows. */
@@ -1489,15 +1498,33 @@ export class MinionQueue {
         updated_at = now()
        WHERE id = (
          SELECT id FROM minion_jobs
-         WHERE queue = $3 AND status = 'waiting' AND submission_authority IS NOT NULL AND name = ANY($4)
+         WHERE queue = $3 AND status = 'waiting' AND name = ANY($4)
+           AND NOT (
+             name = ANY($7::text[])
+             AND COALESCE(data ->> $8, 'false') <> 'true'
+           )
          ORDER BY priority ASC, created_at ASC
          FOR UPDATE SKIP LOCKED
          LIMIT 1
        )
        RETURNING *`,
-      [lockToken, lockDurationMs, queue, registeredNames, HANDLER_DEFAULT_TIMEOUT_MS, HANDLER_DEFAULT_LOCK_DURATION_MS]
+      [
+        lockToken,
+        lockDurationMs,
+        queue,
+        registeredNames,
+        HANDLER_DEFAULT_TIMEOUT_MS,
+        HANDLER_DEFAULT_LOCK_DURATION_MS,
+        [...PURGE_GATED_JOB_NAMES],
+        PROTECTED_CLAIM_GRANT_KEY,
+      ]
     );
-    return rows.length > 0 ? rowToMinionJob(rows[0]) : null;
+    if (rows.length === 0) return null;
+    const job = rowToMinionJob(rows[0]);
+    if (isPurgeGatedJobName(job.name) && hasProtectedClaimGrant(job.data)) {
+      delete job.data[PROTECTED_CLAIM_GRANT_KEY];
+    }
+    return job;
   }
 
   /**
