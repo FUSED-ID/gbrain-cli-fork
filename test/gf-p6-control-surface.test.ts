@@ -22,7 +22,7 @@ beforeEach(async () => {
   await engine.executeRaw('DELETE FROM minion_jobs');
 });
 
-describe('gf-p6 part (a): protected names are gated at claim', () => {
+describe('gf-p6 part (a): purge-gated names are gated at claim', () => {
   test('a protected row inserted directly into the queue is not claimed', async () => {
     const rows = await engine.executeRaw<{ id: number }>(
       `INSERT INTO minion_jobs (name, queue, status, data)
