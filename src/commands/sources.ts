@@ -2027,7 +2027,8 @@ Subcommands:
                                     Permanently delete a source and all its data.
                                     Shows impact preview. Requires --confirm-destructive
                                     when the source has data (pages/chunks/embeddings).
-  archive <id>                      Soft-delete: hide from search, preserve data for ${SOFT_DELETE_TTL_HOURS}h.
+  archive <id>                      Soft-delete: hide from search. Data is kept until a purge
+                                    is run; ${SOFT_DELETE_TTL_HOURS}h is the age at which a purge may remove it.
   restore <id> [--no-federate]      Un-archive a soft-deleted source.
   status [--json]                   v0.40.3.0 — read-only per-source dashboard:
                                     last sync, staleness, page count,
@@ -2102,6 +2103,7 @@ Source id: [a-z0-9-]{1,32}. Immutable citation key.
 
 Destructive operations (remove, purge) show an impact preview before acting.
 Pass --dry-run to preview without side effects.
-Use 'archive' instead of 'remove' for a safe ${SOFT_DELETE_TTL_HOURS}h grace period.
+Use 'archive' instead of 'remove': archived data stays until a purge is run, and a
+purge will not remove it before ${SOFT_DELETE_TTL_HOURS}h.
 `);
 }

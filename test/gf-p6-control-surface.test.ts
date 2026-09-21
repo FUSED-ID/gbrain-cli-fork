@@ -23,7 +23,7 @@ beforeEach(async () => {
 });
 
 describe('gf-p6 part (a): purge-gated names are gated at claim', () => {
-  test('a protected row inserted directly into the queue is not claimed', async () => {
+  test('a protected row that did not pass through MinionQueue.add() is not claimed', async () => {
     const rows = await engine.executeRaw<{ id: number }>(
       `INSERT INTO minion_jobs (name, queue, status, data)
        VALUES ('purge', 'default', 'waiting', '{}'::jsonb)

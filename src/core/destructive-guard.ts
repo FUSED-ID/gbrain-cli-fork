@@ -10,7 +10,7 @@
  *   3. Soft-delete with TTL — sources are tombstoned for 72h before permanent deletion
  *
  * Design principle: the blast radius should be visible BEFORE you pull the trigger,
- * and recoverable AFTER you pull it (within a grace period).
+ * and recoverable AFTER you pull it, until someone runs a purge.
  */
 
 import type { BrainEngine } from './engine.ts';
@@ -717,7 +717,7 @@ export function formatSoftDelete(sd: SoftDeletedSource): string {
   return [
     ``,
     `Source "${sd.id}" archived (soft-deleted).`,
-    `  ${sd.pageCount.toLocaleString()} pages preserved for ${SOFT_DELETE_TTL_HOURS}h.`,
+    `  ${sd.pageCount.toLocaleString()} pages kept until a purge is run; a purge will not remove them before ${SOFT_DELETE_TTL_HOURS}h.`,
     `  Expires: ${sd.expiresAt.toISOString()} (~${hours}h from now)`,
     `  Removed from search. Data intact.`,
     ``,
