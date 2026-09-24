@@ -30,6 +30,15 @@ import {
   type PrivateWriteRoute,
   type PrivateWriteRouteInput,
 } from '../private-source-routing.ts';
+export {
+  GBRAIN_SLUG_NAMESPACE_REWRITES_ENV,
+  SLUG_NAMESPACE_REWRITES_CONFIG_KEY,
+  normalizePageWriteSlug,
+  normalizePageWriteSlugWithConfig,
+  parseSlugNamespaceRewrites,
+  resolveSlugNamespaceRewrites,
+  type SlugNamespaceRewrite,
+} from '../slug-namespace.ts';
 
 // --- Upload validators (Fix 1 / B5 / H5 / M4) ---
 

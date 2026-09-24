@@ -25,6 +25,7 @@ import type { BrainEngine } from '../engine.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { foldNonDecomposingLatin } from '../latin-fold.ts';
 import { isUndefinedTableError } from '../utils.ts';
+import { normalizePageWriteSlugWithConfig } from '../slug-namespace.ts';
 
 /**
  * Canonicalize a free-form entity reference to a page slug.
@@ -53,8 +54,9 @@ export async function resolveEntitySlug(
 
   // 1. Exact match on slug. If raw already looks like a slug (or matches
   //    a row exactly), use it.
-  if (looksLikeSlug(trimmed)) {
-    const exact = await tryExactSlug(engine, source_id, trimmed);
+  const exactInput = await normalizePageWriteSlugWithConfig(engine, trimmed);
+  if (looksLikeSlug(exactInput)) {
+    const exact = await tryExactSlug(engine, source_id, exactInput);
     if (exact) return exact;
   }
 
@@ -62,7 +64,7 @@ export async function resolveEntitySlug(
   //      page_aliases hit resolves BEFORE prefix expansion / fuzzy — the
   //      alias table is curated ground truth ("saoirse" → people/saoirse-x)
   //      while fuzzy is a guess. Live-page verified (page_aliases has no FK).
-  const aliased = await tryAliasExact(engine, source_id, trimmed);
+  const aliased = await tryAliasExact(engine, source_id, exactInput);
   if (aliased) return aliased;
 
   const basenames = await findExactBasenameCandidates(engine, source_id, trimmed);
@@ -83,12 +85,12 @@ export async function resolveEntitySlug(
     // 3. Fuzzy match against existing pages within the source. Bare names
     //    deliberately skip this arm: a shared first name is not specific
     //    enough to choose one person by trigram score or popularity.
-    const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed);
+    const fuzzy = await tryFuzzyMatch(engine, source_id, exactInput);
     if (fuzzy) return fuzzy;
   }
 
   // 4. Fallback: deterministic slugify.
-  return fallbackSlugify(trimmed);
+  return fallbackSlugify(exactInput);
 }
 
 /**
@@ -214,12 +216,13 @@ export async function resolveEntitySlugWithSource(
   if (!trimmed) return null;
 
   // Mirror resolveEntitySlug's resolution chain but tag each branch.
-  if (looksLikeSlug(trimmed)) {
-    const exact = await tryExactSlug(engine, source_id, trimmed);
+  const exactInput = await normalizePageWriteSlugWithConfig(engine, trimmed);
+  if (looksLikeSlug(exactInput)) {
+    const exact = await tryExactSlug(engine, source_id, exactInput);
     if (exact) return { slug: exact, source: 'exact_page' };
   }
 
-  const aliased = await tryAliasExact(engine, source_id, trimmed);
+  const aliased = await tryAliasExact(engine, source_id, exactInput);
   if (aliased) return { slug: aliased, source: 'alias_exact' };
 
   const basenames = await findExactBasenameCandidates(engine, source_id, trimmed);
@@ -230,11 +233,11 @@ export async function resolveEntitySlugWithSource(
     const expanded = await tryUnambiguousPrefixExpansion(engine, source_id, slugify(trimmed));
     if (expanded) return { slug: expanded, source: 'fuzzy_match' };
   } else {
-    const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed);
+    const fuzzy = await tryFuzzyMatch(engine, source_id, exactInput);
     if (fuzzy) return { slug: fuzzy, source: 'fuzzy_match' };
   }
 
-  return { slug: fallbackSlugify(trimmed), source: 'fallback_slugify' };
+  return { slug: fallbackSlugify(exactInput), source: 'fallback_slugify' };
 }
 
 /**

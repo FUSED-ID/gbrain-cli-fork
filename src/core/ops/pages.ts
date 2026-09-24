@@ -35,10 +35,25 @@ import {
   slugOutsideCallerFence,
   enforceClientSlugFence,
   federatedSearchScope,
+  GBRAIN_SLUG_NAMESPACE_REWRITES_ENV,
+  normalizePageWriteSlug,
   normalizeSlugPrefix,
+  normalizePageWriteSlugWithConfig,
+  parseSlugNamespaceRewrites,
   parseSourceIdParam,
   validatePageSlug,
 } from './context.ts';
+
+/** Dry-run must stay engine-free; real writes read the DB-plane policy. */
+async function normalizeWriteSlug(ctx: OperationContext, slug: string): Promise<string> {
+  if (ctx.dryRun) {
+    return normalizePageWriteSlug(
+      slug,
+      parseSlugNamespaceRewrites(process.env[GBRAIN_SLUG_NAMESPACE_REWRITES_ENV]),
+    );
+  }
+  return normalizePageWriteSlugWithConfig(ctx.engine, slug);
+}
 
 // --- Page CRUD ---
 
@@ -87,7 +102,8 @@ const get_page: Operation = {
     source_id: { type: 'string', description: "#4329: scope the lookup to a single source (a multi-source brain can hold the same slug in several sources). Defaults to ctx.sourceId / the caller's grant. '__all__' spans every source for trusted local callers, your granted sources for remote callers." },
   },
   handler: async (ctx, p) => {
-    const slug = p.slug as string;
+    const requestedSlug = p.slug as string;
+    const slug = await normalizePageWriteSlugWithConfig(ctx.engine, requestedSlug);
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
     const includeContent = (p.include_content as boolean) === true;
@@ -118,7 +134,43 @@ const get_page: Operation = {
     let snapshot = await ctx.engine.readPageSnapshot(slug, { includeDeleted, excludePrivate, ...sourceOpts, resolveAlias: true });
     let page = snapshot?.page ?? null;
     if (page && excludePrivate && isPrivatePage(page.frontmatter)) page = null;
-    let resolved_slug: string | undefined = page && page.slug !== slug ? page.slug : undefined;
+    let resolved_slug: string | undefined = slug !== requestedSlug ? slug : undefined;
+
+    // #4275: slug aliases are redirects — dedup/migration retires a slug and
+    // registers alias → canonical. Search and the wikilink resolver already
+    // follow them (resolveSlugWithAlias documents get_page as a consumer);
+    // the direct exact read 404ing on a retired slug made the surfaces
+    // disagree. Resolution runs ONLY on an exact-read miss, so a live page at
+    // the requested slug (or, with include_deleted, its recoverable shell —
+    // restore workflows need the shell, not a redirect) always wins, and it
+    // runs BEFORE fuzzy (the alias table is authoritative; fuzzy is a guess).
+    // Scope: federated grants consult only granted sources' alias rows, so an
+    // out-of-grant alias behaves exactly like a missing page; a scalar scope
+    // consults that source (the remote '__all__' literal matches no real
+    // source and fail-closes); the trusted UNSCOPED read consults every LIVE
+    // source (archived sources are excluded everywhere else in the ladder; their
+    // alias rows count only when include_deleted asks for retired material).
+    // The canonical is then read in the source that OWNS the alias row: a
+    // federated getPage prefers the anchor source, so an unrelated live page at
+    // the canonical slug in another granted source would otherwise shadow it.
+    // No catch here: a pre-v104 brain (no slug_aliases table) is the ENGINE's
+    // contract to absorb (resolveSlugWithAliasDetailed → null); anything else
+    // (connection reset, timeout) must surface, not degrade to page_not_found.
+    if (!page) {
+      const aliasScope: string | readonly string[] = sourceOpts.sourceIds?.length
+        ? sourceOpts.sourceIds
+        : sourceOpts.sourceId !== undefined
+          ? sourceOpts.sourceId
+          : (await ctx.engine.listAllSources({ includeArchived: includeDeleted })).map(s => s.id);
+      const hit = await ctx.engine.resolveSlugWithAliasDetailed(slug, aliasScope, { excludePrivate });
+      if (hit) {
+        const aliasPage = await ctx.engine.getPage(hit.canonical_slug, { includeDeleted, excludePrivate, sourceId: hit.source_id });
+        if (aliasPage && !(excludePrivate && isPrivatePage(aliasPage.frontmatter))) {
+          page = aliasPage;
+          resolved_slug = hit.canonical_slug;
+        }
+      }
+    }
 
     if (!page && fuzzy) {
       const fallback = await ctx.engine.transaction(async tx => {
@@ -298,7 +350,14 @@ const put_page: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    const slug = p.slug as string;
+    const requestedSlug = p.slug as string;
+    // Validate and enforce the caller's fence before reading optional config.
+    // Several callers deliberately use an engine-free rejection path; the
+    // rewrite policy must never turn those cheap refusals into DB reads.
+    validatePageSlug(requestedSlug);
+    enforceSubagentSlugFence(ctx, requestedSlug, 'put_page');
+    enforceClientSlugFence(ctx, requestedSlug, 'put_page');
+    const slug = await normalizeWriteSlug(ctx, requestedSlug);
     validatePageSlug(slug);
 
     // v0.39.3.0 CV6 trust gate for provenance write-through (WARN-8).
@@ -1165,7 +1224,47 @@ const capture: Operation = {
       }
       return { dry_run: true, action: 'capture', slug: p.slug };
     }
-    return submitPageMutation(ctx, { operation: 'capture', params: p });
+    const type = explicitType ?? 'note';
+    let slug = typeof p.slug === 'string' && p.slug.length > 0
+      ? await normalizeWriteSlug(ctx, p.slug)
+      : undefined;
+    if (slug) {
+      // Defense-in-depth on the caller-supplied slug (matches the takes ops);
+      // put_page validates again, but reject a malformed slug before we build
+      // provenance frontmatter around it.
+      validatePageSlug(slug);
+    } else {
+      slug = defaultSlug(normalized, new Date(), type);
+      // [EV7] A slug-bound client would 403 on the inbox/ default via the
+      // inherited slug fence — the zero-config path must work for exactly
+      // that audience, so the ENTIRE default slug (type prefix included —
+      // diary/event prefixes are two segments) nests under the FIRST bound
+      // prefix. Normalize a stored `<prefix>/*` glob (submit_agent binding
+      // grammar) to `<prefix>/` first so the nested slug never carries a
+      // literal `*` segment.
+      const bound = ctx.auth?.boundSlugPrefixes;
+      if (bound && bound.length > 0) {
+        const base = normalizeSlugPrefix(bound[0]);
+        const prefix = base.endsWith('/') ? base : `${base}/`;
+        slug = `${prefix}${slug}`;
+      }
+    }
+    // Remote MCP captures record `capture-mcp` provenance; local CLI callers
+    // (ctx.remote === false) keep the neutral 'capture-cli' default.
+    const capturedVia = ctx.remote !== false ? 'capture-mcp' : undefined;
+    const fullContent = mergeCaptureFrontmatter(content, { type, capturedVia });
+    if (ctx.dryRun) return { dry_run: true, action: 'capture', slug };
+    // Delegate with the SAME ctx (the runCapture local-path precedent) —
+    // put_page enforces the slug fence, validates the slug, dedupes, and
+    // server-stamps provenance for remote callers.
+    const result = await put_page.handler(ctx, { slug, content: fullContent }) as Record<string, unknown>;
+    return {
+      ...result,
+      slug,
+      channel: 'capture',
+      content_hash: computeContentHash(normalized),
+      dedupe: 'identical normalized content produces the same default slug and hash',
+    };
   },
 };
 
