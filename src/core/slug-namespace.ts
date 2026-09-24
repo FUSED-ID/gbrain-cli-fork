@@ -11,6 +11,18 @@ export interface SlugNamespaceRewrite {
   to: string;
 }
 
+export interface SlugNamespaceLogger {
+  warn(message: string): void;
+}
+
+interface CachedSlugNamespaceRewrites {
+  at: number;
+  rules: SlugNamespaceRewrite[];
+}
+
+const SLUG_NAMESPACE_REWRITES_CACHE_TTL_MS = 30_000;
+const slugNamespaceRewritesCache = new WeakMap<object, CachedSlugNamespaceRewrites>();
+
 /** Parse `from:to,from2:to2` policy values. */
 export function parseSlugNamespaceRewrites(raw: string | null | undefined): SlugNamespaceRewrite[] {
   if (!raw) return [];
@@ -28,13 +40,31 @@ export function parseSlugNamespaceRewrites(raw: string | null | undefined): Slug
  * override; otherwise the normal DB-plane config is consulted. Missing config
  * and test doubles without getConfig both mean OFF.
  */
-export async function resolveSlugNamespaceRewrites(engine: BrainEngine): Promise<SlugNamespaceRewrite[]> {
+export async function resolveSlugNamespaceRewrites(
+  engine: BrainEngine,
+  logger?: SlugNamespaceLogger,
+): Promise<SlugNamespaceRewrite[]> {
   const envValue = process.env[GBRAIN_SLUG_NAMESPACE_REWRITES_ENV];
   if (envValue !== undefined) return parseSlugNamespaceRewrites(envValue);
 
   const getConfig = (engine as Partial<BrainEngine>).getConfig;
   if (typeof getConfig !== 'function') return [];
-  return parseSlugNamespaceRewrites(await getConfig.call(engine, SLUG_NAMESPACE_REWRITES_CONFIG_KEY));
+
+  const now = Date.now();
+  const cached = slugNamespaceRewritesCache.get(engine);
+  if (cached && now - cached.at < SLUG_NAMESPACE_REWRITES_CACHE_TTL_MS) return cached.rules;
+
+  try {
+    const rules = parseSlugNamespaceRewrites(await getConfig.call(engine, SLUG_NAMESPACE_REWRITES_CONFIG_KEY));
+    slugNamespaceRewritesCache.set(engine, { at: Date.now(), rules });
+    return rules;
+  } catch {
+    const rules: SlugNamespaceRewrite[] = [];
+    slugNamespaceRewritesCache.set(engine, { at: Date.now(), rules });
+    (logger?.warn ?? ((message: string) => console.warn(message)))
+      ('[slug-namespace] config read failed; namespace rewrites disabled for this engine');
+    return rules;
+  }
 }
 
 /** Apply one configured mapping to the first slug segment only. */
@@ -54,6 +84,7 @@ export function normalizePageWriteSlug(
 export async function normalizePageWriteSlugWithConfig(
   engine: BrainEngine,
   slug: string,
+  logger?: SlugNamespaceLogger,
 ): Promise<string> {
-  return normalizePageWriteSlug(slug, await resolveSlugNamespaceRewrites(engine));
+  return normalizePageWriteSlug(slug, await resolveSlugNamespaceRewrites(engine, logger));
 }

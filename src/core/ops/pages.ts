@@ -52,7 +52,7 @@ async function normalizeWriteSlug(ctx: OperationContext, slug: string): Promise<
       parseSlugNamespaceRewrites(process.env[GBRAIN_SLUG_NAMESPACE_REWRITES_ENV]),
     );
   }
-  return normalizePageWriteSlugWithConfig(ctx.engine, slug);
+  return normalizePageWriteSlugWithConfig(ctx.engine, slug, ctx.logger);
 }
 
 // --- Page CRUD ---
@@ -103,7 +103,7 @@ const get_page: Operation = {
   },
   handler: async (ctx, p) => {
     const requestedSlug = p.slug as string;
-    const slug = await normalizePageWriteSlugWithConfig(ctx.engine, requestedSlug);
+    const slug = await normalizePageWriteSlugWithConfig(ctx.engine, requestedSlug, ctx.logger);
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
     const includeContent = (p.include_content as boolean) === true;
@@ -388,9 +388,10 @@ const put_page: Operation = {
       provenanceVia = 'mcp:put_page';
     }
 
-    // Subagent namespace enforcement (v0.15+). Runs BEFORE the dry-run
-    // short-circuit so preview calls surface the same rejection. See
-    // enforceSubagentSlugFence for the fail-closed policy.
+    // Re-check both caller fences on the rewritten slug. A namespace rewrite
+    // can move a request out of the client's original prefix (e.g. people/ →
+    // person/), so checking only requestedSlug would leave a fence gap. Runs
+    // BEFORE the dry-run short-circuit so previews surface the same rejection.
     enforceSubagentSlugFence(ctx, slug, 'put_page');
     enforceClientSlugFence(ctx, slug, 'put_page');
 
