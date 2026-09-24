@@ -79,6 +79,7 @@ export const KNOWN_LINK_TYPES: ReadonlySet<string> = new Set([
   'discussed_in',
   'source',
   'related_to',
+  'relates_to',
   'wikilink_basename',
   // Open-loop engine (google source kind): thread-page → person-page edges
   // written by loops-extract.ts with link_source 'google-loops'.

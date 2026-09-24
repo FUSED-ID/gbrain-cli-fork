@@ -103,6 +103,16 @@ describe('schema-pack vocab extension (D2=B)', () => {
     expect(parseRelationalQuery('who related to widget-co')).toBeNull();
   });
 
+  test('accepts the emitter vocabulary while retaining the legacy vocabulary', () => {
+    const emitterVocab: RelationVocab = {
+      extraVerbs: [{ verb: 'related to', linkTypes: ['relates_to'], direction: 'both' }],
+    };
+    expect(() => validateVocab(emitterVocab)).not.toThrow();
+    expect(parseRelationalQuery('who related to widget-co', emitterVocab)!.linkTypes).toEqual(['relates_to']);
+    expect(KNOWN_LINK_TYPES.has('related_to')).toBe(true);
+    expect(KNOWN_LINK_TYPES.has('relates_to')).toBe(true);
+  });
+
   test('validateVocab passes for known types', () => {
     expect(() => validateVocab(vocab)).not.toThrow();
   });
