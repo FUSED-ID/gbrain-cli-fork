@@ -1168,7 +1168,7 @@ export const FRONTMATTER_LINK_MAP: FrontmatterFieldMapping[] = [
   // Any page type
   { fields: ['sources'], type: 'discussed_in', direction: 'incoming', dirHint: ['source', 'media'] },
   { fields: ['source'], type: 'source', direction: 'outgoing', dirHint: '' /* already slug-shaped */ },
-  { fields: ['related', 'see_also'], type: 'related_to', direction: 'outgoing', dirHint: '' },
+  { fields: ['related', 'see_also'], type: 'relates_to', direction: 'outgoing', dirHint: '' },
 ];
 
 // ─── Slug resolver ──────────────────────────────────────────────

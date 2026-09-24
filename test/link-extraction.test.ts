@@ -1232,6 +1232,19 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
     expect(src!.targetSlug).toBe('meetings/2026-04-03');
   });
 
+  test('related and see_also use the schema-pack relates_to vocabulary', async () => {
+    const relatedResolver = makeFixtureResolver({
+      'notes/related-target': 'notes/related-target',
+      'notes/see-also-target': 'notes/see-also-target',
+    });
+    const { candidates } = await extractFrontmatterLinks(
+      'notes/source', 'note' as never,
+      { related: 'notes/related-target', see_also: 'notes/see-also-target' },
+      relatedResolver,
+    );
+    expect(candidates.map(c => c.linkType)).toEqual(['relates_to', 'relates_to']);
+  });
+
   test('unresolvable name goes to unresolved list, not candidates', async () => {
     const { candidates, unresolved } = await extractFrontmatterLinks(
       'meetings/x', 'meeting' as never,
@@ -1811,7 +1824,7 @@ describe('extractFrontmatterLinks — [[wikilink]] related: values (end-to-end)'
     expect(candidates[0]).toMatchObject({
       fromSlug: 'wiki/originals/ideas/note',
       targetSlug: '90-people/nicolai',
-      linkType: 'related_to',
+      linkType: 'relates_to',
       linkSource: 'frontmatter',
     });
   });
