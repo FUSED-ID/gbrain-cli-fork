@@ -15,7 +15,7 @@ src/commands/pages.ts	2	engine_guard	Canonical table SQL trigger requires coordi
 src/commands/reconcile-links.ts	2	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/commands/reindex-aliases.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/commands/sources-set-path.ts	1	coordinator	Managed rebind uses native exclusion, exact manifest verification and a retained source-incarnation receipt; unmanaged pointer repair remains explicit.
-src/commands/sources.ts	10	coordinator	Managed add/archive/restore/remove/purge/reclone route through source lifecycle; remaining legacy canonical SQL stays fenced.
+src/commands/sources.ts	11	coordinator	Managed add/archive/restore/remove/purge/reclone route through source lifecycle; remaining legacy canonical SQL stays fenced. Fork D1 (2c14472a9): sources provision-private-routing stores the policy documents in sources.config.
 src/commands/sync.ts	11	coordinator	Managed Markdown sync routes to immutable page requests and an exhausted-cursor checkpoint; unsupported Git pull, code/image and connector paths refuse early.
 src/core/agent-install/setup.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/atomic-write.ts	0	filesystem_guard	Atomic page replacement checks the managed root before temporary bytes are written.
@@ -60,7 +60,7 @@ src/core/git-remote.ts	0	filesystem_guard	Clone, pull and rebase entry points ch
 src/core/github-source.ts	3	coordinator	Managed connector imports, deletion and checkpoints use prepared journal publication; unbound API sources explicitly persist in the database and bound sources retain canonical filesystem publication.
 src/core/google/google-source.ts	3	coordinator	Managed connector imports, deletion and checkpoints use prepared journal publication; legacy materialization is confined to unmanaged sources.
 src/core/google/loops-extract.ts	1	early_refusal	Unsupported managed loop extraction refuses before model calls; unchanged unmanaged fact/fence writes remain guarded.
-src/core/import-file.ts	15	coordinator	Prepared import applies under journal publication and revision CAS; direct managed imports refuse early, and legacy source-path repair follows revision validation inside a savepoint.
+src/core/import-file.ts	16	coordinator	Prepared import applies under journal publication and revision CAS; direct managed imports refuse early, and legacy source-path repair follows revision validation inside a savepoint. Fork D1: a routed direct import tombstones the exposed requested-source copy (softDeletePage) only after the private write.
 src/core/last-retrieved.ts	1	projection	Derived indexing, retrieval telemetry, or source settings; canonical fields remain guarded by SQL triggers.
 src/core/migrate.ts	13	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
 src/core/minions/handlers/ingest-capture.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
