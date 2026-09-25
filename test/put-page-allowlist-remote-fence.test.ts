@@ -61,7 +61,7 @@ function makeCtx(overrides: Partial<OperationContext> = {}): OperationContext {
   };
 }
 
-const ALLOWLISTED_SLUG = 'person/lgv-allowlist-fence-test';
+const ALLOWLISTED_SLUG = 'people/lgv-allowlist-fence-test';
 const CONTENT = '---\ntype: concept\ntitle: LGV Allowlist Fence Test\n---\n\nAllowlisted stub body.\n';
 
 beforeAll(async () => {
@@ -158,7 +158,7 @@ describe('defect 1: collision allowlist must not weaken routing or the remote fe
   });
 
   test('local caller: a NON-allowlisted, non-colliding slug is unaffected (control)', async () => {
-    const slug = 'person/plain-control-slug';
+    const slug = 'people/plain-control-slug';
     const written = await putPage.handler(makeCtx({ remote: false }), {
       slug,
       content: '---\ntype: concept\ntitle: Plain Control\n---\n\nOrdinary body.\n',

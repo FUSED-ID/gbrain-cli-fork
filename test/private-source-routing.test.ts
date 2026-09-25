@@ -127,7 +127,7 @@ describe('private source routing', () => {
     try {
       const route = await resolvePrivateWriteSource(engine, {
         requestedSourceId: 'default',
-        slug: 'person/mismatch-warning',
+        slug: 'people/mismatch-warning',
         entityType: 'person',
       });
       expect(route.sourceId).toBe('default');

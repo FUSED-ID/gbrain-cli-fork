@@ -41,10 +41,10 @@ describe('D1 deny-list prefix matching', () => {
     const cases = [
       'julie-anne-vandenberg-probe-b-20260916',
       'wiki/julie-anne-vandenberg-probe-b-20260916',
-      'person/julie-anne-vandenberg-notes-20260916',
+      'people/julie-anne-vandenberg-notes-20260916',
       'wiki/julie-anne-vandenberg/_author',
       'celeste-no-star-probe-20260916',
-      'person/celeste-no-star-notes-20260916',
+      'people/celeste-no-star-notes-20260916',
       'marin-no-star-probe-20260916',
       'wiki/marin-no-star-notes-20260916/_author',
     ];

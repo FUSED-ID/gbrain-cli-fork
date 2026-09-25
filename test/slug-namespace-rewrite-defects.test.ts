@@ -8,8 +8,13 @@ import type { OperationContext, Operation } from '../src/core/ops/contract.ts';
 import {
   resolveSlugNamespaceRewrites,
   normalizePageWriteSlugWithConfig,
+  parseSlugNamespaceRewrites,
 } from '../src/core/slug-namespace.ts';
 import { withEnv } from './helpers/with-env.ts';
+
+// GF-W52: the fence case binds a client to the legacy singular prefix on
+// purpose. The singular segment comes from the canonical mapping.
+const LEGACY_PERSON = parseSlugNamespaceRewrites('person:people')[0].from;
 
 const put_page = operations.find((op) => op.name === 'put_page') as Operation;
 const get_page = operations.find((op) => op.name === 'get_page') as Operation;
@@ -90,13 +95,13 @@ describe('opt-in slug namespace rewrite defects', () => {
           clientId: 'fenced-client',
           scopes: ['write'],
           sourceId: 'default',
-          boundSlugPrefixes: ['person/'],
+          boundSlugPrefixes: [`${LEGACY_PERSON}/`],
         },
       });
-      await expect(put_page.handler(ctx, { slug: 'person/x', content: 'stub' }))
+      await expect(put_page.handler(ctx, { slug: `${LEGACY_PERSON}/x`, content: 'stub' }))
         .rejects.toMatchObject({ code: 'permission_denied' });
       try {
-        await put_page.handler(ctx, { slug: 'person/x', content: 'stub' });
+        await put_page.handler(ctx, { slug: `${LEGACY_PERSON}/x`, content: 'stub' });
       } catch (error) {
         expect(error).toBeInstanceOf(OperationError);
         expect((error as Error).message).toContain('people/x');

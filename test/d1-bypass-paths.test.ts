@@ -15,7 +15,7 @@ const ALLOWLIST_ENV = 'GBRAIN_PRIVACY_ALLOWLIST_PATH';
 const DENYLIST = '## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `d1-bypass-denylisted*` | D1 Bypass Denied |\n';
 const PERSON_PAGE = { type: 'person' as const, title: 'D1 Bypass Denied', compiled_truth: 'person body', timeline: '', frontmatter: {} };
 const ALLOWLISTED_COLLISIONS = [
-  { slug: 'person/lgv', privateSlug: 'lgv' },
+  { slug: 'people/lgv', privateSlug: 'lgv' },
   { slug: 'wiki/chris-hooper/_author', privateSlug: 'chris-hooper' },
   { slug: 'chris-hooper/_author', privateSlug: 'chris-hooper' },
 ] as const;
@@ -141,7 +141,7 @@ beforeAll(async () => {
 }, 120_000);
 
 beforeEach(async () => {
-  await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'd1-bypass-%' OR slug LIKE 'people/d1-bypass-%' OR slug LIKE 'notes/d1-bypass-%' OR slug LIKE 'wiki/d1-bypass-%' OR slug IN ('person/lgv', 'lgv', 'wiki/chris-hooper/_author', 'chris-hooper/_author', 'chris-hooper')`);
+  await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'd1-bypass-%' OR slug LIKE 'people/d1-bypass-%' OR slug LIKE 'notes/d1-bypass-%' OR slug LIKE 'wiki/d1-bypass-%' OR slug IN ('people/lgv', 'lgv', 'wiki/chris-hooper/_author', 'chris-hooper/_author', 'chris-hooper')`);
   await engine.executeRaw(`DELETE FROM sources WHERE id = 'lg-private'`);
   await engine.executeRaw(`DELETE FROM timeline_entries`);
   await engine.executeRaw(`INSERT INTO sources (id, name, local_path, config) VALUES ('lg-private', 'LG private', $1, '{}'::jsonb)`, [policyDir]);

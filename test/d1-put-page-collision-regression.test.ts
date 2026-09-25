@@ -12,7 +12,7 @@ if (!putPage) throw new Error("put_page operation missing");
 const ALLOWLIST_ENV = "GBRAIN_PRIVACY_ALLOWLIST_PATH";
 const DENYLIST = "## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated-family-entry` | Unrelated Family Entry |\n";
 const CASES = [
-  { slug: "person/lgv", privateSlug: "lgv" },
+  { slug: "people/lgv", privateSlug: "lgv" },
   { slug: "chris-hooper/_author", privateSlug: "chris-hooper" },
   { slug: "wiki/chris-hooper/_author", privateSlug: "chris-hooper" },
 ] as const;
@@ -80,7 +80,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await engine.executeRaw(
     `DELETE FROM pages
-     WHERE slug IN ('person/lgv', 'lgv', 'chris-hooper/_author', 'wiki/chris-hooper/_author', 'chris-hooper')`,
+     WHERE slug IN ('people/lgv', 'lgv', 'chris-hooper/_author', 'wiki/chris-hooper/_author', 'chris-hooper')`,
   );
   await engine.executeRaw(`DELETE FROM sources WHERE id = 'lg-private'`);
   await engine.executeRaw(

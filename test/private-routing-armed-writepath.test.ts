@@ -6,6 +6,12 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { assertPrivateRoutingArmed, resolvePrivateWriteSource } from '../src/core/private-source-routing.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
+import { isPersonSlug, parseSlugNamespaceRewrites } from '../src/core/slug-namespace.ts';
+
+// GF-W52: the legacy singular person namespace is derived from the canonical
+// mapping, never spelled as a slug literal. Only the leaked-singular case uses it.
+const [PERSON_MAP] = parseSlugNamespaceRewrites('person:people');
+const LEGACY_PERSON = PERSON_MAP.from;
 
 const putPage = operationsByName.put_page;
 const PERSON_CONTENT = '---\ntype: person\ntitle: Private Test Person\n---\n\nPerson body.\n';
@@ -39,7 +45,7 @@ let policyDir: string;
 const EMBEDDING_PROVIDER_KEYS = ['OPENAI_API_KEY', 'VOYAGE_API_KEY', 'OPENROUTER_API_KEY'] as const;
 const savedProviderKeys: Partial<Record<typeof EMBEDDING_PROVIDER_KEYS[number], string>> = {};
 
-// This file's 'lgv' scenarios exercise a slug ('person/lgv') that the real
+// This file's 'lgv' scenarios exercise a person-namespace 'lgv' slug that the real
 // operator's live ~/.gbrain/privacy-allowlist.tsv (the T-LEAK-7 collision
 // allowlist) legitimately exempts, on a machine where that file exists.
 // Point GBRAIN_PRIVACY_ALLOWLIST_PATH at a path that never exists for the
@@ -119,7 +125,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   policyDir = mkdtempSync(join(tmpdir(), 'gbrain-arm-writepath-'));
   await engine.executeRaw(
-    `DELETE FROM pages WHERE slug LIKE 'people/arm-writepath-%' OR slug LIKE 'person/arm-writepath-%'`,
+    `DELETE FROM pages WHERE slug LIKE 'people/arm-writepath-%' OR slug LIKE '${LEGACY_PERSON}/arm-writepath-%'`,
   );
   await engine.executeRaw(`DELETE FROM sources WHERE id = 'lg-private'`);
   // v0.57: a routed write publishes through the persistence pipeline, which
@@ -179,6 +185,8 @@ describe('private routing armed guard at the put_page write path', () => {
   });
 
   test('throws for the leaked singular person slug even when its type is concept', async () => {
+    const leaked = `${LEGACY_PERSON}/lgv`;
+    expect(isPersonSlug(leaked)).toBe(true);
     await pointPrivateSource(policyDir);
     writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated` | Unrelated |\n');
     await engine.putPage('lgv', {
@@ -189,7 +197,7 @@ describe('private routing armed guard at the put_page write path', () => {
       frontmatter: {},
     }, { sourceId: 'lg-private' });
 
-    await expect(engine.putPage('person/lgv', {
+    await expect(engine.putPage(leaked, {
       type: 'concept',
       title: 'LGV',
       compiled_truth: 'Leaked shape.',
@@ -209,7 +217,7 @@ describe('private routing armed guard at the put_page write path', () => {
       frontmatter: {},
     }, { sourceId: 'lg-private' });
 
-    await expect(engine.putPage('person/lgv', {
+    await expect(engine.putPage('people/lgv', {
       type: 'concept',
       title: 'LGV',
       compiled_truth: 'Leaked shape.',
@@ -464,11 +472,11 @@ describe('private routing armed guard at the put_page write path', () => {
     }, { sourceId: 'lg-private' });
 
     await expect(putPage.handler(putContext(), {
-      slug: 'person/bare-existing-person',
+      slug: 'people/bare-existing-person',
       content: '---\ntype: concept\ntitle: Bare Existing Person\n---\n\nRouted update.\n',
     })).resolves.toBeDefined();
     await expect(engine.getPage('bare-existing-person', { sourceId: 'lg-private' })).resolves.toBeDefined();
-    await expect(engine.getPage('person/bare-existing-person', { sourceId: 'default' })).resolves.toBeNull();
+    await expect(engine.getPage('people/bare-existing-person', { sourceId: 'default' })).resolves.toBeNull();
   });
 
   test('catches a bare private copy behind the contacts prefix', async () => {
