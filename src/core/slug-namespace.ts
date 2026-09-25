@@ -88,3 +88,28 @@ export async function normalizePageWriteSlugWithConfig(
 ): Promise<string> {
   return normalizePageWriteSlug(slug, await resolveSlugNamespaceRewrites(engine, logger));
 }
+
+/**
+ * Entity namespace families. Each family lists the legacy singular first
+ * segment and the upstream plural first segment. Privacy, routing and filing
+ * checks must accept both, so a corpus move between the two forms can never
+ * change a policy decision.
+ */
+const PERSON_SLUG_NAMESPACES: ReadonlySet<string> = new Set(['person', 'people']);
+const COMPANY_SLUG_NAMESPACES: ReadonlySet<string> = new Set(['company', 'companies']);
+
+function slugHasNamespace(slug: string, namespaces: ReadonlySet<string>): boolean {
+  const firstSlash = slug.indexOf('/');
+  if (firstSlash === -1) return false;
+  return namespaces.has(slug.slice(0, firstSlash));
+}
+
+/** True when the first slug segment is a person namespace (either form). */
+export function isPersonSlug(slug: string): boolean {
+  return slugHasNamespace(slug, PERSON_SLUG_NAMESPACES);
+}
+
+/** True when the first slug segment is a company namespace (either form). */
+export function isCompanySlug(slug: string): boolean {
+  return slugHasNamespace(slug, COMPANY_SLUG_NAMESPACES);
+}
