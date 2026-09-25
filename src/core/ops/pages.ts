@@ -11,12 +11,14 @@ import { assertPurgeParams } from '../persistence/purge-params.ts';
  */
 
 import { clampSearchLimit, type BrainEngine } from '../engine.ts';
-import type { Page } from '../types.ts';
+import type { Page, PageType } from '../types.ts';
 import { decodeDeepResearchId, deepResearchPageUrl } from '../deep-research-id.ts';
 import { PageSnapshotAmbiguousError, type PageSnapshot } from '../page-state/types.ts';
+import { importFromContent } from '../import-file.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { assertPageWriteThroughReady, writePageThrough, deletePageThrough, resolvePageWriteTarget, type WriteThroughResult } from '../write-through.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from '../link-extraction.ts';
+import type { WriterLintPayload } from '../output/post-write.ts';
 // #3190: pack-aware link typing on the put_page auto-link path.
 import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
 import { isFactsBackstopEligible } from '../facts/eligibility.ts';
@@ -131,7 +133,21 @@ const get_page: Operation = {
     // oracle), composing with — not replacing — the source-grant scope above.
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
 
-    let snapshot = await ctx.engine.readPageSnapshot(slug, { includeDeleted, excludePrivate, ...sourceOpts, resolveAlias: true });
+    let snapshot: PageSnapshot | null;
+    if (typeof ctx.engine.readPageSnapshot === 'function') {
+      snapshot = await ctx.engine.readPageSnapshot(slug, { includeDeleted, excludePrivate, ...sourceOpts, resolveAlias: true });
+    } else {
+      // Compatibility seam for older test doubles/engines that predate the
+      // snapshot reader; production engines implement readPageSnapshot.
+      const fallbackPage = await ctx.engine.getPage(slug, { includeDeleted, excludePrivate, ...sourceOpts });
+      snapshot = fallbackPage ? {
+        page: fallbackPage,
+        tags: await ctx.engine.getTags(fallbackPage.slug, { sourceId: fallbackPage.source_id }),
+        revision: String((fallbackPage as Page & { revision?: string }).revision ?? ''),
+        sourceIncarnation: '',
+        withdrawals: [],
+      } : null;
+    }
     let page = snapshot?.page ?? null;
     if (page && excludePrivate && isPrivatePage(page.frontmatter)) page = null;
     let resolved_slug: string | undefined = slug !== requestedSlug ? slug : undefined;
@@ -395,7 +411,7 @@ const put_page: Operation = {
     enforceSubagentSlugFence(ctx, slug, 'put_page');
     enforceClientSlugFence(ctx, slug, 'put_page');
 
-    if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
+    if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug };
 
     const route = await resolvePrivateWriteSource(ctx.engine, {
       requestedSourceId: ctx.sourceId ?? 'default',

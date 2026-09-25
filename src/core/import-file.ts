@@ -737,6 +737,8 @@ export async function importFromContent(
     tags: parsed.tags,
   };
 
+  const needsProjectionRebuild = !opts.prepare && existing && existing.text_projection_revision !== existing.knowledge_revision;
+
   if (existing?.content_hash === hash && !opts.forceRechunk) {
     await reconcileRoutedMirror();
     return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };

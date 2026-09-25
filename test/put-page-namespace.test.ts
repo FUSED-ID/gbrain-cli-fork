@@ -55,7 +55,7 @@ describe('put_page namespace (v0.15 subagent rule)', () => {
     });
   });
 
-  describe('people namespace normalization (opt-in)', () => {
+  describe('entity namespace normalization (opt-in)', () => {
     test('leaves people unchanged when the rewrite flag is off', async () => {
       await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: undefined }, async () => {
         const ctx = makeCtx();
@@ -64,11 +64,19 @@ describe('put_page namespace (v0.15 subagent rule)', () => {
       });
     });
 
-    test('rewrites a first-segment people slug to person when enabled', async () => {
-      await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: 'people:person' }, async () => {
+    test('rewrites a first-segment person slug to people when enabled', async () => {
+      await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: 'person:people,company:companies' }, async () => {
         const ctx = makeCtx();
-        const result = await put_page.handler(ctx, { slug: 'people/zz-probe', content: 'stub' });
-        expect(result).toMatchObject({ dry_run: true, action: 'put_page', slug: 'person/zz-probe' });
+        const result = await put_page.handler(ctx, { slug: 'person/zz-probe', content: 'stub' });
+        expect(result).toMatchObject({ dry_run: true, action: 'put_page', slug: 'people/zz-probe' });
+      });
+    });
+
+    test('rewrites a first-segment company slug to companies when enabled', async () => {
+      await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: 'person:people,company:companies' }, async () => {
+        const ctx = makeCtx();
+        const result = await put_page.handler(ctx, { slug: 'company/acme', content: 'stub' });
+        expect(result).toMatchObject({ dry_run: true, action: 'put_page', slug: 'companies/acme' });
       });
     });
 
@@ -81,7 +89,7 @@ describe('put_page namespace (v0.15 subagent rule)', () => {
     });
 
     test('leaves people in a later segment unchanged', async () => {
-      await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: 'people:person' }, async () => {
+      await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: 'person:people,company:companies' }, async () => {
         const ctx = makeCtx();
         const result = await put_page.handler(ctx, { slug: 'wiki/people-notes', content: 'stub' });
         expect(result).toMatchObject({ dry_run: true, slug: 'wiki/people-notes' });
@@ -89,7 +97,7 @@ describe('put_page namespace (v0.15 subagent rule)', () => {
     });
 
     test('leaves people in a deeper segment unchanged', async () => {
-      await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: 'people:person' }, async () => {
+      await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: 'person:people,company:companies' }, async () => {
         const ctx = makeCtx();
         const result = await put_page.handler(ctx, { slug: 'a/people/b', content: 'stub' });
         expect(result).toMatchObject({ dry_run: true, slug: 'a/people/b' });
@@ -97,18 +105,18 @@ describe('put_page namespace (v0.15 subagent rule)', () => {
     });
 
     test('leaves _author slugs unchanged', async () => {
-      await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: 'people:person' }, async () => {
+      await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: 'person:people,company:companies' }, async () => {
         const ctx = makeCtx();
         const result = await put_page.handler(ctx, { slug: 'people/alice/_author', content: 'stub' });
         expect(result).toMatchObject({ dry_run: true, slug: 'people/alice/_author' });
       });
     });
 
-    test('enabled write and exact get_page/entity reads use person namespace', async () => {
-      await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: 'people:person' }, async () => {
+    test('enabled write and exact get_page/entity reads use people namespace', async () => {
+      await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: 'person:people,company:companies' }, async () => {
         let readSlug = '';
         const page = {
-          id: 7, slug: 'person/zz-probe', type: 'person', title: 'ZZ Probe',
+          id: 7, slug: 'people/zz-probe', type: 'person', title: 'ZZ Probe',
           compiled_truth: 'stub', timeline: '', frontmatter: {}, source_id: 'default',
           created_at: new Date(), updated_at: new Date(), content_hash: 'stub', deleted_at: null,
         };
@@ -117,15 +125,15 @@ describe('put_page namespace (v0.15 subagent rule)', () => {
           getPage: async (slug: string) => { readSlug = slug; return page; },
           getTags: async () => [],
           executeRaw: async (_sql: string, params: unknown[]) =>
-            params[1] === 'person/zz-probe' ? [{ slug: 'person/zz-probe' }] : [],
+            params[1] === 'people/zz-probe' ? [{ slug: 'people/zz-probe' }] : [],
         } as unknown as BrainEngine;
         const result = await get_page.handler(makeCtx({ engine, dryRun: false, remote: false }), {
-          slug: 'people/zz-probe',
+          slug: 'person/zz-probe',
         }) as Record<string, unknown>;
-        expect(readSlug).toBe('person/zz-probe');
-        expect(result.slug).toBe('person/zz-probe');
-        expect(result.resolved_slug).toBe('person/zz-probe');
-        expect(await resolveEntitySlug(engine, 'default', 'people/zz-probe')).toBe('person/zz-probe');
+        expect(readSlug).toBe('people/zz-probe');
+        expect(result.slug).toBe('people/zz-probe');
+        expect(result.resolved_slug).toBe('people/zz-probe');
+        expect(await resolveEntitySlug(engine, 'default', 'person/zz-probe')).toBe('people/zz-probe');
       });
     });
   });

@@ -1298,8 +1298,8 @@ export class PGLiteEngine implements BrainEngine {
     const needsOauthClientGrants = probe.oauth_clients_exists && !probe.oauth_client_grants_exist;
     const needsOauthClientsSurface = probe.oauth_clients_exists
       && (!probe.oauth_clients_surface_exists || !probe.oauth_clients_surface_set_by_exists);
-    // v146: fork permission columns must exist before schema replay on a
-    // pre-v146 brain whose existing tables make CREATE TABLE a no-op.
+    // v166: fork permission columns must exist before schema replay on a
+    // brain whose existing tables make CREATE TABLE a no-op.
     const needsOauthPermissions = (probe.oauth_clients_exists && !probe.oauth_clients_permissions_exists)
       || (probe.access_tokens_exists && !probe.access_tokens_permissions_exists);
     // v0.26.5 (v34): sources.archived + archived_at + archive_expires_at added
