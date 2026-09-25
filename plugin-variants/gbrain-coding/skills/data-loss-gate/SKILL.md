@@ -76,7 +76,7 @@ Brain / database level (gbrain-specific):
   sweeps `delete_page` across a set of slugs. Deletes are soft (recoverable via
   `gbrain restore <slug>`) until purged — say so on the card, then gate anyway:
   a sweep that's wrong in bulk is expensive to un-wrong in bulk.
-- **`gbrain purge-deleted`** — permanently removes soft-deleted pages. This is
+- **`gbrain pages purge-deleted --older-than <N> --yes-i-mean-it`** — permanently removes soft-deleted pages. Preview with `--dry-run` first; the cutoff is required and there is no default. This is
   the point of no return for the soft-delete safety net.
 - **Source removal** — `gbrain sources remove <id>` deletes the source AND
   every page in it. The `--confirm-destructive` flag does not substitute for
