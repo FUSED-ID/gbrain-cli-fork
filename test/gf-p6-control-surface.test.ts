@@ -25,8 +25,9 @@ beforeEach(async () => {
 describe('gf-p6 part (a): purge-gated names are gated at claim', () => {
   test('a protected row inserted directly into the queue is not claimed', async () => {
     const rows = await engine.executeRaw<{ id: number }>(
-      `INSERT INTO minion_jobs (name, queue, status, data)
-       VALUES ('purge', 'default', 'waiting', '{}'::jsonb)
+      // v0.57 queue protocol 1: raw rows carry a submission_authority.
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, data)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'purge', 'default', 'waiting', '{}'::jsonb)
        RETURNING id`,
     );
     expect(rows).toHaveLength(1);
