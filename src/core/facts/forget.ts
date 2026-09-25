@@ -248,10 +248,11 @@ export async function forgetFactInFence(
 
       // #4696: strike the row in the DB body too, or the reconcile (which
       // reads pages.compiled_truth) resurrects the claim before the next sync
-      // absorbs the file. D1 (fork): strike the DB's own body rather than
-      // copying the file's bytes into it, so a drifted or edited file is never
-      // published into the indexed page by a forget. strikeDbBody stamps a
-      // row-shaped hash, so the next sync still re-imports and re-chunks.
+      // absorbs the file. D1 (fork, 269efc303): strike the DB's own body through
+      // the guarded refreshPageBody chokepoint rather than copying the file's
+      // bytes into it, so a drifted or edited file is never published into the
+      // indexed page by a forget. strikeDbBody stamps a row-shaped hash, so the
+      // next sync still re-imports and re-chunks.
       // Best-effort: the withdrawal, facts row and file are already correct.
       await strikeDbBody().catch(() => { /* degrades to the pre-#4696 window */ });
 
