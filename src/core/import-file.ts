@@ -56,68 +56,8 @@ import { computeCorpusGeneration, loadSourceRow } from './contextual-retrieval-s
 import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';
 import { runGuardrails } from './guardrails.ts';
 import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
-import { scanFencedBlocks, MAX_FENCES_PER_PAGE } from './fence-scan.ts';
 import { resolvePrivateWriteSource } from './private-source-routing.ts';
 import { assertPageWriteThroughReady } from './write-through.ts';
-
-/**
- * v0.20.0 Cathedral II Layer 8 D2 — markdown fence extraction helper.
- *
- * Roughly 40% of gbrain's brain is docs/guides/architecture notes with
- * substantial inline code. In v0.19.0 those fenced code blocks chunk as
- * prose, so querying "how do we import from engine" ranks paragraphs
- * ABOUT the import above the actual import example. D2 scans the body for
- * fenced code blocks (linear line scanner as of #2862 — formerly a
- * marked.lexer walk, which was quadratic on autolink-dense text), extracts
- * each fence with a known language tag, chunks the content via the code
- * chunker (so a TS fence gets TS-aware chunking), and persists those as
- * extra chunks on the parent markdown page with `chunk_source='fenced_code'`.
- *
- * Fence tag → pseudo-extension map. We don't need a full file extension
- * because chunkCodeText only calls detectCodeLanguage to pick a grammar;
- * a recognized extension gets the right grammar loaded, that's all.
- * Unknown tags return null → fence is skipped (no synthetic chunk).
- */
-const FENCE_TAG_TO_PSEUDO_PATH: Record<string, string> = {
-  ts: 'fence.ts', typescript: 'fence.ts',
-  tsx: 'fence.tsx',
-  js: 'fence.js', javascript: 'fence.js',
-  jsx: 'fence.jsx',
-  py: 'fence.py', python: 'fence.py',
-  rb: 'fence.rb', ruby: 'fence.rb',
-  go: 'fence.go', golang: 'fence.go',
-  rs: 'fence.rs', rust: 'fence.rs',
-  java: 'fence.java',
-  'c#': 'fence.cs', cs: 'fence.cs', csharp: 'fence.cs',
-  cpp: 'fence.cpp', 'c++': 'fence.cpp',
-  c: 'fence.c',
-  php: 'fence.php',
-  swift: 'fence.swift',
-  kt: 'fence.kt', kotlin: 'fence.kt',
-  scala: 'fence.scala',
-  lua: 'fence.lua',
-  ex: 'fence.ex', elixir: 'fence.ex',
-  elm: 'fence.elm',
-  ml: 'fence.ml', ocaml: 'fence.ml',
-  dart: 'fence.dart',
-  zig: 'fence.zig',
-  sol: 'fence.sol', solidity: 'fence.sol',
-  sh: 'fence.sh', bash: 'fence.sh', shell: 'fence.sh', zsh: 'fence.sh',
-  css: 'fence.css',
-  html: 'fence.html',
-  vue: 'fence.vue',
-  json: 'fence.json',
-  yaml: 'fence.yaml', yml: 'fence.yaml',
-  toml: 'fence.toml',
-};
-
-function fenceTagToPseudoPath(lang: string | undefined): string | null {
-  if (!lang) return null;
-  return FENCE_TAG_TO_PSEUDO_PATH[lang.toLowerCase().trim()] ?? null;
-}
-
-// MAX_FENCES_PER_PAGE (fence-bomb DOS cap, GBRAIN_MAX_FENCES_PER_PAGE env
-// override) moved to fence-scan.ts with the #2862 linear scanner.
 
 /**
  * #2044 / #4548: row-level, visibility-aware fence merge for one page
@@ -737,9 +677,25 @@ export async function importFromContent(
     tags: parsed.tags,
   };
 
-  const needsProjectionRebuild = !opts.prepare && existing && existing.text_projection_revision !== existing.knowledge_revision;
+  const persistUnchanged = async (refreshBody = false) => {
+    await engine.transaction(async tx => {
+      await assertImportBase(tx, slug, sourceId ?? 'default', existing);
+      if (refreshBody) await tx.refreshPageBody(slug, sourceId ?? 'default', parsed.compiled_truth, parsed.timeline || '', hash);
+      await refreshSourcePath(tx, slug, sourceId, opts.sourcePath, existing?.source_path);
+      if (opts.beforeCommit) await verifyPageReadable(tx, slug, hash, sourceId, 'importFromContent');
+      await opts.beforeCommit?.(tx, slug);
+    });
+  };
 
-  if (existing?.content_hash === hash && !opts.forceRechunk) {
+  // Rebuild stale projections without granting --force-rechunk's external-ID dedup override.
+  const needsProjectionRebuild = !opts.prepare && existing && existing.text_projection_revision !== existing.knowledge_revision;
+  if (existing?.content_hash === hash && !existing.deleted_at && !opts.forceRechunk && !needsProjectionRebuild && (!opts.prepare || sameCanonicalImport(existingSnapshot, parsedPage))) {
+    if (opts.prepare) {
+      const result: ImportResult = { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
+      return opts.prepare({ slug, parsedPage, observedRevision: (existing as typeof existing & { knowledge_revision?: string }).knowledge_revision ?? null,
+        noop: true, result, apply: async () => {} });
+    }
+    await persistUnchanged();
     await reconcileRoutedMirror();
     return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
   }
@@ -758,13 +714,7 @@ export async function importFromContent(
       frontmatter: parsed.frontmatter,
     });
     if (existing.content_hash === legacyHash) {
-      await engine.refreshPageBody(
-        slug,
-        sourceId ?? 'default',
-        parsed.compiled_truth,
-        parsed.timeline || '',
-        hash,
-      );
+      await persistUnchanged(true);
       await reconcileRoutedMirror();
       return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
     }
@@ -1129,18 +1079,19 @@ export async function importFromContent(
   });
 
 
-  // Post-write read-back verification.
-  //
-  // After the transaction commits, the page MUST be resolvable via getPage.
-  // If the read-back returns null (or a stale content_hash), the operation
-  // fails LOUDLY — a non-zero exit + error surfaced to the ingest log — rather
-  // than reporting success. A write is not "done" until it is readable.
-  //
-  // This catches the silent-desync class: the page file exists on disk (or the
-  // git commit landed) but the DB index silently never picked it up. Without
-  // this guard, the operation reports success and the page is invisible to all
-  // reads (get_page, search, query) until someone notices the gap manually.
-  await verifyPageReadable(engine, slug, hash, sourceId, 'importFromContent');
+  if (opts.onPostCommitEmbedding && !opts.noEmbed && chunks.length > 0) {
+    opts.onPostCommitEmbedding(async () => {
+      try {
+        if (!persistedProjection) return { status: 'superseded' };
+        const signature = currentEmbeddingSignature();
+        await embedChunks();
+        const installed = await installPageEmbeddings(engine, persistedProjection, chunks, signature ?? undefined);
+        return { status: installed ? 'embedded' : 'superseded' };
+      } catch {
+        return { status: 'failed', error: 'Page content was saved, but embedding failed. Check the embedding provider and database on the brain host, then run gbrain embed --stale --source <source-id>.' };
+      }
+    });
+  }
   await reconcileRoutedMirror();
 
   return {

@@ -4714,17 +4714,11 @@ export class PostgresEngine implements BrainEngine {
 
   // Versions
   async createVersion(slug: string, opts?: { sourceId?: string }): Promise<PageVersion> {
-    const sql = this.sql;
     const sourceId = opts?.sourceId ?? 'default';
+    // D1 (fork): the privacy chokepoint runs before upstream's canonical
+    // version snapshot (knowledge_revision, tags, is_deleted).
     await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
-    const rows = await sql`
-      INSERT INTO page_versions (page_id, compiled_truth, frontmatter)
-      SELECT id, compiled_truth, frontmatter
-      FROM pages WHERE slug = ${slug} AND source_id = ${sourceId}
-      RETURNING *
-    `;
-    if (rows.length === 0) throw new Error(`createVersion failed: page "${slug}" (source=${sourceId}) not found`);
-    return rows[0] as unknown as PageVersion;
+    return createPageVersion(this, slug, sourceId);
   }
 
   async getVersions(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<PageVersion[]> {
