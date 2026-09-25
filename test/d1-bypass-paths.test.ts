@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
+import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 
 const revertVersion = operationsByName.revert_version;
 const restorePage = operationsByName.restore_page;
@@ -69,6 +70,43 @@ async function seedVersion(slug: string): Promise<{ id: number }> {
 async function seedSoftDeleted(slug: string): Promise<void> {
   await engine.executeRaw(
     `UPDATE pages SET deleted_at = now() WHERE source_id = 'default' AND slug = $1`, [slug]);
+}
+
+// v0.57 pipeline seeding for the ALLOWED cases. Upstream v0.51+ routes
+// restore_page and revert_version through the revision-safe mutation
+// pipeline, which refuses pages whose history it did not write (raw SQL
+// soft-deletes, direct engine writes) and requires the caller's
+// expected_revision. The allowed cases therefore seed, soft-delete and
+// version their pages through submitPageMutation / delete_page and pass the
+// current revision, exactly as a real caller does. The refusal cases keep the
+// direct seeds: the D1 guard refuses them before the pipeline runs.
+async function currentRevision(slug: string): Promise<string | undefined> {
+  return (await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true }))?.revision;
+}
+
+async function pipelinePut(slug: string, body: string, type = 'note', title = 'D1 bypass test'): Promise<void> {
+  const revision = await currentRevision(slug);
+  await submitPageMutation(context(false), {
+    operation: 'put_page',
+    params: { slug, content: `---\ntype: ${type}\ntitle: ${title}\n---\n\n${body}\n`, ...(revision ? { expected_revision: revision } : {}) },
+  });
+}
+
+async function pipelineSoftDelete(slug: string): Promise<void> {
+  const deletePage = operationsByName.delete_page;
+  if (!deletePage) throw new Error('delete_page missing');
+  await deletePage.handler(context(false), { slug, expected_revision: await currentRevision(slug) });
+}
+
+/** Overwrite through the pipeline; return the page_versions row of the prior revision. */
+async function pipelineVersion(slug: string, changedBody: string, type = 'note', title = 'D1 bypass test'): Promise<{ id: number }> {
+  const prior = await currentRevision(slug);
+  await pipelinePut(slug, changedBody, type, title);
+  const rows = await engine.executeRaw<{ id: number }>(
+    `SELECT v.id FROM page_versions v JOIN pages p ON p.id = v.page_id
+     WHERE p.source_id = 'default' AND p.slug = $1 AND v.knowledge_revision = $2::uuid`, [slug, prior]);
+  if (!rows[0]) throw new Error(`pipeline did not version ${slug}`);
+  return { id: Number(rows[0].id) };
 }
 
 async function outcome<T>(fn: () => Promise<T>): Promise<{ allowed: true; value: T } | { allowed: false; message: string }> {
@@ -151,10 +189,10 @@ describe('D1 private-routing bypass paths', () => {
     console.log(`RED revert_version remote deny-listed slug: ${failureMessage(remoteRed)}`);
 
     const ordinary = 'notes/d1-bypass-ordinary-revert';
-    await seedDefault(ordinary);
-    const ordinaryVersion = await seedVersion(ordinary);
-    await engine.putPage(ordinary, { ...PAGE, compiled_truth: 'ordinary changed' }, { sourceId: 'default' });
-    const green = await outcome(() => revertVersion.handler(context(false), { slug: ordinary, version_id: ordinaryVersion.id }));
+    await pipelinePut(ordinary, 'original body');
+    const ordinaryVersion = await pipelineVersion(ordinary, 'ordinary changed');
+    const ordinaryRevision = await currentRevision(ordinary);
+    const green = await outcome(() => revertVersion.handler(context(false), { slug: ordinary, version_id: ordinaryVersion.id, expected_revision: ordinaryRevision }));
     expect(green.allowed).toBe(true);
     console.log(`GREEN revert_version ordinary slug: ${green.allowed ? 'allowed' : failureMessage(green)}`);
   });
@@ -175,9 +213,10 @@ describe('D1 private-routing bypass paths', () => {
     console.log(`RED restore_page remote deny-listed slug: ${failureMessage(remoteRed)}`);
 
     const ordinary = 'notes/d1-bypass-ordinary-restore';
-    await seedDefault(ordinary);
-    await seedSoftDeleted(ordinary);
-    const green = await outcome(() => restorePage.handler(context(false), { slug: ordinary }));
+    await pipelinePut(ordinary, 'original body');
+    await pipelineSoftDelete(ordinary);
+    const ordinaryRevision = await currentRevision(ordinary);
+    const green = await outcome(() => restorePage.handler(context(false), { slug: ordinary, expected_revision: ordinaryRevision }));
     expect(green.allowed).toBe(true);
     console.log(`GREEN restore_page ordinary slug: ${green.allowed ? 'allowed' : failureMessage(green)}`);
   });
@@ -269,16 +308,16 @@ describe('D1 private-routing bypass paths', () => {
 
   test('revert_version allows a non-deny-listed person row outside a person prefix', async () => {
     const allowed = 'wiki/d1-bypass-ordinary-revert-person';
-    await seedDefaultPerson(allowed);
-    await engine.putPage(allowed, { ...PERSON_PAGE, title: 'Ordinary D1 Person' }, { sourceId: 'default', migrationWrite: true });
-    const version = await seedVersion(allowed);
-    await engine.putPage(allowed, { ...PERSON_PAGE, title: 'Ordinary D1 Person', compiled_truth: 'changed ordinary person body' }, { sourceId: 'default', migrationWrite: true });
+    await pipelinePut(allowed, 'person body', 'person', 'Ordinary D1 Person');
+    const version = await pipelineVersion(allowed, 'changed ordinary person body', 'person', 'Ordinary D1 Person');
 
-    const local = await outcome(() => revertVersion.handler(context(false), { slug: allowed, version_id: version.id }));
+    const localRevision = await currentRevision(allowed);
+    const local = await outcome(() => revertVersion.handler(context(false), { slug: allowed, version_id: version.id, expected_revision: localRevision }));
     console.log(`GREEN revert_version ordinary wiki person local: ${local.allowed ? 'ALLOWED' : failureMessage(local)}`);
     expect(local.allowed).toBe(true);
 
-    const remote = await outcome(() => revertVersion.handler(context(true), { slug: allowed, version_id: version.id }));
+    const remoteRevision = await currentRevision(allowed);
+    const remote = await outcome(() => revertVersion.handler(context(true), { slug: allowed, version_id: version.id, expected_revision: remoteRevision }));
     console.log(`GREEN revert_version ordinary wiki person remote: ${remote.allowed ? 'ALLOWED' : failureMessage(remote)}`);
     expect(remote.allowed).toBe(true);
   });
@@ -345,16 +384,19 @@ describe('D1 private-routing bypass paths', () => {
 
   test('revert_version follows put_page collision allowlist behavior', async () => {
     for (const { slug, privateSlug } of ALLOWLISTED_COLLISIONS) {
-      await seedDefault(slug);
-      const version = await seedVersion(slug);
-      await engine.putPage(slug, { ...PAGE, compiled_truth: 'changed body' }, { sourceId: 'default', migrationWrite: true });
-      await addPrivateCollision(privateSlug);
+      // The allowlist row is written before seeding: a private copy from an
+      // earlier iteration (chris-hooper) would otherwise refuse the seed.
       writeFileSync(allowlistPath, `collision|${slug}\n`);
+      await pipelinePut(slug, 'original body');
+      const version = await pipelineVersion(slug, 'changed body');
+      await addPrivateCollision(privateSlug);
 
-      const localGreen = await outcome(() => revertVersion.handler(context(false), { slug, version_id: version.id }));
+      const localRevision = await currentRevision(slug);
+      const localGreen = await outcome(() => revertVersion.handler(context(false), { slug, version_id: version.id, expected_revision: localRevision }));
       expect(localGreen.allowed).toBe(true);
       expect((await engine.getPage(slug, { sourceId: 'default' }))?.compiled_truth).toBe('original body');
-      const remoteRed = await outcome(() => revertVersion.handler(context(true), { slug, version_id: version.id }));
+      const remoteRevision = await currentRevision(slug);
+      const remoteRed = await outcome(() => revertVersion.handler(context(true), { slug, version_id: version.id, expected_revision: remoteRevision }));
       expect(remoteRed.allowed).toBe(false);
       console.log(`ALLOWLIST revert_version ${slug} local=${localGreen.allowed} remote=${remoteRed.allowed}`);
     }
@@ -362,14 +404,18 @@ describe('D1 private-routing bypass paths', () => {
 
   test('restore_page follows put_page collision allowlist behavior', async () => {
     for (const { slug, privateSlug } of ALLOWLISTED_COLLISIONS) {
-      await seedDefault(slug);
-      await seedSoftDeleted(slug);
-      await addPrivateCollision(privateSlug);
+      // The allowlist row is written before seeding: a private copy from an
+      // earlier iteration (chris-hooper) would otherwise refuse the seed.
       writeFileSync(allowlistPath, `collision|${slug}\n`);
+      await pipelinePut(slug, 'original body');
+      await pipelineSoftDelete(slug);
+      await addPrivateCollision(privateSlug);
 
-      const localGreen = await outcome(() => restorePage.handler(context(false), { slug }));
+      const localRevision = await currentRevision(slug);
+      const localGreen = await outcome(() => restorePage.handler(context(false), { slug, expected_revision: localRevision }));
       expect(localGreen.allowed).toBe(true);
-      const remoteRed = await outcome(() => restorePage.handler(context(true), { slug }));
+      const remoteRevision = await currentRevision(slug);
+      const remoteRed = await outcome(() => restorePage.handler(context(true), { slug, expected_revision: remoteRevision }));
       expect(remoteRed.allowed).toBe(false);
       console.log(`ALLOWLIST restore_page ${slug} local=${localGreen.allowed} remote=${remoteRed.allowed}`);
     }
