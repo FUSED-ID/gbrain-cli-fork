@@ -58,7 +58,12 @@ const add_timeline_entry: Operation = {
     // D1 (fork): refuse a private-routed timeline write before the upstream
     // mutation pipeline runs. The pipeline owns the write itself.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    const current = await ctx.engine.getPage(p.slug as string, { includeDeleted: true, ...sourceOpts });
+    // Identity fields only (type/title), read directly: a page snapshot here
+    // would add a read ahead of the pipeline's preflight + admission snapshot.
+    const [current] = await ctx.engine.executeRaw<{ type: string; title: string }>(
+      'SELECT type, title FROM pages WHERE slug = $1 AND source_id = $2 LIMIT 1',
+      [p.slug as string, sourceOpts.sourceId ?? 'default'],
+    );
     await enforcePrivateWriteGuard(ctx, 'add_timeline_entry', {
       requestedSourceId: sourceOpts.sourceId ?? 'default',
       slug: p.slug as string,

@@ -788,6 +788,11 @@ export async function quiesceAutopilot(engine?: BrainEngine): Promise<(() => voi
 }
 
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
+  const wantsHelp = args.some((arg) => arg === '--help' || arg === '-h' || arg === 'help');
+  if (!wantsHelp) {
+    await assertUnmanagedCanonicalWriter(sourceEngine, 'engine migration');
+    await assertLegacyEngineMigration(sourceEngine);
+  }
   const consent = requireDestructiveConsent({
     command: 'migrate',
     scopeFlags: ['--to'],
@@ -799,8 +804,6 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     enforceConsent: args.includes('--force'),
   });
   if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
-  await assertUnmanagedCanonicalWriter(sourceEngine, 'engine migration');
-  await assertLegacyEngineMigration(sourceEngine);
 
   const opts = parseArgs(args);
   const config = loadConfig();
