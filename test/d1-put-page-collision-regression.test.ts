@@ -103,8 +103,11 @@ describe("put_page collision allowlist routing", () => {
     test(`${slug} preserves both the private body and the default row across two puts`, async () => {
       await seedScenario(slug, privateSlug);
 
-      await putPage.handler(context(), { slug, content: contentFor(slug) });
-      await putPage.handler(context(), { slug, content: contentFor(slug) });
+      // v0.57 put_page overwrites only with the revision the caller read.
+      const revisionOf = async () => (await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true }))?.revision;
+      const withRevision = (revision: string | undefined) => ({ slug, content: contentFor(slug), ...(revision ? { expected_revision: revision } : {}) });
+      await putPage.handler(context(), withRevision(await revisionOf()));
+      await putPage.handler(context(), withRevision(await revisionOf()));
 
       const privateRows = await engine.executeRaw<{ compiled_truth: string }>(
         `SELECT compiled_truth FROM pages WHERE source_id = 'lg-private' AND slug = $1`,

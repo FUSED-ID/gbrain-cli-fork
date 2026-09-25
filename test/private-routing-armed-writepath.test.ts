@@ -122,6 +122,10 @@ beforeEach(async () => {
     `DELETE FROM pages WHERE slug LIKE 'people/arm-writepath-%' OR slug LIKE 'person/arm-writepath-%'`,
   );
   await engine.executeRaw(`DELETE FROM sources WHERE id = 'lg-private'`);
+  // v0.57: a routed write publishes through the persistence pipeline, which
+  // binds the private source. This fixture recreates that source row with raw
+  // SQL per test, so drop the previous test's binding with it.
+  await engine.executeRaw(`DELETE FROM persistence_source_bindings WHERE source_id = 'lg-private'`);
 });
 
 afterAll(async () => {

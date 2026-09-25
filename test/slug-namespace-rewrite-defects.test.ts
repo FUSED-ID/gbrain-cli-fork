@@ -3,6 +3,7 @@ import { MAX_FILE_SIZE } from '../src/core/import-file.ts';
 import { resolveEntitySlug } from '../src/core/entities/resolve.ts';
 import { operations, OperationError } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { OperationContext, Operation } from '../src/core/ops/contract.ts';
 import {
   resolveSlugNamespaceRewrites,
@@ -105,21 +106,38 @@ describe('opt-in slug namespace rewrite defects', () => {
 
   test('config failure leaves put_page and get_page operational with rewrites off', async () => {
     await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: undefined }, async () => {
-      const engine = throwingConfigEngine();
-      const warnings: string[] = [];
-      const ctx = makeCtx(engine, { logger: { info: () => {}, warn: (message: string) => warnings.push(message), error: () => {} } });
+      // v0.57 put_page publishes through the persistence pipeline, which a
+      // stub engine cannot host. Use a real PGLite brain whose slug-rewrite
+      // config read throws; every other config key reads normally.
+      const engine = new PGLiteEngine();
+      await engine.connect({});
+      await engine.initSchema();
+      const realGetConfig = engine.getConfig.bind(engine);
+      (engine as unknown as { getConfig: (key: string) => Promise<string | null> }).getConfig = async (key: string) => {
+        if (key === 'slug_namespace_rewrites') throw new Error('synthetic config outage');
+        return realGetConfig(key);
+      };
+      try {
+        const warnings: string[] = [];
+        const ctx = makeCtx(engine, {
+          remote: false,
+          logger: { info: () => {}, warn: (message: string) => warnings.push(message), error: () => {} },
+        });
 
-      const putResult = await put_page.handler(ctx, {
-        slug: 'notes/config-outage',
-        content: 'x'.repeat(MAX_FILE_SIZE + 1),
-      }) as Record<string, unknown>;
-      expect(putResult).toMatchObject({ slug: 'notes/config-outage', status: 'skipped' });
+        const putResult = await put_page.handler(ctx, {
+          slug: 'notes/config-outage',
+          content: '---\ntype: note\ntitle: Config outage probe\n---\n\nConfig outage probe body.\n',
+        }) as Record<string, unknown>;
+        expect(putResult).toMatchObject({ slug: 'notes/config-outage' });
 
-      const getResult = await get_page.handler(ctx, { slug: 'notes/config-outage' }) as Record<string, unknown>;
-      expect(getResult).toMatchObject({ slug: 'notes/config-outage', title: 'Config outage probe' });
-      expect(warnings).toHaveLength(1);
+        const getResult = await get_page.handler(ctx, { slug: 'notes/config-outage' }) as Record<string, unknown>;
+        expect(getResult).toMatchObject({ slug: 'notes/config-outage', title: 'Config outage probe' });
+        expect(warnings).toHaveLength(1);
+      } finally {
+        await engine.disconnect();
+      }
     });
-  });
+  }, 120_000);
 
   test('two consecutive namespace resolves share one config read within the TTL', async () => {
     await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: undefined }, async () => {
