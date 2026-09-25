@@ -258,7 +258,7 @@ export async function expireSuperseded(engine: BrainEngine, oldId: number, newId
     /* best-effort */
   }
   try {
-    await engine.expireFact(oldId, { supersededBy: newId });
+    await engine.expireFact(oldId, { supersededBy: newId }); // gbrain-allow-direct-insert: fork D1 links superseded_by through the engine fact seam instead of raw SQL
   } catch {
     /* best-effort */
   }
