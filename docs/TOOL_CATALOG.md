@@ -99,7 +99,7 @@ Every non-localOnly operation on the MCP surface: 133 tools across 23 areas. **S
 | `pause_job` | Pause a waiting, active, or delayed job | admin |  |  |
 | `replay_job` | Replay a completed/failed/dead job, optionally with modified data | admin |  |  |
 | `resume_job` | Resume a paused job back to waiting | admin |  |  |
-| `retry_job` | Re-queue a failed or dead job for retry | admin |  |  |
+| `retry_job` | Re-queue a non-protected failed or dead job for retry | admin |  |  |
 | `send_job_message` | Send a sidechannel message to a running job's inbox | admin |  |  |
 | `submit_agent` | Submit an LLM agent job that the worker dispatches via the gateway-native tool loop. | agent | yes |  |
 | `submit_job` | Submit a background job. | admin |  |  |
@@ -222,7 +222,7 @@ Every non-localOnly operation on the MCP surface: 133 tools across 23 areas. **S
 |---|---|---|---|---|
 | `sources_add` | Register a new source. | sources_admin |  |  |
 | `sources_list` | List registered sources with page counts and remote_url. | read |  |  |
-| `sources_remove` | Hard-remove a source (cascades pages/chunks/embeddings). | sources_admin |  |  |
+| `sources_remove` | Hard-remove a source (cascades pages/facts/chunks/embeddings). | sources_admin |  |  |
 | `sources_status` | Per-source diagnostic. | read |  |  |
 
 ## tags
