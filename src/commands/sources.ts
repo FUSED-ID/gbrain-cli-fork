@@ -1984,7 +1984,8 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     return;
   }
 
-  if (['add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(sub)) {
+  const wantsHelp = rest.some((arg) => arg === 'help' || arg === '--help' || arg === '-h');
+  if (!wantsHelp && ['add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(sub)) {
     const { runConnectedSourceLifecycle } = await import('./sources-lifecycle.ts');
     if (await runConnectedSourceLifecycle(engine, args)) return;
   }

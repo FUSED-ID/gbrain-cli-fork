@@ -723,9 +723,11 @@ export async function runForget(engine: BrainEngine | (() => Promise<BrainEngine
     command: 'forget',
     scopeFlags: [],
     positionalScope: { name: 'fact-id', required: true },
-    valueFlags: ['--reason'],
+    valueFlags: ['--reason', '--source', '--request-id'],
+    allowedFlags: ['--json'],
+    allowedPrefixes: ['--reason', '--source', '--request-id'],
     args,
-    usage: 'Usage: gbrain forget <fact-id> [--reason <text>]',
+    usage: 'Usage: gbrain forget <fact-id> [--reason <text>] [--source <id>] [--request-id <uuid>] [--json]',
     enforceConsent: false,
   });
   if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
