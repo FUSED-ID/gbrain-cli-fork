@@ -990,16 +990,8 @@ export async function runPhaseExtractAtoms(
   // say are "retryable, never counted" — see that regex's doc comment.
   let hardFailureCount = 0;
 
-  /** Stamp the zero-yield/complete tombstone (hash-keyed; edits re-eligibilize). */
-  async function stampAtomsScanHash(item: { slug: string; contentHash: string }): Promise<void> {
-    try {
-      await engine.executeRaw(
-        `UPDATE pages
-            SET frontmatter = frontmatter || jsonb_build_object('atoms_scan_hash', $1::text)
-          WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL`,
-        [item.contentHash.slice(0, 16), sourceId, item.slug],
-      );
-    } catch { /* fail-soft: page stays rediscoverable */ }
+  async function stampAtomsScanHash(item: AtomPageInput): Promise<void> {
+    await writeAtomPageState(engine, sourceId, item, 'complete');
   }
 
   /**
@@ -1064,21 +1056,11 @@ export async function runPhaseExtractAtoms(
       }
     }
     try {
-      const rows = await engine.executeRaw<{ cnt: number | string }>(
-        `UPDATE pages
-            SET frontmatter = frontmatter
-              || jsonb_build_object('atoms_fail_hash', $1::text)
-              || jsonb_build_object('atoms_fail_count',
-                   CASE WHEN COALESCE(frontmatter->>'atoms_fail_hash', '') = $1::text
-                        THEN COALESCE((frontmatter->>'atoms_fail_count')::int, 0) + 1
-                        ELSE 1 END)
-          WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL
-          RETURNING (frontmatter->>'atoms_fail_count')::int AS cnt`,
-        [hash16, sourceId, item.slug],
-      );
-      const cnt = rows[0]?.cnt;
-      return cnt == null ? null : Number(cnt);
-    } catch {
+      return await writeAtomPageState(engine, sourceId, item, 'failure');
+    } catch (err) {
+      const error = err instanceof AtomPageStateError ? err.message : new AtomPageStateError('storage').message;
+      failures.push({ source: item.slug, error });
+      console.error(`[extract_atoms] ${item.slug}: ${error}`);
       return null;
     }
   }
@@ -1322,12 +1304,7 @@ export async function runPhaseExtractAtoms(
         // after every atom AND provenance edge persisted), then stamp the
         // source page. A crash between flip and stamp degrades to the legacy
         // atom-rows-mean-done semantics — safe, not lossy.
-        await engine.executeRaw(
-          `UPDATE pages
-              SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
-            WHERE source_id = $2 AND type = 'atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`,
-          [hash16, sourceId, importedSlugs],
-        );
+        await completeAtomReceipts(engine, sourceId, importedSlugs, hash16, item.kind === 'page' ? item : undefined);
         if (item.kind === 'page') {
           await stampAtomsScanHash(item);
         }
