@@ -186,14 +186,13 @@ const revert_version: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    pageMutationSource(ctx, p, 'revert_version');
+    const sourceId = pageMutationSource(ctx, p, 'revert_version');
     enforceClientSlugFence(ctx, p.slug as string, 'revert_version');
     if (ctx.dryRun) return { dry_run: true, action: 'revert_version', slug: p.slug, version_id: p.version_id };
-    // v0.31.8 (D7): thread ctx.sourceId so multi-source brains revert the
-    // intended page row instead of whichever same-slug row Postgres returns
-    // first.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    const requestedSourceId = sourceOpts.sourceId ?? 'default';
+    // D1 (fork): refuse a private-routed revert before the upstream mutation
+    // pipeline runs. The pipeline owns the revert itself.
+    const sourceOpts = { sourceId };
+    const requestedSourceId = sourceId;
     const versions = await ctx.engine.getVersions(p.slug as string, sourceOpts);
     const version = versions.find((candidate) => candidate.id === p.version_id);
     const versionType = version?.frontmatter && typeof version.frontmatter.type === 'string'
@@ -211,9 +210,7 @@ const revert_version: Operation = {
       title: current?.title,
       frontmatter: version.frontmatter,
     } : undefined);
-    await ctx.engine.createVersion(p.slug as string, sourceOpts);
-    await ctx.engine.revertToVersion(p.slug as string, p.version_id as number, sourceOpts);
-    return { status: 'reverted' };
+    return submitPageMutation(ctx, { operation: 'revert_version', params: p });
   },
   cliHints: { name: 'revert', positional: ['slug', 'version_id'] },
 };
