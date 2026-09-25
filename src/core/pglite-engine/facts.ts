@@ -119,14 +119,13 @@ export async function insertFact(
     return { id: ins.rows[0].id, status: 'inserted' };
   }
 
-export async function expireFact(deps: PgliteFactsDeps, id: number, opts?: { supersededBy?: number; at?: Date; validUntil?: Date | string | null }): Promise<boolean> {
+export async function expireFact(deps: PgliteFactsDeps, id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean> {
   const at = opts?.at ?? new Date();
   const result = await deps.db.query(
       `UPDATE facts SET expired_at = COALESCE(expired_at, $1),
-                        superseded_by = COALESCE($2::int, superseded_by),
-                        valid_until = COALESCE($3::timestamptz, valid_until)
-       WHERE id = $4 AND (expired_at IS NULL OR $2::int IS NOT NULL)`,
-      [at, opts?.supersededBy ?? null, opts?.validUntil ?? null, id],
+                        superseded_by = COALESCE($2::int, superseded_by)
+       WHERE id = $3 AND (expired_at IS NULL OR $2::int IS NOT NULL)`,
+      [at, opts?.supersededBy ?? null, id],
     );
     return (result.affectedRows ?? 0) > 0;
   }

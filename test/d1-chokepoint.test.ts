@@ -109,7 +109,7 @@ describe('D1 shared engine chokepoints on PGLite', () => {
 
   test('expireFact reduces exposure through the fact seam', async () => {
     const id = await seedFact();
-    await expect(engine.expireFact(id, { validUntil: '2026-09-15' })).resolves.toBe(true);
+    await expect(engine.expireFact(id)).resolves.toBe(true);
     const rows = await engine.executeRaw<{ expired_at: unknown }>('SELECT expired_at FROM facts WHERE id = $1', [id]);
     expect(rows[0].expired_at).not.toBeNull();
   });
