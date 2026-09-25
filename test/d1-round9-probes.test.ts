@@ -109,7 +109,7 @@ describe('Fable round 9 probe.ts', () => {
     await seedDefault('wiki/albert-bausch', 'Albert Bausch', 'person');
     await seedDefault('wiki/g-pavlov-kuna-family', 'G Pavlov Kuna Family', 'note');
     let id = await seedFact('wiki/albert-bausch');
-    expect((await probe('expireFact(albert fact in default)', async () => { const ok = await engine.expireFact(id, { validUntil: '2026-09-15' }); return { ok, row: await factRow(id) }; })).ok).toBe(true);
+    expect((await probe('expireFact(albert fact in default)', async () => { const ok = await engine.expireFact(id); return { ok, row: await factRow(id) }; })).ok).toBe(true);
     expect((await probe('softDeletePage(wiki/albert-bausch, default)', () => engine.softDeletePage('wiki/albert-bausch', { sourceId: 'default' }))).ok).toBe(true);
     expect(await engine.getPage('wiki/albert-bausch', { sourceId: 'default' })).toBeNull();
     expect((await probe('softDeletePage(wiki/g-pavlov-kuna-family) no sourceId', () => engine.softDeletePage('wiki/g-pavlov-kuna-family'))).ok).toBe(true);

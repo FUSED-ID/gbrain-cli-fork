@@ -4422,7 +4422,7 @@ export class PostgresEngine implements BrainEngine {
     return factsImpl.insertFact(this.factsDeps, input, ctx);
   }
 
-  async expireFact(id: number, opts?: { supersededBy?: number; at?: Date; validUntil?: Date | string | null }): Promise<boolean> {
+  async expireFact(id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean> {
     return factsImpl.expireFact(this.factsDeps, id, opts);
   }
 

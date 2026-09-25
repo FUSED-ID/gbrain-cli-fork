@@ -123,16 +123,14 @@ export async function insertFact(
     return { id, status: 'inserted' };
   }
 
-export async function expireFact(deps: PgFactsDeps, id: number, opts?: { supersededBy?: number; at?: Date; validUntil?: Date | string | null }): Promise<boolean> {
+export async function expireFact(deps: PgFactsDeps, id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean> {
     const sql = deps.sql;
     const at = opts?.at ?? new Date();
     const supersededBy = opts?.supersededBy ?? null;
-    const validUntil = opts?.validUntil ?? null;
     const result = await sql`
       UPDATE facts SET
         expired_at = COALESCE(expired_at, ${at}),
-        superseded_by = COALESCE(${supersededBy}::int, superseded_by),
-        valid_until = COALESCE(${validUntil}::timestamptz, valid_until)
+        superseded_by = COALESCE(${supersededBy}::int, superseded_by)
       WHERE id = ${id}
         AND (expired_at IS NULL OR ${supersededBy}::int IS NOT NULL)
     `;
