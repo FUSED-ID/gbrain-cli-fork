@@ -1,8 +1,6 @@
 /** R4 C1: remote ping admission and fixed no-purge handler boundary. */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { operationsByName } from '../src/core/operations.ts';
-import { PROTECTED_JOB_NAMES } from '../src/core/minions/protected-names.ts';
 import { HANDLER_DEFAULT_TIMEOUT_MS } from '../src/core/minions/handler-timeouts.ts';
 import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
 
@@ -19,23 +17,12 @@ afterAll(async () => {
 });
 
 describe('R4 C1 remote autopilot cycle', () => {
-  test('remote submit_job accepts the exact remote ping payload', async () => {
-    const submitJob = operationsByName.submit_job;
-    const result = await submitJob.handler(
-      {
-        engine: engine as any,
-        config: {} as any,
-        logger: console as any,
-        dryRun: false,
-        remote: true,
-        sourceId: 'default',
-      } as any,
-      { name: 'remote-autopilot-cycle', data: { phases: ['sync', 'extract', 'embed'] } },
-    ) as { id: number; name: string };
-
-    expect(result.name).toBe('remote-autopilot-cycle');
-    expect(PROTECTED_JOB_NAMES.has('remote-autopilot-cycle')).toBe(false);
-  });
+  // Retired 2026-09-25 (GF-W51, Girl Friday decision, upstream-aligned; LGV may
+  // overrule): upstream v0.57's stricter remote submit_job rules stand (only
+  // sync, import, lint and lint-fix, with an authenticated principal, source
+  // grant and payload hash). The allowlist is NOT widened for
+  // remote-autopilot-cycle; nothing in the estate calls `gbrain remote ping`.
+  // The fixed no-purge handler boundary below is still asserted.
 
   test('the remote handler ignores a purge request and passes only fixed phases', async () => {
     const handlers = new Map<string, (job: any) => Promise<any>>();
