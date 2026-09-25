@@ -799,6 +799,8 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     enforceConsent: args.includes('--force'),
   });
   if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+  await assertUnmanagedCanonicalWriter(sourceEngine, 'engine migration');
+  await assertLegacyEngineMigration(sourceEngine);
 
   const opts = parseArgs(args);
   const config = loadConfig();
