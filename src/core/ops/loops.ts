@@ -434,7 +434,7 @@ const loops_close: Operation = {
     // stop carrying it (fence round-trip happens on the next facts sweep).
     if (row.fact_id !== null) {
       try {
-        await ctx.engine.expireFact(row.fact_id);
+        await ctx.engine.expireFact(row.fact_id); // gbrain-allow-direct-insert: fork D1 routes the loop-close fact expiry through the engine fact seam instead of raw SQL
       } catch { /* best-effort */ }
     }
     return { closed: true, id: row.id, status: row.status, fact_expired: row.fact_id !== null };
