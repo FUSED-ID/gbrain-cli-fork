@@ -9,9 +9,9 @@ import { upsertOpenLoop } from '../src/core/loops/loops-store.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 
-const SLUG = 'person/d1-chokepoint-target';
+const SLUG = 'people/d1-chokepoint-target';
 const TITLE = 'D1 Chokepoint Target';
-const DENY = `## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| \`person/d1-chokepoint-*\` | ${TITLE} |\n`;
+const DENY = `## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| \`people/d1-chokepoint-*\` | ${TITLE} |\n`;
 const PAGE = { type: 'person' as const, title: TITLE, compiled_truth: 'private body', timeline: '', frontmatter: {} };
 
 let engine: PGLiteEngine;

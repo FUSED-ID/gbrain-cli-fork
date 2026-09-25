@@ -17,7 +17,7 @@ process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH = allow;
 copyFileSync('/Users/lg/gbrain-private/_excluded-people.md', join(policyDir, '_excluded-people.md'));
 copyFileSync('/Users/lg/gbrain-private/_brain-filing-rules.md', join(policyDir, '_brain-filing-rules.md'));
 const REAL_DENY = readFileSync(join(policyDir, '_excluded-people.md'), 'utf8');
-writeFileSync(allow, 'collision|person/lgv\ncollision|chris-hooper/_author\ncollision|wiki/chris-hooper/_author\n');
+writeFileSync(allow, 'collision|people/lgv\ncollision|chris-hooper/_author\ncollision|wiki/chris-hooper/_author\n');
 
 let engine: InstanceType<typeof PGLiteEngine>;
 
@@ -74,7 +74,7 @@ describe('Fable round 9 focused acceptance assertions', () => {
   test('B: all three allowlisted collisions stay live in both sources across two imports', async () => {
     await clearProbeRows();
     const cases = [
-      ['person/lgv', 'LGV'],
+      ['people/lgv', 'LGV'],
       ['chris-hooper/_author', 'Chris Hooper'],
       ['wiki/chris-hooper/_author', 'Chris Hooper'],
     ] as const;
@@ -187,17 +187,17 @@ describe('Fable round 9 probe.ts', () => {
     expect(await engine.getPage('wiki/albert-bausch-3', { sourceId: 'lg-private' })).toMatchObject({ source_id: 'lg-private' });
 
     console.log('\n=== D1-ADVERSARIAL: three allowlisted collisions through importFromContent ===');
-    for (const slug of ['person/lgv', 'chris-hooper/_author', 'wiki/chris-hooper/_author']) {
-      await engine.putPage(slug, page(slug === 'person/lgv' ? 'LGV' : 'Chris Hooper', 'person', `PRIVATE ${slug}`), { sourceId: 'lg-private' });
-      await engine.putPage(slug, page(slug === 'person/lgv' ? 'LGV' : 'Chris Hooper', 'person', `PUBLIC ${slug}`), { sourceId: 'default', migrationWrite: true });
+    for (const slug of ['people/lgv', 'chris-hooper/_author', 'wiki/chris-hooper/_author']) {
+      await engine.putPage(slug, page(slug === 'people/lgv' ? 'LGV' : 'Chris Hooper', 'person', `PRIVATE ${slug}`), { sourceId: 'lg-private' });
+      await engine.putPage(slug, page(slug === 'people/lgv' ? 'LGV' : 'Chris Hooper', 'person', `PUBLIC ${slug}`), { sourceId: 'default', migrationWrite: true });
     }
     for (let pass = 0; pass < 2; pass++) {
-      for (const slug of ['person/lgv', 'chris-hooper/_author', 'wiki/chris-hooper/_author']) {
-        const title = slug === 'person/lgv' ? 'LGV' : 'Chris Hooper';
+      for (const slug of ['people/lgv', 'chris-hooper/_author', 'wiki/chris-hooper/_author']) {
+        const title = slug === 'people/lgv' ? 'LGV' : 'Chris Hooper';
         expect((await probe(`importFromContent ${slug} sourceId default pass ${pass + 1}`, () => importFromContent(engine, slug, `---\ntype: person\ntitle: ${title}\n---\n\nPUBLIC ${slug} SYNC\n`, { sourceId: 'default', noEmbed: true }))).ok).toBe(true);
       }
     }
-    for (const slug of ['person/lgv', 'chris-hooper/_author', 'wiki/chris-hooper/_author']) {
+    for (const slug of ['people/lgv', 'chris-hooper/_author', 'wiki/chris-hooper/_author']) {
       expect((await engine.getPage(slug, { sourceId: 'lg-private' }))?.compiled_truth).toBe(`PRIVATE ${slug}`);
       expect(await engine.getPage(slug, { sourceId: 'default' })).not.toBeNull();
       expect((await engine.getPage(slug, { sourceId: 'default', includeDeleted: true }))?.deleted_at).toBeNull();

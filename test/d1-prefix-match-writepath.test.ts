@@ -101,9 +101,9 @@ describe('D1 synthetic write-path probes', () => {
   test('records the four prefix probes and leaves no live rows after cleanup', async () => {
     const cases = [
       `wiki/julie-anne-vandenberg-probe-b-${STAMP}`,
-      `person/julie-anne-vandenberg-notes-${STAMP}`,
+      `people/julie-anne-vandenberg-notes-${STAMP}`,
       `wiki/celeste-no-star-probe-${STAMP}`,
-      `person/marin-no-star-notes-${STAMP}`,
+      `people/marin-no-star-notes-${STAMP}`,
     ];
     const results = [];
     for (const slug of cases) results.push(await probe(slug));
@@ -119,9 +119,9 @@ describe('D1 synthetic write-path probes', () => {
       await probe(`wiki/albert-bausch-probe-${STAMP}`),
       await probe(`wiki/g-pavlov-kuna-family-probe-${STAMP}`),
     ];
-    const ordinaryWord = await probe(`person/will-update-ordinary-word-${STAMP}`);
-    const company = await probe(`person/vandenberg-energy-labs-${STAMP}`);
-    const midString = await probe(`person/notes-about-julie-anne-vandenberg-${STAMP}`);
+    const ordinaryWord = await probe(`people/will-update-ordinary-word-${STAMP}`);
+    const company = await probe(`people/vandenberg-energy-labs-${STAMP}`);
+    const midString = await probe(`people/notes-about-julie-anne-vandenberg-${STAMP}`);
     console.log(`CONTROL wildcards ${JSON.stringify(wildcards)}`);
     console.log(`CONTROL negative ${JSON.stringify([ordinaryWord, company, midString])}`);
     expect(wildcards.every((result) => result.outcome.startsWith('refused:'))).toBe(true);

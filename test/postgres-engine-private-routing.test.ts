@@ -142,7 +142,7 @@ describeIfDb('PostgresEngine: D1 private-write policy guard', () => {
     process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH = allowlistPath;
     try {
       // Mirrors the live shape: the private profile lives at the BARE slug
-      // in lg-private (see person/chris-hooper's real private page,
+      // in lg-private (see chris-hooper's real private person page,
       // 'chris-hooper', no /_author suffix); the public stub is written to
       // `default` at the /_author-suffixed slug. Rule (b) matches these via
       // candidateKeys' stripAuthorSuffix walk, not an exact-string match.
@@ -214,7 +214,7 @@ describeIfDb('PostgresEngine: D1 private-write policy guard', () => {
     // INSERT. This is a synthetic reproduction of that shape; it is not a
     // claim that this happened to any specific real page (defect 4
     // correction, binding NO-GO 20260915: the live database has no
-    // 'default' row, live or tombstoned, for person/chris-hooper -- only an
+    // 'default' row, live or tombstoned, for the chris-hooper person page -- only an
     // lg-private one -- so the earlier claim that this "actually happened"
     // to it was unsupported and has been removed).
     await pointPrivateSource(policyDir);

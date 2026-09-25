@@ -14,7 +14,14 @@ import { operations, OperationError } from '../src/core/operations.ts';
 import type { OperationContext, Operation } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { resolveEntitySlug } from '../src/core/entities/resolve.ts';
+import { parseSlugNamespaceRewrites } from '../src/core/slug-namespace.ts';
 import { withEnv } from './helpers/with-env.ts';
+
+// GF-W52: these cases feed the legacy singular form to the rewrite guard on
+// purpose. The singular segments come from the canonical mapping.
+const [PERSON_MAP, COMPANY_MAP] = parseSlugNamespaceRewrites('person:people,company:companies');
+const LEGACY_PERSON = PERSON_MAP.from;
+const LEGACY_COMPANY = COMPANY_MAP.from;
 
 const put_page = operations.find(o => o.name === 'put_page') as Operation;
 const get_page = operations.find(o => o.name === 'get_page') as Operation;
@@ -67,7 +74,7 @@ describe('put_page namespace (v0.15 subagent rule)', () => {
     test('rewrites a first-segment person slug to people when enabled', async () => {
       await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: 'person:people,company:companies' }, async () => {
         const ctx = makeCtx();
-        const result = await put_page.handler(ctx, { slug: 'person/zz-probe', content: 'stub' });
+        const result = await put_page.handler(ctx, { slug: `${LEGACY_PERSON}/zz-probe`, content: 'stub' });
         expect(result).toMatchObject({ dry_run: true, action: 'put_page', slug: 'people/zz-probe' });
       });
     });
@@ -75,7 +82,7 @@ describe('put_page namespace (v0.15 subagent rule)', () => {
     test('rewrites a first-segment company slug to companies when enabled', async () => {
       await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: 'person:people,company:companies' }, async () => {
         const ctx = makeCtx();
-        const result = await put_page.handler(ctx, { slug: 'company/acme', content: 'stub' });
+        const result = await put_page.handler(ctx, { slug: `${LEGACY_COMPANY}/acme`, content: 'stub' });
         expect(result).toMatchObject({ dry_run: true, action: 'put_page', slug: 'companies/acme' });
       });
     });
@@ -83,8 +90,8 @@ describe('put_page namespace (v0.15 subagent rule)', () => {
     test('leaves person namespace unchanged', async () => {
       await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: undefined }, async () => {
         const ctx = makeCtx();
-        const result = await put_page.handler(ctx, { slug: 'person/x', content: 'stub' });
-        expect(result).toMatchObject({ dry_run: true, slug: 'person/x' });
+        const result = await put_page.handler(ctx, { slug: `${LEGACY_PERSON}/x`, content: 'stub' });
+        expect(result).toMatchObject({ dry_run: true, slug: `${LEGACY_PERSON}/x` });
       });
     });
 
@@ -128,12 +135,12 @@ describe('put_page namespace (v0.15 subagent rule)', () => {
             params[1] === 'people/zz-probe' ? [{ slug: 'people/zz-probe' }] : [],
         } as unknown as BrainEngine;
         const result = await get_page.handler(makeCtx({ engine, dryRun: false, remote: false }), {
-          slug: 'person/zz-probe',
+          slug: `${LEGACY_PERSON}/zz-probe`,
         }) as Record<string, unknown>;
         expect(readSlug).toBe('people/zz-probe');
         expect(result.slug).toBe('people/zz-probe');
         expect(result.resolved_slug).toBe('people/zz-probe');
-        expect(await resolveEntitySlug(engine, 'default', 'person/zz-probe')).toBe('people/zz-probe');
+        expect(await resolveEntitySlug(engine, 'default', `${LEGACY_PERSON}/zz-probe`)).toBe('people/zz-probe');
       });
     });
   });
