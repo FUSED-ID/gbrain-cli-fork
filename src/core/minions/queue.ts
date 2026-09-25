@@ -1246,17 +1246,25 @@ export class MinionQueue {
    * "run this fresh" the same way the unreset attempt counters did.
    */
   async retryJob(id: number): Promise<MinionJob | null> {
-    const rows = await this.engine.executeRaw<Record<string, unknown>>(
-      `UPDATE minion_jobs SET status = 'waiting', error_text = NULL,
-        lock_token = NULL, lock_until = NULL, delay_until = NULL,
-        finished_at = NULL, started_at = NULL, attempts_made = 0,
-        attempts_started = 0, stalled_counter = 0, updated_at = now()
-       WHERE id = $1 AND status IN ('failed', 'dead')
-         AND NOT (name = ANY($2::text[]))
-       RETURNING *`,
-      [id, [...PURGE_GATED_JOB_NAMES]]
-    );
-    return rows.length > 0 ? rowToMinionJob(rows[0]) : null;
+    return this.engine.transaction(async tx => {
+      const [prior] = await tx.executeRaw<Record<string, unknown>>('SELECT * FROM minion_jobs WHERE id = $1', [id]);
+      if (!prior) return null;
+      await authorizeJobExecution(tx, rowToMinionJob(prior));
+      if (!await admitDelegatedRetry(tx, id)) return null;
+      // Fork purge gate: a purge-gated job is never revived by retry; it must
+      // be resubmitted with explicit consent.
+      const rows = await tx.executeRaw<Record<string, unknown>>(
+        `UPDATE minion_jobs SET status = 'waiting', error_text = NULL,
+          lock_token = NULL, lock_until = NULL, delay_until = NULL,
+          finished_at = NULL, started_at = NULL, attempts_made = 0,
+          attempts_started = 0, stalled_counter = 0, updated_at = now()
+         WHERE id = $1 AND status IN ('failed', 'dead')
+           AND NOT (name = ANY($2::text[]))
+         RETURNING *`,
+        [id, [...PURGE_GATED_JOB_NAMES]]
+      );
+      return rows.length > 0 ? rowToMinionJob(rows[0]) : null;
+    });
   }
 
   /** Prune old jobs in terminal statuses. Returns count of deleted rows. */
@@ -1498,7 +1506,7 @@ export class MinionQueue {
         updated_at = now()
        WHERE id = (
          SELECT id FROM minion_jobs
-         WHERE queue = $3 AND status = 'waiting' AND name = ANY($4)
+         WHERE queue = $3 AND status = 'waiting' AND submission_authority IS NOT NULL AND name = ANY($4)
            AND NOT (
              name = ANY($7::text[])
              AND COALESCE(data ->> $8, 'false') <> 'true'

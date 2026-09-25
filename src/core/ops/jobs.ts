@@ -558,8 +558,10 @@ const retry_job: Operation = {
     if (ctx.dryRun) return { dry_run: true, action: 'retry_job', id: p.id };
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
-    const target = await queue.getJob(p.id as number);
-    if (target && isPurgeGatedJobName(target.name)) {
+    const prior = await queue.getJob(p.id as number);
+    if (!prior) throw new OperationError('invalid_params', 'Job not found');
+    await assertRemoteJobControl(ctx, prior);
+    if (isPurgeGatedJobName(prior.name)) {
       throw new OperationError(
         'permission_denied',
         `Cannot retry protected job ${p.id}; submit it again through the trusted local submit path.`,

@@ -41,6 +41,11 @@ import type { BrainEngine, FactInsertStatus, NewFact } from '../engine.ts';
 import type { ResolutionSource } from '../entities/resolve.ts';
 import { isFactsBackstopEligible } from './eligibility.ts';
 import type { PageType } from '../types.ts';
+import type { OperationContext } from '../ops/contract.ts';
+import type { WriteReceipt } from '../persistence/types.ts';
+import type { GBrainConfig } from '../config.ts';
+import { isAvailable } from '../ai/gateway.ts';
+import { withAIInvocationPreflight } from '../ai/invocation-guard.ts';
 import { resolveSourceVisibility } from './visibility.ts';
 
 /**
@@ -631,6 +636,7 @@ async function runPipelineBodyInner(
   // [ENG-8] Explicit ctx.visibility wins; unset resolves the operator-set
   // facts.default_visibility (fail-closed to 'private').
   const visibility = await resolveSourceVisibility(ctx.engine, ctx.sourceId, ctx.visibility);
+  if (managed) return publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, input.pageSlug);
 
   let inserted = 0;
   let duplicate = 0;

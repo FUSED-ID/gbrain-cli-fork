@@ -4040,6 +4040,12 @@ if (import.meta.main) {
       if (shouldForceExitAfterMain()) flushThenExit(currentExitCode());
     },
     (e) => {
+      if (e?.code === 'pglite_busy' && process.argv.includes('--json')) {
+        console.log(JSON.stringify({ error: 'pglite_busy', retryable: true, reason: e.reason,
+          next_action: 'Wait for the current command or server to close, then retry. Do not remove a live lock.' }));
+        flushThenExit(1);
+        return;
+      }
       if (e instanceof DestructiveConsentError) {
         console.error(e.message);
         flushThenExit(e.exitCode);

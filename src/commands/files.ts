@@ -847,7 +847,7 @@ async function cleanFiles(args: string[]) {
       if (stat.isSymbolicLink()) continue;
       if (stat.isDirectory()) findAndClean(full);
       else if (entry.endsWith('.redirect.yaml') || entry.endsWith('.redirect')) {
-        if (!dryRun) unlinkSync(full);
+        if (!dryRun) { assertManagedFilesystemWrite(full); unlinkSync(full); }
         cleaned++;
       }
     }

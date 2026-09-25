@@ -21,7 +21,7 @@ import { isSearchMode } from '../search/mode.ts';
 import { stampEvidence } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
 import type { SearchResult, HybridSearchMeta, PageReadScope, PageReadPolicy } from '../types.ts';
-import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
 import {
   assertPrivateRoutingArmed,
   isPersonishPageWrite,
