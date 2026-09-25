@@ -718,7 +718,7 @@ function factRowToJson(r: FactRow): Record<string, unknown> {
   };
 }
 
-export async function runForget(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runForget(engine: BrainEngine | (() => Promise<BrainEngine>), args: string[]): Promise<void> {
   const consent = requireDestructiveConsent({
     command: 'forget',
     scopeFlags: [],

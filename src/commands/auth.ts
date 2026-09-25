@@ -28,6 +28,8 @@ import { generateToken, isUndefinedColumnError, isUndefinedTableError } from '..
 import { TOKEN_ID_RE } from '../core/token-mint.ts';
 import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { sqlQueryForEngine, executeRawJsonb, type SqlQuery } from '../core/sql-query.ts';
+import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPatch } from '../core/grants/service.ts';
+import { parseRescopeGrantArgs } from '../core/grants/cli.ts';
 import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent } from '../core/destructive-guard.ts';
 
 function hashToken(token: string): string {
@@ -1133,6 +1135,7 @@ Usage:
                                                           only — stdio use is not logged). Automation-shaped
                                                           clients (>90% context_pack/delta) are flagged.
   gbrain auth revoke-client <client_id> --yes-i-mean-it   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
+  gbrain auth local-writer list|register|revoke            Manage durable local CLI/stdio writers (see --help)
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `;
 

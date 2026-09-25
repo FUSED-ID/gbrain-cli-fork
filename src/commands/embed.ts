@@ -832,7 +832,7 @@ export function isKeylessStaleRefusal(args: string[], embeddingDisabled: boolean
     && embeddingDisabled === true;
 }
 
-export async function runEmbed(engine: BrainEngine, args: string[]): Promise<EmbedResult | undefined> {
+export async function runEmbed(engine: BrainEngine, args: string[], selectedConfig: GBrainConfig | null = null): Promise<EmbedResult | EmbedFactsResult | undefined> {
   const consent = requireDestructiveConsent({
     command: 'embed',
     scopeFlags: [],
@@ -841,6 +841,11 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
     enforceConsent: false,
   });
   if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+  if (args.includes('--facts')) {
+    const result = await embedStaleFacts(engine, parseFactEmbedArgs(args), selectedConfig);
+    console.log(JSON.stringify(result, null, 2));
+    return result;
+  }
 
   // Keyless clean refusal — see isKeylessStaleRefusal. Checked BEFORE the
   // background block so we never queue a job that can only fail. stderr only;

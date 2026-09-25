@@ -52,7 +52,8 @@ import {
 import type { SchemaPackManifest, PackPrimitive } from '../core/schema-pack/manifest-v1.ts';
 import { PACK_PRIMITIVES } from '../core/schema-pack/manifest-v1.ts';
 import { bundledPackPath } from '../core/schema-pack/bundled-assets.ts';
-import { gbrainPath, loadConfig, configPath, toEngineConfig } from '../core/config.ts';
+import { gbrainPath, loadConfig, configPath, toEngineConfig, type GBrainConfig } from '../core/config.ts';
+import { readDbSchemaPack } from '../core/schema-pack/best-effort.ts';
 import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent } from '../core/destructive-guard.ts';
 
 export async function runSchema(args: string[]): Promise<void> {
