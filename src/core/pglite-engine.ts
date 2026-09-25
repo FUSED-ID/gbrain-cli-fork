@@ -1143,6 +1143,9 @@ export class PGLiteEngine implements BrainEngine {
                 WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='surface') AS oauth_clients_surface_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='surface_set_by') AS oauth_clients_surface_set_by_exists,
+        (SELECT COUNT(*) = 6 FROM information_schema.columns
+          WHERE table_schema='public' AND table_name='oauth_clients'
+            AND column_name IN ('allowed_operations', 'delegated_slug_prefixes', 'delegated_namespace', 'grant_profile', 'grant_revision', 'grant_repair_reasons')) AS oauth_client_grants_exist,
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='permissions') AS oauth_clients_permissions_exists,
         EXISTS (SELECT 1 FROM information_schema.tables
@@ -1229,6 +1232,7 @@ export class PGLiteEngine implements BrainEngine {
       oauth_clients_federated_read_exists: boolean;
       oauth_clients_surface_exists: boolean;
       oauth_clients_surface_set_by_exists: boolean;
+      oauth_client_grants_exist: boolean;
       oauth_clients_permissions_exists: boolean;
       access_tokens_exists: boolean;
       access_tokens_permissions_exists: boolean;
@@ -1370,7 +1374,7 @@ export class PGLiteEngine implements BrainEngine {
         && !needsMcpLogBootstrap && !needsSubagentProviderId
         && !needsPagesRecency && !needsIngestLogSourceId
         && !needsFilesBootstrap && !needsOauthClientsBootstrap
-        && !needsOauthClientsSurface
+        && !needsOauthClientsSurface && !needsOauthClientGrants
         && !needsOauthPermissions
         && !needsSourcesArchive && !needsPagesLastRetrievedAt
         && !needsPagesProvenance
@@ -1754,94 +1758,42 @@ export class PGLiteEngine implements BrainEngine {
     return { slug: r.slug, id: Number(r.id) };
   }
 
-  async putPage(
-    slug: string,
-    page: PageInput,
-    opts?: { sourceId?: string; allowEmptyOverwrite?: boolean; migrationWrite?: boolean },
-  ): Promise<Page> {
+  private _pageTransaction = false;
+
+  async putPage(slug: string, page: PageInput, opts?: PageWriteOptions & { migrationWrite?: boolean }): Promise<Page> {
     slug = validateSlug(slug);
-    const sourceId = opts?.sourceId ?? 'default';
-    // migrationWrite: mirrors postgres-engine.ts. `gbrain migrate` copies
-    // `sources` before `pages`, so on a fresh target every migrated page
-    // looks "new" to this guard. The D1 policy check is about NEW leaks
-    // entering a world-federated source, not a verbatim copy of a source
-    // engine's already-accepted pages, so migration is exempted here
-    // explicitly and only here. See copyPageToTarget in
-    // src/commands/migrate-engine.ts, the one caller allowed to set it.
+    // D1 (fork): the privacy chokepoint for every page write. migrationWrite
+    // exempts only copyPageToTarget in src/commands/migrate-engine.ts: a
+    // verbatim copy of a page the source engine already accepted, not a new
+    // write entering a world-federated source.
     if (!opts?.migrationWrite) {
       await enforcePrivatePageWrite(this, {
-        requestedSourceId: sourceId,
+        requestedSourceId: opts?.sourceId ?? 'default',
         slug,
         entityType: page.type,
         entityName: page.title,
       });
     }
-    // Tombstone race guard (defects 2 and 4 fix; wording corrected, third
-    // binding NO-GO -- defect 3), mirrors postgres-engine.ts.
-    //
-    // The WHERE clause on the ON CONFLICT upsert below compares deleted_at
-    // against clock_timestamp() evaluated BY POSTGRES (PGlite is a real
-    // Postgres engine), inline, at the moment that WHERE predicate runs as
-    // part of this very statement. There is no client-captured guard
-    // timestamp any more: the previous implementation captured `new Date()`
-    // in this process (millisecond resolution) and sent it as a bound
-    // parameter to compare against a microsecond `timestamptz`. A soft
-    // delete stamped in the same millisecond, or landing anywhere in the
-    // gap between that capture and the upsert executing, read as "at or
-    // after" the guard and refused a same-millisecond revival as though it
-    // were a genuine concurrent delete (measured: roughly two thirds of
-    // same-millisecond putPage-after-softDelete revivals refused). Using
-    // clock_timestamp() inline removes both the resolution mismatch and the
-    // capture/execute gap: any soft delete already committed before this
-    // statement began evaluating this row's WHERE clause reads at or before
-    // "now" and is cleared, exactly as at 03436b64b. The comparison is <=
-    // rather than strict <: PGLite's own clock turned out to be only
-    // millisecond-resolution in practice (measured with back-to-back
-    // clock_timestamp() calls issued with no artificial delay -- they came
-    // back identical), unlike real Postgres' microsecond resolution, so two
-    // statements issued in a tight loop can read the exact same
-    // clock_timestamp() value; <= resolves that tie toward "allow" (measured:
-    // strict < still left this engine refusing roughly a quarter of a
-    // same-millisecond revival loop even after switching to clock_timestamp();
-    // <= brought it to 0/300, matching PostgresEngine and upstream).
-    //
-    // What this closes: the false-positive refusal on a same-millisecond (or
-    // any already-committed) revival -- defect 2.
-    //
-    // What this does NOT close, and this guard cannot fire for any real soft
-    // delete (defect 3 correction): softDeletePage/softDeletePages stamp
-    // `deleted_at = now()`, i.e. Postgres' transaction_timestamp(), fixed at
-    // that transaction's START. By the time a concurrent putPage's WHERE
-    // clause runs clock_timestamp() -- which happens after this statement
-    // acquires the row lock, i.e. after the soft-delete transaction has
-    // already committed and released it -- clock_timestamp() is always later
-    // than that committed deleted_at. So the WHERE clause's
-    // `deleted_at <= clock_timestamp()` reads true and the row is treated as
-    // pre-existing and cleared (deleted_at set back to NULL), same as before
-    // this guard existed: the soft delete is silently overwritten, not
-    // refused. The zero-rows/refusal path below fires ONLY for a deleted_at
-    // that is strictly in the FUTURE relative to this statement's
-    // clock_timestamp() -- which only a synthetic test (or clock skew)
-    // produces, never a real soft delete through softDeletePage/
-    // softDeletePages. This guard is not, and was never claimed by the code
-    // itself to be, a fix for a real delete-write race; only the comment
-    // overclaimed that. This matches 03436b64b, which had no WHERE clause on
-    // this upsert at all, so it is not a regression -- it is an unchanged,
-    // pre-existing gap. Known related gaps, also not fixed by this guard:
-    //  (a) a HARD delete (DELETE FROM pages) landing between the checks
-    //      above and the upsert below. There is no conflicting row left for
-    //      ON CONFLICT to match, so no WHERE clause runs at all; the upsert
-    //      just INSERTs a fresh row and the purge is silently undone. This
-    //      predicate cannot see a row that no longer exists.
-    //  (b) the D1 private-routing checks above this point
-    //      (isPersonishPageWrite, assertPrivateRoutingArmed,
-    //      resolvePrivateWriteSource -- see the block above) and the
-    //      data-loss guard query immediately below all run, and can await on
-    //      I/O, BEFORE clock_timestamp() is evaluated inside the upsert
-    //      statement. A soft delete landing during any of those earlier
-    //      awaits reads the same way: cleared, not refused.
+    return this.transaction(async tx => {
+      const sourceId = opts?.sourceId ?? 'default';
+      await tx.lockPageKeys([{ sourceId, slug }]);
+      if (opts?.expectedRevision !== undefined || opts?.force !== undefined) {
+        assertPageRevision(await tx.readPageSnapshot(slug, { sourceId, includeDeleted: true }), opts);
+      }
+      return (tx as PGLiteEngine)._putPage(slug, page, opts);
+    });
+  }
+
+  private async _putPage(slug: string, page: PageInput, opts?: PageWriteOptions): Promise<Page> {
+    // Tombstone race guard (fork, defects 2-4): the ON CONFLICT upsert below
+    // only updates a row that is live or whose deleted_at is at or before
+    // this statement's clock_timestamp(). A future-dated tombstone (synthetic
+    // test or clock skew) yields zero rows and is refused, never resurrected.
+    // A real, already-committed soft delete is still overwritten, as upstream.
+    slug = validateSlug(slug);
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
+    const sourceId = opts?.sourceId ?? 'default';
 
     // Data-loss guard (mirrors postgres-engine.ts): a page edit is a
     // read-modify-write; if the read returned empty, the modify lands on
@@ -1914,26 +1866,14 @@ export class PGLiteEngine implements BrainEngine {
          ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
          ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at)
        WHERE pages.deleted_at IS NULL OR pages.deleted_at <= clock_timestamp()
-       RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at`,
+       RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at`,
       [sourceId, slug, page.type, pageKind, sanitizeText(page.title), sanitizeText(page.compiled_truth), sanitizeText(page.timeline || ''), JSON.stringify(frontmatter), hash, effectiveDate, effectiveDateSource, importFilename, chunkerVersion, sourcePath, sourceKind, sourceUri, ingestedVia, ingestedAt]
     );
     // PGLite can return zero rows from INSERT ... ON CONFLICT DO UPDATE ...
     // RETURNING in no-op/trigger edge cases, which made rowToPage(undefined)
     // throw "undefined is not an object (evaluating 'row.deleted_at')" and
-    // skip the file during sync. Most of the time the row WAS written, so
-    // re-read instead of crashing.
-    //
-    // The ON CONFLICT WHERE above adds a second, deliberate zero-rows case:
-    // a row whose deleted_at is strictly in the FUTURE relative to this
-    // statement's own clock_timestamp() -- see the tombstone race guard
-    // comment above this function (defect 3 correction) for why a real,
-    // already-committed soft delete does NOT land here and is instead
-    // silently overwritten; only a future-dated deleted_at (synthetic test
-    // or clock skew) does. That row's deleted_at stays untouched, so the
-    // re-read below correctly finds nothing (getPage excludes deleted rows),
-    // and this must NOT be treated as a "no-op that actually succeeded"
-    // shrug: throw, refusing to report success for a write that was,
-    // deliberately, not applied.
+    // skip the file during sync. The row WAS written, so re-read instead of
+    // crashing.
     if (rows.length === 0) {
       const reread = await this.getPage(slug, { sourceId });
       if (reread) return reread;
