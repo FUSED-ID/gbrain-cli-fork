@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { gbrainPath } from './config.ts';
 import type { BrainEngine } from './engine.ts';
 import { loadAllSources, parseSourceConfig, type SourceRow } from './sources-load.ts';
+import { isPersonSlug } from './slug-namespace.ts';
 import { warnOncePerProcess } from './utils.ts';
 
 export interface PrivateWriteRouteInput {
@@ -164,7 +165,7 @@ function candidateKeys(input: PrivateWriteRouteInput): Set<string> {
 
 function isPersonishWrite(input: PrivateWriteRouteInput): boolean {
   return input.entityType === 'person' || input.slug.endsWith('/_author')
-    || input.slug.startsWith('people/') || input.slug.startsWith('person/')
+    || isPersonSlug(input.slug)
     || input.slug.startsWith('contacts/') || input.slug.startsWith('harvest/')
     || /^type:\s*person\s*$/mi.test(input.content ?? '');
 }
@@ -378,7 +379,7 @@ export async function isPersonishPageWrite(
   slug: string,
   page: { type?: string; title?: string },
 ): Promise<boolean> {
-  if (page.type === 'person' || slug.endsWith('/_author') || slug.startsWith('people/') || slug.startsWith('person/')
+  if (page.type === 'person' || slug.endsWith('/_author') || isPersonSlug(slug)
     || slug.startsWith('contacts/') || slug.startsWith('harvest/')) return true;
   const source = await findPrivateSource(engine);
   if (!source) return false;
