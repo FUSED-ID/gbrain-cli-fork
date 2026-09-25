@@ -27,6 +27,7 @@ import { isAvailable } from './ai/gateway.ts';
 // gazetteer and drives the junk_entity_hubs doctor check.
 import { isJunkEntityName } from './entity-name-quality.ts';
 import { resolvePrivateWriteSource } from './private-source-routing.ts';
+import { normalizePageWriteSlugWithConfig } from './slug-namespace.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -110,7 +111,10 @@ export async function enrichEntity(
   request: EnrichmentRequest,
   opts?: EnrichmentTrustOptions,
 ): Promise<EnrichmentResult> {
-  const candidateSlug = slugifyEntity(request.entityName, request.entityType);
+  const candidateSlug = await normalizePageWriteSlugWithConfig(
+    engine,
+    slugifyEntity(request.entityName, request.entityType),
+  );
   const requestedSourceId = request.sourceId ?? opts?.sourceId ?? 'default';
   const route = await resolvePrivateWriteSource(engine, {
     requestedSourceId,

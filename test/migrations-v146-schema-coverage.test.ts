@@ -3,7 +3,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { LATEST_VERSION, MIGRATIONS, runMigrations } from '../src/core/migrate.ts';
 import { repairOauthV127Artifacts } from '../src/core/oauth-v127-selfheal.ts';
 
-describe('fork v127 collision repair at v146', () => {
+describe('fork v127 collision repair with permissions at v166', () => {
   let engine: PGLiteEngine;
 
   beforeAll(async () => {
@@ -14,8 +14,8 @@ describe('fork v127 collision repair at v146', () => {
 
   afterAll(async () => { await engine?.disconnect(); }, 60_000);
 
-  test('moves fork permissions migration after upstream v127', () => {
-    expect(MIGRATIONS.find((m) => m.name === 'oauth_and_access_token_permissions')?.version).toBeGreaterThanOrEqual(146);
+  test('moves fork permissions migration after upstream v0.57.0.0', () => {
+    expect(MIGRATIONS.find((m) => m.name === 'oauth_and_access_token_permissions')?.version).toBe(166);
     expect(MIGRATIONS.find((m) => m.version === 126)?.name).toBe('session_context_state');
     expect(MIGRATIONS.find((m) => m.version === 127)?.name).toBe('oauth_client_surface_and_minion_queue_index');
     expect(LATEST_VERSION).toBeGreaterThanOrEqual(146);

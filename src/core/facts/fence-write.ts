@@ -52,6 +52,8 @@ import { upsertFactRow, parseFactsFence } from '../facts-fence.ts';
 import { contentHash } from '../utils.ts';
 import { extractFactsFromFenceText } from './extract-from-fence.ts';
 import { logStubGuardEvent } from './stub-guard-audit.ts';
+import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
+import { normalizePageWriteSlugWithConfig } from '../slug-namespace.ts';
 
 /** Resolved source binding for the entity page. */
 export interface FenceTarget {
@@ -276,6 +278,15 @@ export async function writeFactsToFence(
   facts: FenceInputFact[],
 ): Promise<FenceWriteResult> {
   await assertUnmanagedCanonicalWriter(engine, 'direct facts fence write');
+  // Canonical upstream entity prefixes need no policy lookup. Legacy singular
+  // prefixes are the compatibility surface that can be redirected by the
+  // opt-in guard.
+  if (/^(?:person|company)(?:\/|$)/.test(target.slug)) {
+    target = {
+      ...target,
+      slug: await normalizePageWriteSlugWithConfig(engine, target.slug),
+    };
+  }
   if (target.localPath === null) {
     return { inserted: 0, ids: [], legacyFallback: true };
   }

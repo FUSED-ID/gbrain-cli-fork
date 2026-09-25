@@ -454,6 +454,37 @@ describe('enrichEntity created stubs are retrieval-visible (#3994)', () => {
 describe('extract_entities op trust boundary', () => {
   const TEXT = 'I had lunch with Bobby Injected today. He said Evil Widgets Inc is pivoting.';
 
+  test('stub creation consults the upstream namespace guard', async () => {
+    let namespaceReads = 0;
+    const guardedEngine = new Proxy(engine, {
+      get(target, prop) {
+        if (prop === 'getConfig') {
+          return async (key: string) => {
+            if (key === 'slug_namespace_rewrites') {
+              namespaceReads += 1;
+              return 'person:people,company:companies';
+            }
+            const getter = Reflect.get(target, prop, target);
+            return typeof getter === 'function' ? getter.call(target, key) : getter;
+          };
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as typeof engine;
+
+    const out = (await extract_entities.handler(ctx({ engine: guardedEngine, remote: false }), {
+      text: TEXT,
+      source_slug: 'notes/namespace-guard',
+      trusted_extraction: true,
+    })) as { count: number };
+
+    expect(out.count).toBeGreaterThan(0);
+    expect(namespaceReads).toBeGreaterThan(0);
+    expect(await engine.getPage('people/bobby-injected')).not.toBeNull();
+    expect(await engine.getPage('companies/evil-widgets-inc')).not.toBeNull();
+  });
+
   test('remote: true → quarantined even WITH trusted_extraction flag', async () => {
     const out = (await extract_entities.handler(ctx({ remote: true }), {
       text: TEXT, source_slug: 'inbox/mail', trusted_extraction: true,

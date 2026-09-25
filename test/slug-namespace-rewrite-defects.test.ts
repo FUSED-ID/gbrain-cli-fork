@@ -51,6 +51,22 @@ function throwingConfigEngine(): BrainEngine {
         content_hash: 'stub',
         deleted_at: null,
       });
+      if (property === 'readPageSnapshot') return async (slug: string) => ({
+        page: {
+          id: 1,
+          slug,
+          type: 'note',
+          title: 'Config outage probe',
+          compiled_truth: 'stub',
+          timeline: '',
+          frontmatter: {},
+          source_id: 'default',
+          created_at: new Date(),
+          updated_at: new Date(),
+          content_hash: 'stub',
+          deleted_at: null,
+        },
+      });
       if (property === 'getTags') return async () => [];
       if (property === 'listAllSources') return async () => [];
       if (property === 'resolveSlugWithAliasDetailed') return async () => null;
@@ -64,7 +80,7 @@ function throwingConfigEngine(): BrainEngine {
 
 describe('opt-in slug namespace rewrite defects', () => {
   test('fenced client rejects the rewritten slug outside its fence', async () => {
-    await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: 'people:person' }, async () => {
+    await withEnv({ GBRAIN_SLUG_NAMESPACE_REWRITES: 'person:people,company:companies' }, async () => {
       const ctx = makeCtx({} as BrainEngine, {
         dryRun: true,
         engine: {} as BrainEngine,
@@ -73,16 +89,16 @@ describe('opt-in slug namespace rewrite defects', () => {
           clientId: 'fenced-client',
           scopes: ['write'],
           sourceId: 'default',
-          boundSlugPrefixes: ['people/'],
+          boundSlugPrefixes: ['person/'],
         },
       });
-      await expect(put_page.handler(ctx, { slug: 'people/x', content: 'stub' }))
+      await expect(put_page.handler(ctx, { slug: 'person/x', content: 'stub' }))
         .rejects.toMatchObject({ code: 'permission_denied' });
       try {
-        await put_page.handler(ctx, { slug: 'people/x', content: 'stub' });
+        await put_page.handler(ctx, { slug: 'person/x', content: 'stub' });
       } catch (error) {
         expect(error).toBeInstanceOf(OperationError);
-        expect((error as Error).message).toContain('person/x');
+        expect((error as Error).message).toContain('people/x');
       }
     });
   });
@@ -110,11 +126,14 @@ describe('opt-in slug namespace rewrite defects', () => {
       let calls = 0;
       const engine = {
         kind: 'pglite',
-        getConfig: async () => { calls++; return 'people:person'; },
+        getConfig: async () => { calls++; return 'person:people,company:companies'; },
       } as unknown as BrainEngine;
 
-      expect(await resolveSlugNamespaceRewrites(engine)).toEqual([{ from: 'people', to: 'person' }]);
-      expect(await normalizePageWriteSlugWithConfig(engine, 'people/alice')).toBe('person/alice');
+      expect(await resolveSlugNamespaceRewrites(engine)).toEqual([
+        { from: 'person', to: 'people' },
+        { from: 'company', to: 'companies' },
+      ]);
+      expect(await normalizePageWriteSlugWithConfig(engine, 'person/alice')).toBe('people/alice');
       expect(calls).toBe(1);
     });
   });

@@ -778,12 +778,13 @@ describe('writeFactsToFence — durability latch recovery', () => {
           { sourceId: 'default', localPath: brainDir, slug: 'people/race', resolutionSource: 'exact_page' },
           [baseInput({ fact: 'Writer A fact' })],
         );
-        // Wait until A's rename landed (post-rename, pre-commit).
+        const tmpPath = `${filePath}.tmp`;
+        // Wait until A's validated temporary body landed (pre-commit).
         for (let i = 0; i < 400; i++) {
-          if (existsSync(filePath) && readFileSync(filePath, 'utf-8').includes('Writer A fact')) break;
+          if (existsSync(tmpPath) && readFileSync(tmpPath, 'utf-8').includes('Writer A fact')) break;
           await new Promise((r) => setTimeout(r, 10));
         }
-        expect(readFileSync(filePath, 'utf-8')).toContain('Writer A fact');
+        expect(readFileSync(tmpPath, 'utf-8')).toContain('Writer A fact');
 
         const b = writeFactsToFence(
           engine,
