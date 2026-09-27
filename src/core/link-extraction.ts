@@ -873,7 +873,49 @@ export async function extractPageLinks(
       const bareDirect = new Set<string>();
       if (slashIdx === -1) {
         for (const form of [slugifyPath(ref.slug), normalizeBasename(ref.slug)]) {
-          if (form && form !== slug) bareDirect.add(form);
+          if (!form || form === slug) continue;
+          bareDirect.add(form);
+          const litIdx = ref.index ?? content.indexOf(ref.slug);
+          const litContext = litIdx >= 0 ? excerpt(content, litIdx, 240) : ref.name;
+          candidates.push({
+            targetSlug: form,
+            ...typeFor(litContext, form, litIdx),
+            context: litContext,
+            linkSource: 'markdown',
+          });
+        }
+      }
+      if (typeof resolver.resolveBasenameMatches !== 'function') continue;
+      // Hyphenated directory spelling. `[[person-filip-lavaerts]]` names the
+      // page `person/filip-lavaerts`: the first slash was written as a hyphen.
+      // bareDirect only slugifies the literal, and the basename index is keyed
+      // by the final segment (`filip-lavaerts`), so a lookup of the whole
+      // literal misses. Try each hyphen split and keep a hit only when the
+      // page slug is exactly `prefix/tail`. Emit that as a direct markdown
+      // candidate, same as a slash-shaped wikilink. Not gated on
+      // global_basename: the link names one page. Downstream existence checks
+      // drop a miss.
+      if (slashIdx === -1) {
+        const literal = ref.slug.toLowerCase();
+        const dirPrefix = /^[a-z0-9][a-z0-9_-]*$/;
+        for (let i = 0; i < literal.length; i++) {
+          if (literal[i] !== '-') continue;
+          const prefix = literal.slice(0, i);
+          const tail = literal.slice(i + 1);
+          if (!prefix || !tail || !dirPrefix.test(prefix)) continue;
+          const slashForm = `${prefix}/${tail}`;
+          if (slashForm === slug || bareDirect.has(slashForm)) continue;
+          const hits = await resolver.resolveBasenameMatches(tail);
+          if (!hits.includes(slashForm)) continue;
+          bareDirect.add(slashForm);
+          const litIdx = ref.index ?? content.indexOf(ref.slug);
+          const litContext = litIdx >= 0 ? excerpt(content, litIdx, 240) : ref.name;
+          candidates.push({
+            targetSlug: slashForm,
+            linkType: typeFor(litContext, slashForm, litIdx),
+            context: litContext,
+            linkSource: 'markdown',
+          });
         }
       }
       // Issue #972 (codex): resolve by the wikilink TARGET (ref.slug — the
