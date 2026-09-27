@@ -50,7 +50,7 @@ import {
   extractPageLinks, parseTimelineEntries, deriveTimelineAnchor, inferLinkType, makeResolver,
   extractFrontmatterLinks, isGlobalBasenameEnabled, isCrossSourceLinksEnabled, LINK_EXTRACTOR_VERSION_TS,
   WIKILINK_BASENAME_LINK_TYPE,
-  buildBasenameIndex, queryBasenameIndex, stripCodeBlocks, normalizeBasename,
+  buildBasenameIndex, queryBasenameIndex, stripCodeBlocks, normalizeBasename, bareWikilinkForms,
   parseInlineCitationTimelineEntries,
   type UnresolvedFrontmatterRef, type LinkCandidate, type LinkExtractionPack,
 } from '../core/link-extraction.ts';
@@ -480,7 +480,7 @@ export function extractMarkdownLinks(content: string): { name: string; relTarget
     const relTarget = pagePath.endsWith('.md') ? pagePath : pagePath + '.md';
     const pipeIdx = match[0].indexOf('|');
     const displayName = pipeIdx >= 0 ? match[0].slice(pipeIdx + 1, -2).trim() : rawPath;
-    results.push({ name: displayName, relTarget });
+    results.push({ name: displayName, relTarget, wikilink: true });
   }
 
   return results;
@@ -639,22 +639,42 @@ export async function extractLinksFromFile(
   // DB path, which goes through extractEntityRefs (which strips internally).
   const scanContent = stripCodeBlocks(content);
 
-  for (const { name, relTarget } of extractMarkdownLinks(scanContent)) {
+  for (const { name, relTarget, wikilink } of extractMarkdownLinks(scanContent)) {
     const resolvedSlugs = resolveSlugAll(fileDir, relTarget, allSlugs, { globalBasename });
-    if (resolvedSlugs.length === 0) continue;
+    // Bare wikilinks also take the DB-path forms (same-directory, then
+    // root-exact, then hyphen-split). Ancestor-walk hits stay as they are.
+    // These only add a target the walk missed, and only when that slug is
+    // already in allSlugs, so a link that already resolves is unchanged.
+    const bareExtras: string[] = [];
+    if (wikilink) {
+      const targetNoExt = relTarget.endsWith('.md') ? relTarget.slice(0, -3) : relTarget;
+      if (targetNoExt && !targetNoExt.includes('/')) {
+        const forms = bareWikilinkForms(slug, targetNoExt);
+        const seen = new Set(resolvedSlugs);
+        for (const target of [...forms.direct, ...forms.hyphenSplits]) {
+          if (seen.has(target) || !allSlugs.has(target)) continue;
+          seen.add(target);
+          bareExtras.push(target);
+        }
+      }
+    }
+    if (resolvedSlugs.length === 0 && bareExtras.length === 0) continue;
     // Single hit on the ancestor path → emit one edge with the inferred
     // verb type. Multiple hits (only possible when globalBasename is on
     // AND ancestor walk missed) → emit one edge per match, all tagged
     // `wikilink_basename` so users can audit via `gbrain graph-query
-    // <slug> --type wikilink_basename`.
+    // <slug> --type wikilink_basename`. Extras from the DB bare forms are
+    // direct edges, not basename edges.
     const isBasename = resolvedSlugs.length > 1
       || (globalBasename && resolvedSlugs.length === 1
           && resolveSlug(fileDir, relTarget, allSlugs) === null);
-    for (const target of resolvedSlugs) {
+    const extraSet = new Set(bareExtras);
+    for (const target of [...resolvedSlugs, ...bareExtras]) {
+      const asBasename = isBasename && !extraSet.has(target);
       // Issue #972 (codex [P2]): drop a basename self-loop ([[own-tail]] on
       // its own page resolving back to itself).
-      if (isBasename && target === slug) continue;
-      const context = isBasename
+      if (asBasename && target === slug) continue;
+      const context = asBasename
         ? `wikilink (basename match): [${name}]`
         : `markdown link: [${name}]`;
       const targetType = opts?.pageTypes?.get(target) ?? parseMarkdown('', `${target}.md`, { activePack }).type;
@@ -670,13 +690,13 @@ export async function extractLinksFromFile(
       links.push({
         from_slug: slug,
         to_slug: target,
-        link_type: isBasename
+        link_type: asBasename
           ? WIKILINK_BASENAME_LINK_TYPE
           : inferred,
         context,
         // Issue #972: tag basename edges so the FS path matches DB/put_page
         // provenance and migration v112's widened CHECK is exercised here too.
-        link_source: isBasename ? 'wikilink-resolved' : undefined,
+        link_source: asBasename ? 'wikilink-resolved' : undefined,
       });
     }
   }

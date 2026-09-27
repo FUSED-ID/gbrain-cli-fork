@@ -602,6 +602,59 @@ export interface PageLinksResult {
 }
 
 /**
+ * Bare `[[name]]` targets (the literal has no slash).
+ *
+ * `direct`, in emission order:
+ *   1. Same-directory `${dir}/${form}` for each slug grammar
+ *      (slugifyPath, then normalizeBasename). Skipped when the source
+ *      page itself has no directory. Skipped when the candidate equals
+ *      the source slug (self-loop).
+ *   2. Root-exact form for each grammar, with the same self-loop guard.
+ *
+ * `hyphenSplits` lists every `prefix/tail` spelling of a hyphenated
+ * literal. The caller checks existence: the DB path keeps a split only
+ * when the basename resolver returns that exact slug, and the FS path
+ * keeps a split only when the slug is already known. Splits that are
+ * already in `direct`, and the source slug itself, are omitted.
+ */
+export function bareWikilinkForms(sourceSlug: string, literal: string): {
+  direct: string[];
+  hyphenSplits: string[];
+} {
+  const forms = [...new Set([slugifyPath(literal), normalizeBasename(literal)])].filter(Boolean);
+  const dirCut = sourceSlug.lastIndexOf('/');
+  const dir = dirCut === -1 ? '' : sourceSlug.slice(0, dirCut);
+  const direct: string[] = [];
+  const seen = new Set<string>();
+  const pushDirect = (target: string) => {
+    if (!target || target === sourceSlug || seen.has(target)) return;
+    seen.add(target);
+    direct.push(target);
+  };
+  if (dir) {
+    for (const form of forms) pushDirect(`${dir}/${form}`);
+  }
+  for (const form of forms) pushDirect(form);
+
+  const hyphenSplits: string[] = [];
+  if (!literal.includes('/')) {
+    const lower = literal.toLowerCase();
+    const dirPrefix = /^[a-z0-9][a-z0-9_-]*$/;
+    for (let i = 0; i < lower.length; i++) {
+      if (lower[i] !== '-') continue;
+      const prefix = lower.slice(0, i);
+      const tail = lower.slice(i + 1);
+      if (!prefix || !tail || !dirPrefix.test(prefix)) continue;
+      const slashForm = `${prefix}/${tail}`;
+      if (slashForm === sourceSlug || seen.has(slashForm)) continue;
+      seen.add(slashForm);
+      hyphenSplits.push(slashForm);
+    }
+  }
+  return { direct, hyphenSplits };
+}
+
+/**
  * Extract all link candidates from a page.
  *
  * Sources:
@@ -734,42 +787,39 @@ export async function extractPageLinks(
       // letters (`đuc-example`), normalizeBasename folds them (`duc-example`)
       // — so `[[Đức Example]]` reaches whichever root page exists with the
       // flag off. Exact slugs only; downstream existence checks drop the miss.
+      // Same-directory first, then root-exact. Both grammars, both
+      // existence-unchecked: downstream filters drop a miss. A root source
+      // page has no directory, so it gets the root-exact rule only.
       const bareDirect = new Set<string>();
-      if (slashIdx === -1) {
-        for (const form of new Set([slugifyPath(ref.slug), normalizeBasename(ref.slug)])) {
-          // Self-loop guard: `[[own-basename]]` on the root page itself.
-          if (!form || form === slug) continue;
-          bareDirect.add(form);
+      const bareForms = slashIdx === -1 ? bareWikilinkForms(slug, ref.slug) : null;
+      if (bareForms) {
+        for (const targetSlug of bareForms.direct) {
+          bareDirect.add(targetSlug);
           const litIdx = ref.index ?? content.indexOf(ref.slug);
           const litContext = litIdx >= 0 ? excerpt(content, litIdx, 240) : ref.name;
           candidates.push({
-            targetSlug: form,
-            linkType: typeFor(litContext, form, litIdx),
+            targetSlug,
+            linkType: typeFor(litContext, targetSlug, litIdx),
             context: litContext,
             linkSource: 'markdown',
           });
         }
       }
       if (typeof resolver.resolveBasenameMatches !== 'function') continue;
-      // Hyphenated directory spelling. `[[person-filip-lavaerts]]` names the
-      // page `person/filip-lavaerts`: the first slash was written as a hyphen.
+      // Hyphenated directory spelling. A bare wikilink whose text is
+      // person-filip-lavaerts names the page filed as person, slug
+      // filip-lavaerts: the first slash was written as a hyphen.
       // bareDirect only slugifies the literal, and the basename index is keyed
-      // by the final segment (`filip-lavaerts`), so a lookup of the whole
+      // by the final segment (filip-lavaerts), so a lookup of the whole
       // literal misses. Try each hyphen split and keep a hit only when the
-      // page slug is exactly `prefix/tail`. Emit that as a direct markdown
+      // page slug is exactly prefix/tail. Emit that as a direct markdown
       // candidate, same as a slash-shaped wikilink. Not gated on
       // global_basename: the link names one page. Downstream existence checks
       // drop a miss.
-      if (slashIdx === -1) {
-        const literal = ref.slug.toLowerCase();
-        const dirPrefix = /^[a-z0-9][a-z0-9_-]*$/;
-        for (let i = 0; i < literal.length; i++) {
-          if (literal[i] !== '-') continue;
-          const prefix = literal.slice(0, i);
-          const tail = literal.slice(i + 1);
-          if (!prefix || !tail || !dirPrefix.test(prefix)) continue;
-          const slashForm = `${prefix}/${tail}`;
-          if (slashForm === slug || bareDirect.has(slashForm)) continue;
+      if (bareForms) {
+        for (const slashForm of bareForms.hyphenSplits) {
+          if (bareDirect.has(slashForm)) continue;
+          const tail = slashForm.slice(slashForm.lastIndexOf('/') + 1);
           const hits = await resolver.resolveBasenameMatches(tail);
           if (!hits.includes(slashForm)) continue;
           bareDirect.add(slashForm);
