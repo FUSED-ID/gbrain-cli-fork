@@ -17,7 +17,7 @@ export interface PrivateWriteRouteInput {
 export interface PrivateWriteRoute {
   sourceId: string;
   routed: boolean;
-  reason?: 'existing_private_page' | 'excluded_people_policy';
+  reason?: 'existing_private_page' | 'excluded_people_policy' | 'unresolved_identity_policy';
   privateSourceId?: string;
 }
 
@@ -183,8 +183,8 @@ function globMatches(pattern: string, keys: Set<string>): boolean {
   return [...keys].some((key) => re.test(key));
 }
 
-export function parseExcludedPeople(doc: string): ExcludedPerson[] {
-  const start = doc.search(/^##\s+Family deny-list\b/im);
+function parsePolicySection(doc: string, heading: string): ExcludedPerson[] {
+  const start = doc.search(new RegExp(`^##\\s+${heading}\\b`, 'im'));
   if (start < 0) return [];
   const rest = doc.slice(start);
   const next = rest.slice(1).search(/^##\s+/m);
@@ -197,6 +197,14 @@ export function parseExcludedPeople(doc: string): ExcludedPerson[] {
     }
   }
   return rows;
+}
+
+export function parseExcludedPeople(doc: string): ExcludedPerson[] {
+  return parsePolicySection(doc, 'Family deny-list');
+}
+
+function parseUnresolvedIdentity(doc: string): ExcludedPerson[] {
+  return parsePolicySection(doc, 'Do not enrich, identity unresolved');
 }
 
 async function getConfiguredPrivateSourceId(engine: BrainEngine): Promise<string | null> {
@@ -270,11 +278,23 @@ async function findPrivateSource(engine: BrainEngine): Promise<SourceRow | null>
 }
 
 function matchesExcludedPeople(source: SourceRow, input: PrivateWriteRouteInput): boolean {
+  return matchesPolicySection(source, input, parseExcludedPeople);
+}
+
+function matchesUnresolvedIdentity(source: SourceRow, input: PrivateWriteRouteInput): boolean {
+  return matchesPolicySection(source, input, parseUnresolvedIdentity);
+}
+
+function matchesPolicySection(
+  source: SourceRow,
+  input: PrivateWriteRouteInput,
+  parser: (doc: string) => ExcludedPerson[],
+): boolean {
   let entries: ExcludedPerson[];
   try {
     const documents = readPolicyDocuments(source);
     if (!documents) return false;
-    entries = parseExcludedPeople(documents.excludedPeople);
+    entries = parser(documents.excludedPeople);
   } catch { return false; }
   const keys = candidateKeys(input);
   return entries.some((entry) => globMatches(entry.slugPattern, keys) || keys.has(normalizeName(entry.name)));
@@ -301,6 +321,9 @@ export async function resolvePrivateWriteSource(
   // rule (b), never a deny-list refusal.
   if (matchesExcludedPeople(privateSource, input)) {
     return { sourceId: privateSource.id, routed: true, reason: 'excluded_people_policy', privateSourceId: privateSource.id };
+  }
+  if (matchesUnresolvedIdentity(privateSource, input)) {
+    return { sourceId: privateSource.id, routed: true, reason: 'unresolved_identity_policy', privateSourceId: privateSource.id };
   }
   const collisionExempt = isAllowlistedCollision(requested, input.slug);
   try {
@@ -387,7 +410,7 @@ export async function isPersonishPageWrite(
     const input = { slug, entityType: page.type, entityName: page.title, content: undefined };
     // A loaded title/type can be the only signal for a deny-list entry when a
     // legacy or user-renamed slug is not person-shaped.
-    if (matchesExcludedPeople(source, input)) return true;
+    if (matchesExcludedPeople(source, input) || matchesUnresolvedIdentity(source, input)) return true;
     for (const key of candidateKeys(input)) {
       if (await engine.getPage(key, { sourceId: source.id })) return true;
     }

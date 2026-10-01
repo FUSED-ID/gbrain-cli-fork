@@ -256,6 +256,37 @@ describe('private routing armed guard at the put_page write path', () => {
     console.log(`GREEN non-denylisted slug write to default: allowed, round-tripped slug=${roundTrip?.slug}`);
   });
 
+  test('refuses identity-unresolved entries at page restore and fact write seams', async () => {
+    await pointPrivateSource(policyDir);
+    writePolicy(`## Family deny-list
+| Slug pattern | Name |
+|---|---|
+| \`unrelated\` | Unrelated |
+
+## Do not enrich, identity unresolved
+| Slug pattern | Contact |
+|---|---|
+| \`d1-unresolved-identity\` | unresolved@example.test |
+`);
+    const slug = 'wiki/d1-unresolved-identity';
+    const page = {
+      type: 'note',
+      title: 'Unresolved Identity',
+      compiled_truth: 'body',
+      timeline: '',
+      frontmatter: {},
+    } as const;
+
+    await expect(engine.putPage(slug, page, { sourceId: 'default' })).rejects.toThrow(/routed|world-federated|refus/i);
+    await engine.putPage(slug, page, { sourceId: 'default', migrationWrite: true });
+    await expect(engine.softDeletePage(slug, { sourceId: 'default' })).resolves.toMatchObject({ slug });
+    await expect(engine.restorePage(slug, { sourceId: 'default' })).rejects.toThrow(/routed|world-federated|refus/i);
+    await expect(engine.insertFact(
+      { fact: 'must not write', entity_slug: slug, visibility: 'world', source: 'd1-test' },
+      { source_id: 'default' },
+    )).rejects.toThrow(/routed|world-visible|refus/i);
+  });
+
   test('RED/GREEN: a slug live in lg-private is refused; the same shape not live there is allowed', async () => {
     await pointPrivateSource(policyDir);
     writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `unrelated` | Unrelated |\n');
