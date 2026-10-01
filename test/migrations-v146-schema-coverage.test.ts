@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { LATEST_VERSION, MIGRATIONS, runMigrations } from '../src/core/migrate.ts';
+import { FORK_MIGRATIONS, LATEST_VERSION, MIGRATIONS, runMigrations } from '../src/core/migrate.ts';
 import { repairOauthV127Artifacts } from '../src/core/oauth-v127-selfheal.ts';
 
-describe('fork v127 collision repair with permissions at v166', () => {
+describe('fork v127 collision repair with permissions on the fork ledger', () => {
   let engine: PGLiteEngine;
 
   beforeAll(async () => {
@@ -14,11 +14,13 @@ describe('fork v127 collision repair with permissions at v166', () => {
 
   afterAll(async () => { await engine?.disconnect(); }, 60_000);
 
-  test('moves fork permissions migration after upstream v0.57.0.0', () => {
-    expect(MIGRATIONS.find((m) => m.name === 'oauth_and_access_token_permissions')?.version).toBe(166);
+  test('keeps fork permissions off the upstream version list', () => {
+    expect(MIGRATIONS.find((m) => m.name === 'oauth_and_access_token_permissions')).toBeUndefined();
+    expect(MIGRATIONS.some((m) => m.version > 165)).toBe(false);
+    expect(FORK_MIGRATIONS.find((m) => m.name === 'oauth_and_access_token_permissions')?.version).toBe(1);
     expect(MIGRATIONS.find((m) => m.version === 126)?.name).toBe('session_context_state');
     expect(MIGRATIONS.find((m) => m.version === 127)?.name).toBe('oauth_client_surface_and_minion_queue_index');
-    expect(LATEST_VERSION).toBeGreaterThanOrEqual(146);
+    expect(LATEST_VERSION).toBe(165);
   });
 
   test('a brain stamped by fork v127 receives the upstream v127 artifacts', async () => {

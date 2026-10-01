@@ -57,9 +57,13 @@ function migrationNotice(line: string): void {
  *
  * Migrations can also include a handler function for application-level logic
  * (e.g., data transformations that need TypeScript, not just SQL).
+ *
+ * Fork-only migrations are a separate list (`FORK_MIGRATIONS`). They stamp
+ * config key `fork_version` after the upstream list, and they never read or
+ * write config key `version`. Upstream numbers stay inside `MIGRATIONS`.
  */
 
-interface Migration {
+export interface Migration {
   version: number;
   name: string;
   /** Engine-agnostic SQL. Used when `sqlFor` is absent. Set to '' for handler-only or sqlFor-only migrations. */
@@ -191,7 +195,8 @@ async function dropInvalidConcurrentIndex(
 }
 
 // Migrations are embedded here, not loaded from files.
-// Add new migrations at the end. Never modify existing ones.
+// Add new upstream migrations at the end. Never modify existing ones.
+// Fork-only migrations belong in FORK_MIGRATIONS, not in this array.
 // Exported for tests that structurally assert migration contents (e.g., "v9 must
 // pre-create idx_timeline_dedup_helper before the DELETE..."). Read-only contract.
 export const MIGRATIONS: Migration[] = [
@@ -6661,12 +6666,32 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
         : PERSISTENCE_DATABASE_PENDING_INDEX_SQL);
     },
   },
+];
+
+export const LATEST_VERSION = MIGRATIONS.length > 0
+  ? Math.max(...MIGRATIONS.map(m => m.version))
+  : 1;
+
+/**
+ * Config key for the fork migration high-water mark.
+ * The fork runner never reads or writes `version`.
+ */
+export const FORK_VERSION_KEY = 'fork_version';
+
+/**
+ * Fork-only migrations. Applied after `MIGRATIONS`. Each one stamps
+ * `fork_version` and leaves `version` alone. SQL must stay idempotent
+ * (`IF NOT EXISTS`) so a brain that already has the objects can record
+ * the ledger without error.
+ *
+ * Version numbers here are fork-ledger numbers, not upstream schema
+ * versions. The oauth permissions migration used to be upstream number
+ * 166 (and, earlier, fork 127 and fork 147). It is fork ledger 1.
+ */
+export const FORK_MIGRATIONS: Migration[] = [
   {
-    // FUSED-ID fork migration: reserve the first slot after upstream v0.57.0.0.
-    // The former fork number was 147; v166 avoids every upstream number through v165.
-    version: 166,
+    version: 1,
     name: 'oauth_and_access_token_permissions',
-    // FUSED-ID permissions formerly occupied fork v127 and later fork v147.
     idempotent: true,
     sql: `
       ALTER TABLE oauth_clients
@@ -6682,9 +6707,56 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
   },
 ];
 
-export const LATEST_VERSION = MIGRATIONS.length > 0
-  ? Math.max(...MIGRATIONS.map(m => m.version))
-  : 1;
+function latestForkVersion(): number {
+  return FORK_MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);
+}
+
+/** Missing or unparseable `fork_version` means no fork migration is recorded. */
+async function readForkVersion(engine: BrainEngine): Promise<number> {
+  const raw = await engine.getConfig(FORK_VERSION_KEY);
+  if (raw == null || raw.trim() === '') return 0;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return parsed;
+}
+
+/**
+ * Apply fork migrations above `fork_version`. Stamps `fork_version` only.
+ * Does not read or write config key `version`.
+ */
+async function applyForkMigrations(engine: BrainEngine): Promise<void> {
+  const current = await readForkVersion(engine);
+  const pending = [...FORK_MIGRATIONS]
+    .sort((a, b) => a.version - b.version)
+    .filter((m) => m.version > current);
+  for (const m of pending) {
+    if (!quietMigrationNotices) {
+      process.stderr.write(`  [fork ${m.version}] ${m.name}...\n`);
+    }
+    try {
+      await applyOneMigration(engine, m);
+      await engine.setConfig(FORK_VERSION_KEY, String(m.version));
+    } catch (err) {
+      if (quietMigrationNotices) {
+        process.stderr.write(`  [fork ${m.version}] ${m.name} failed\n`);
+      }
+      throw err;
+    }
+    if (!quietMigrationNotices) {
+      process.stderr.write(`  [fork ${m.version}] ok ${m.name}\n`);
+    }
+  }
+}
+
+export interface RunMigrationsOptions {
+  /**
+   * Test seam. Upstream migrations merged into this call only. They stamp
+   * `version` through the normal upstream loop and do not touch `fork_version`.
+   * Kept off the process-wide `MIGRATIONS` array because unit shards share a
+   * process across files.
+   */
+  extraUpstreamMigrations?: readonly Migration[];
+}
 
 /**
  * Row returned by `getIdleBlockers`. The shape is the public contract
@@ -6858,8 +6930,10 @@ async function runMigrationSQL(
 /**
  * Cheap probe: does this engine have schema migrations pending?
  *
- * Reads the `version` config row in a single round-trip (no schema replay,
- * no migration apply). Used by `connectEngine` to gate `initSchema()` so
+ * Reads the `version` config row (no schema replay, no migration apply).
+ * Also reads `fork_version`: a brain at or above LATEST_VERSION with no
+ * fork ledger is still pending, so startup records the fork list without
+ * moving `version`. Used by `connectEngine` to gate `initSchema()` so
  * short-lived CLI invocations on already-migrated brains don't pay the
  * full bootstrap-probe + SCHEMA_SQL replay + ledger-check cost on every
  * `gbrain stats` / `gbrain query` / `gbrain doctor`.
@@ -6875,7 +6949,11 @@ export async function hasPendingMigrations(engine: BrainEngine): Promise<boolean
   try {
     const currentStr = await engine.getConfig('version');
     const current = parseInt(currentStr || '1', 10);
-    return current < LATEST_VERSION;
+    if (current < LATEST_VERSION) return true;
+    // Fork ledger is independent. A stamp at or above LATEST_VERSION can
+    // still be missing `fork_version` (production was stamped 166 by the
+    // old fork migration). Do not treat that as an upstream pending set.
+    return (await readForkVersion(engine)) < latestForkVersion();
   } catch {
     return true;
   }
@@ -7006,7 +7084,11 @@ export function isDeadlockError(err: unknown): boolean {
   return /40P01|deadlock detected/i.test(msg);
 }
 
-export async function runMigrations(engine: BrainEngine): Promise<{ applied: number; current: number }> {
+export async function runMigrations(
+  engine: BrainEngine,
+  opts?: RunMigrationsOptions,
+): Promise<{ applied: number; current: number }> {
+  // Upstream high-water only. applyForkMigrations never reads or writes this key.
   const currentStr = await engine.getConfig('version');
   const current = parseInt(currentStr || '1', 10);
 
@@ -7014,7 +7096,8 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   // correctness. Migrations MUST run in version order; if v16 accidentally
   // precedes v15 in MIGRATIONS, setConfig(version, 16) would cause v15 to
   // be skipped on the next iteration.
-  const sorted = [...MIGRATIONS].sort((a, b) => a.version - b.version);
+  const sorted = [...MIGRATIONS, ...(opts?.extraUpstreamMigrations ?? [])]
+    .sort((a, b) => a.version - b.version);
 
   const pending = sorted.filter(m => m.version > current);
 
@@ -7085,6 +7168,9 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   } catch { /* best-effort; doctor reports the drift if this couldn't run */ }
 
   if (pending.length === 0) {
+    // No upstream migration is pending. Still record fork migrations.
+    // Do not lower or raise config.version on this path.
+    await applyForkMigrations(engine);
     return { applied: 0, current };
   }
 
@@ -7134,6 +7220,8 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
       if (!quietReplay) process.stderr.write(`  [${m.version}] ✓ ${m.name}\n`);
       applied++;
     }
+    // Fork ledger runs after the upstream list, including on a fresh replay.
+    await applyForkMigrations(engine);
   } finally {
     // Never leak the fresh-install quiet flag into a later in-process run —
     // covers every exit path from here on (incl. the pre-flight probe).
