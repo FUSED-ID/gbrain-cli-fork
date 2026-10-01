@@ -17,6 +17,8 @@ type PurgeCall = { hours: number; opts?: unknown };
 function makePurgeStub() {
   const calls: PurgeCall[] = [];
   const engine = {
+    // v0.60.11 routes the live purge through the coordinator, which asks whether managed persistence is on.
+    executeRaw: async () => [{ enabled: false }],
     purgeDeletedPages: async (hours: number, opts?: unknown) => {
       calls.push({ hours, opts });
       return { count: 0, slugs: [], pages: [] };

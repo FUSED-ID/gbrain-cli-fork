@@ -135,7 +135,7 @@ describe('extractLinksFromFile', () => {
     const content = '---\nrelated: "[[90-people/nicolai]]"\ntype: concept\n---\nContent.';
     const allSlugs = new Set(['wiki/note', '90-people/nicolai']);
     const links = await extractLinksFromFile(content, 'wiki/note.md', allSlugs, { includeFrontmatter: true });
-    const related = links.filter(l => l.link_type === 'related_to');
+    const related = links.filter(l => l.link_type === 'relates_to');
     expect(related).toHaveLength(1);
     expect(related[0].to_slug).toBe('90-people/nicolai');
   });

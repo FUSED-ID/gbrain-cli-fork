@@ -16,11 +16,11 @@ describe('fork v127 collision repair with permissions on the fork ledger', () =>
 
   test('keeps fork permissions off the upstream version list', () => {
     expect(MIGRATIONS.find((m) => m.name === 'oauth_and_access_token_permissions')).toBeUndefined();
-    expect(MIGRATIONS.some((m) => m.version > 165)).toBe(false);
+    expect(MIGRATIONS.find((m) => m.version === 166)?.name).toBe('fact_embedding_identity');
     expect(FORK_MIGRATIONS.find((m) => m.name === 'oauth_and_access_token_permissions')?.version).toBe(1);
     expect(MIGRATIONS.find((m) => m.version === 126)?.name).toBe('session_context_state');
     expect(MIGRATIONS.find((m) => m.version === 127)?.name).toBe('oauth_client_surface_and_minion_queue_index');
-    expect(LATEST_VERSION).toBe(165);
+    expect(LATEST_VERSION).toBe(178);
   });
 
   test('a brain stamped by fork v127 receives the upstream v127 artifacts', async () => {
