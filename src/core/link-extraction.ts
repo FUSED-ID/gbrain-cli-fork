@@ -607,6 +607,17 @@ export interface PageLinksResult {
 }
 
 /**
+ * Same-directory candidates of a bare wikilink are emitted without an existence
+ * check (the fork's DB-path rule, 293141b37). Callers that report unresolved
+ * references use this to treat a miss on such a candidate as "not a link", not as
+ * a dangling reference. A WeakSet, so the candidate objects keep their shape.
+ */
+const speculativeBareCandidates = new WeakSet<object>();
+export function isSpeculativeBareCandidate(candidate: object): boolean {
+  return speculativeBareCandidates.has(candidate);
+}
+
+/**
  * Bare `[[name]]` targets (the literal has no slash).
  *
  * `direct`, in emission order:
@@ -878,9 +889,11 @@ export async function extractPageLinks(
         && targets.filter(target => opts.targetType!(target) !== undefined).length > 1) attendanceAmbiguous.add(idx);
       for (const target of bareDirect) {
         const inferred = typeFor(context, target, idx);
-        candidates.push({ targetSlug: target,
+        const candidate: LinkCandidate = { targetSlug: target,
           ...(inferred.canonicalAttendance && !uniquePerson ? { linkType: 'mentions' } : inferred),
-          context, linkSource: 'markdown' });
+          context, linkSource: 'markdown' };
+        if (target.includes('/') && bareForms?.direct.includes(target)) speculativeBareCandidates.add(candidate);
+        candidates.push(candidate);
       }
       for (const matched of matches) {
         const inferred = typeFor(context, matched, idx);

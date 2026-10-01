@@ -24,6 +24,8 @@ export interface ChildReadinessOptions {
   signal?: AbortSignal;
 }
 
+// Fork: the release stamp is `<upstream>-fused-id.<n>` (for example 0.60.11.0-fused-id.1), so the version
+// pattern admits that one suffix. Any other suffix is still refused.
 export function parseChildReadiness(raw: string): { version: string; versionSkew: boolean } {
   let response: unknown;
   try { response = JSON.parse(raw); } catch {
@@ -32,7 +34,7 @@ export function parseChildReadiness(raw: string): { version: string; versionSkew
   if (!response || typeof response !== 'object') throw childConfigurationError('child_protocol_incompatible');
   const r = response as Record<string, unknown>;
   if (r.protocolVersion !== CHILD_READINESS_PROTOCOL_VERSION ||
-      typeof r.version !== 'string' || !/^\d+(?:\.\d+){2,3}$/.test(r.version) || r.version.length > 80 ||
+      typeof r.version !== 'string' || !/^\d+(?:\.\d+){2,3}(?:-fused-id\.\d+)?$/.test(r.version) || r.version.length > 80 ||
       !Array.isArray(r.features) || !r.features.every((feature) => typeof feature === 'string') ||
       !CHILD_READINESS_FEATURES.every((feature) => (r.features as unknown[]).includes(feature))) {
     throw childConfigurationError('child_protocol_incompatible');

@@ -1,5 +1,5 @@
 import type { BrainEngine, LinkBatchInput } from './engine.ts';
-import { extractPageLinks, unwrapWikilink, resolvedLinkCandidate,
+import { extractPageLinks, unwrapWikilink, resolvedLinkCandidate, isSpeculativeBareCandidate,
   isCrossSourceLinksEnabled, type LinkCandidate, type LinkExtractionPack, type SlugResolver } from './link-extraction.ts';
 import { fetchSource, isSourceFederated } from './sources-load.ts';
 import { parseMarkdown } from './markdown.ts';
@@ -104,6 +104,8 @@ export async function reconcileSourceLinks(
           continue;
         }
         if (!index.has(from) || !index.has(candidate.targetSlug)) {
+          // A missing same-directory guess for a bare wikilink is not a dangling reference.
+          if (index.has(from) && isSpeculativeBareCandidate(candidate)) continue;
           result.unresolved.push({ originSlug, target: candidate.targetSlug, reason: 'missing_target' });
           continue;
         }
