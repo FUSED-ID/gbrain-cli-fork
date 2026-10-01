@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPgliteBackup, restorePgliteBackup } from '../src/core/backup/snapshot.ts';
-import { FORK_VERSION_KEY } from '../src/core/migrate.ts';
+import { FORK_VERSION_KEY, LATEST_VERSION } from '../src/core/migrate.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 /**
@@ -11,13 +11,16 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
  * has the fork oauth columns and no facts.embedding_model column. Restore
  * reads that as upstream schema 165 plus fork ledger 1, including when the
  * caller simulates LATEST_VERSION 166. A stamp 166 dump that already has
- * facts.embedding_model is upstream 166 and stays 166. 167 stays above the
- * real schema ceiling and is refused.
+ * facts.embedding_model is upstream 166 and stays 166. A stamp above the real
+ * schema ceiling (LATEST_VERSION, 178 on v0.60.11.0) is refused. Since upstream
+ * v166 is now a real migration, the old-fork fixture removes
+ * facts.embedding_model from a freshly initialised brain, which is how a dump
+ * taken before upstream 166 looks.
  */
 let temporary = '';
 let root = '';
 let archive166 = '';
-let archive167 = '';
+let archiveAbove = '';
 
 async function withEngine<T>(
   databasePath: string,
@@ -69,16 +72,17 @@ beforeAll(async () => {
     if (shape.client_permissions !== 'jsonb' || shape.token_permissions !== 'jsonb') {
       throw new Error('fixture is missing fork oauth columns');
     }
+    await engine.executeRaw('ALTER TABLE facts DROP COLUMN IF EXISTS embedding_model');
     await engine.setConfig('version', '166');
     await engine.unsetConfig(FORK_VERSION_KEY);
   });
   archive166 = join(temporary, 'stamp-166.gbrain-backup');
   await createPgliteBackup({ root, output: archive166 });
   await withEngine(databasePath, async (engine) => {
-    await engine.setConfig('version', '167');
+    await engine.setConfig('version', String(LATEST_VERSION + 1));
   });
-  archive167 = join(temporary, 'stamp-167.gbrain-backup');
-  await createPgliteBackup({ root, output: archive167 });
+  archiveAbove = join(temporary, 'stamp-above-latest.gbrain-backup');
+  await createPgliteBackup({ root, output: archiveAbove });
 }, 240_000);
 
 afterAll(() => {
@@ -98,14 +102,14 @@ test('schema 166 with fork oauth columns restores as upstream 165 plus fork ledg
   }, true);
 }, 120_000);
 
-test('schema 167 is still refused', async () => {
-  const into = join(temporary, 'restored-167');
-  await expect(restorePgliteBackup({ archive: archive167, into })).rejects.toMatchObject({
+test('a schema above this binary is still refused', async () => {
+  const into = join(temporary, 'restored-above-latest');
+  await expect(restorePgliteBackup({ archive: archiveAbove, into })).rejects.toMatchObject({
     code: 'newer_backup_schema',
   });
 }, 120_000);
 
-test('schema 166 without fork oauth columns is refused', async () => {
+test('schema 166 without fork oauth columns is refused under simulated latest 165', async () => {
   const databasePath = join(root, '.gbrain', 'brain.pglite');
   await withEngine(databasePath, async (engine) => {
     await engine.executeRaw('ALTER TABLE oauth_clients DROP COLUMN IF EXISTS permissions');
@@ -115,7 +119,7 @@ test('schema 166 without fork oauth columns is refused', async () => {
   const archive = join(temporary, 'stamp-166-plain.gbrain-backup');
   await createPgliteBackup({ root, output: archive });
   const into = join(temporary, 'restored-166-plain');
-  await expect(restorePgliteBackup({ archive, into })).rejects.toMatchObject({
+  await expect(restorePgliteBackup({ archive, into, latestVersion: 165 })).rejects.toMatchObject({
     code: 'newer_backup_schema',
   });
 }, 120_000);
