@@ -6930,9 +6930,9 @@ async function runMigrationSQL(
 /**
  * Cheap probe: does this engine have schema migrations pending?
  *
- * Reads the `version` config row (no schema replay, no migration apply).
- * Also reads `fork_version`: a brain at or above LATEST_VERSION with no
- * fork ledger is still pending, so startup records the fork list without
+ * Reads two config keys, `version` and `fork_version` (no schema replay,
+ * no migration apply). A brain at or above LATEST_VERSION with no fork
+ * ledger is still pending, so startup records the fork list without
  * moving `version`. Used by `connectEngine` to gate `initSchema()` so
  * short-lived CLI invocations on already-migrated brains don't pay the
  * full bootstrap-probe + SCHEMA_SQL replay + ledger-check cost on every

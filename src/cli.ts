@@ -1872,6 +1872,9 @@ export function formatResult(
     }
     case 'get_timeline': {
       const entries = result as any[];
+      // Same `params.json === true` shape as get_versions. Human lines stay
+      // date, summary, and source. `--json` keeps detail and id.
+      if (params.json === true) return JSON.stringify(entries, null, 2) + '\n';
       if (entries.length === 0) return 'No timeline entries.\n';
       return entries.map(e =>
         `${e.date}  ${e.summary}${e.source ? ` [${e.source}]` : ''}`,
