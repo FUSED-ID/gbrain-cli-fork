@@ -21,6 +21,8 @@ function stubCtx(dryRun = false) {
   const ctx = {
     dryRun,
     engine: {
+      // v0.60.11 routes the live purge through the coordinator, which asks whether managed persistence is on.
+      executeRaw: async () => [{ enabled: false }],
       purgeDeletedPages: async (hours: number) => {
         calls.push(hours);
         return { count: 0, slugs: [] };

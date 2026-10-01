@@ -8,6 +8,7 @@
 import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 
+// test-reads-source-ok[structural]: dream's CLI entry has no in-process harness that can observe the consent hand-off; this pins the single wiring site.
 const dreamSrc = readFileSync(new URL('../src/commands/dream.ts', import.meta.url), 'utf-8');
 
 describe('dream purge consent wiring', () => {

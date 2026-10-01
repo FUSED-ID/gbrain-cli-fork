@@ -158,10 +158,12 @@ describe('D1 private-routing bypass paths', () => {
   test('grouped C-path assertion: non-remote writes are absent from the remote op surface', () => {
     const repo = resolve(import.meta.dir, '..');
     const opsDir = join(repo, 'src/core/ops');
+    // test-reads-source-ok[structural]: the claim is that no remote op names these write paths; no runtime harness enumerates call sites, so the source text is the evidence.
     const remoteSurface = readdirSync(opsDir)
       .filter((name) => name.endsWith('.ts'))
       .map((name) => readFileSync(join(opsDir, name), 'utf8'))
       .join('\n');
+    // test-reads-source-ok[structural]: pins the ctx.remote guard on the local-only extraction_review op, which has no in-process remote caller to drive.
     const extractionSource = readFileSync(join(opsDir, 'extraction.ts'), 'utf8');
     const extractionReview = operationsByName.extraction_review;
     const groupedProof = [

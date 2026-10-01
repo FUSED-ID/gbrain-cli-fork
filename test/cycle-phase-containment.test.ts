@@ -107,7 +107,7 @@ test('runCycle: a refused synthesize_concepts no longer kills the job; the next 
       // managed maintenance preflight refuses before any model work.
       await engine.setConfig('sync.write_through', 'true');
       await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-      const report = await runCycle(engine, { brainDir: root, sourceId, phases: ['synthesize_concepts', 'purge'] });
+      const report = await runCycle(engine, { brainDir: root, sourceId, phases: ['synthesize_concepts', 'purge'], purgeConsent: { olderThanHours: 72 } });
       const concepts = report.phases.find(p => p.phase === 'synthesize_concepts');
       expect(concepts).toMatchObject({ status: 'fail', details: { contained: true }, error: { code: 'owner_unavailable' } });
       expect(report.phases.find(p => p.phase === 'purge')?.status).toBe('ok');
