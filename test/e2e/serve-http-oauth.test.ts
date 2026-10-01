@@ -119,7 +119,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     const toRevoke = [...(clientId ? [clientId] : []), ...dcrClientIds];
     for (const id of toRevoke) {
       try {
-        execSync(`bun run src/cli.ts auth revoke-client "${id}"`,
+        execSync(`bun run src/cli.ts auth revoke-client "${id}" --yes-i-mean-it`,
           { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } });
       } catch (e: any) {
         // eslint-disable-next-line no-console
@@ -1146,7 +1146,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
 
     // Step 3: revoke via the CLI subprocess.
     const revokeOutput = execSync(
-      `bun run src/cli.ts auth revoke-client "${id}"`,
+      `bun run src/cli.ts auth revoke-client "${id}" --yes-i-mean-it`,
       { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } }
     );
     // The handler prints the human confirmation lines. No exit code != 0
@@ -1168,7 +1168,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     let secondRunFailed = false;
     let secondRunStderr = '';
     try {
-      execSync(`bun run src/cli.ts auth revoke-client "${id}"`,
+      execSync(`bun run src/cli.ts auth revoke-client "${id}" --yes-i-mean-it`,
         { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } });
     } catch (e: any) {
       secondRunFailed = true;

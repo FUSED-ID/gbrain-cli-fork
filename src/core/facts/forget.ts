@@ -17,8 +17,6 @@ import { withPageLock } from '../page-lock.ts';
 import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
 import { resolvePageWriteTarget } from '../write-through.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
-import { parseMarkdown } from '../markdown.ts';
-import { sanitizeText } from '../batch-rows.ts';
 import { contentHash } from '../utils.ts';
 import { recordFactWithdrawal } from './withdrawal.ts';
 import { withdrawnFact } from './withdrawal-overlay.ts';
@@ -272,26 +270,15 @@ export async function forgetFactInFence(
         [today, factId],
       );
 
-      // #4696: mirror the rewritten file into the DB body, or the reconcile
-      // (which reads pages.compiled_truth) resurrects the claim before the
-      // next sync absorbs the file — and sync is commit-anchored, so that
-      // window lasts until the user commits. Parse + sanitize the FILE bytes
-      // as import-file.ts does. Body-only: content_chunks still carry the
-      // live claim, so the row KEEPS its old content_hash and the next sync
-      // re-imports + re-chunks. Stamping the importer's hash here made sync
-      // skip the page and the struck claim kept surfacing in chunk search.
-      // Never persist an EMPTY hash: a row that had none gets a row-shaped
-      // hash of its pre-mirror content, which the rewritten file can't match.
-      // Best-effort — file + facts row are already correct.
-      try {
-        const reparsed = parseMarkdown(tmpBody, `${slug}.md`);
-        const page = await engine.getPage(slug, { sourceId: row.source_id });
-        if (page) {
-          await engine.refreshPageBody(slug, row.source_id,
-            sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline),
-            page.content_hash || contentHash(page));
-        }
-      } catch { /* degrades to the pre-#4696 window (stale until the next sync) */ }
+      // #4696: strike the row in the DB body too, or the reconcile (which
+      // reads pages.compiled_truth) resurrects the claim before the next sync
+      // absorbs the file. D1 (fork, 269efc303): strike the DB's own body through
+      // the guarded refreshPageBody chokepoint rather than copying the file's
+      // bytes into it, so a drifted or edited file is never published into the
+      // indexed page by a forget. strikeDbBody stamps a row-shaped hash, so the
+      // next sync still re-imports and re-chunks.
+      // Best-effort: the withdrawal, facts row and file are already correct.
+      await strikeDbBody().catch(() => { /* degrades to the pre-#4696 window */ });
 
       return { ok: true, path: 'fence', reason };
     }, { timeoutMs: 5_000 });

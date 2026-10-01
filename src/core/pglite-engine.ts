@@ -108,6 +108,7 @@ import type {
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { enforcePrivateFactWrite, enforcePrivatePageWrite } from './private-source-routing.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
 import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
 import { PAGE_SORT_SQL, MIN_ENTITY_PAGES_FOR_COVERAGE } from './types.ts';
@@ -1158,6 +1159,12 @@ export class PGLiteEngine implements BrainEngine {
         (SELECT COUNT(*) = 6 FROM information_schema.columns
           WHERE table_schema='public' AND table_name='oauth_clients'
             AND column_name IN ('allowed_operations', 'delegated_slug_prefixes', 'delegated_namespace', 'grant_profile', 'grant_revision', 'grant_repair_reasons')) AS oauth_client_grants_exist,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='permissions') AS oauth_clients_permissions_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='access_tokens') AS access_tokens_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='access_tokens' AND column_name='permissions') AS access_tokens_permissions_exists,
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema='public' AND table_name='sources') AS sources_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
@@ -1245,6 +1252,9 @@ export class PGLiteEngine implements BrainEngine {
       oauth_clients_surface_exists: boolean;
       oauth_clients_surface_set_by_exists: boolean;
       oauth_client_grants_exist: boolean;
+      oauth_clients_permissions_exists: boolean;
+      access_tokens_exists: boolean;
+      access_tokens_permissions_exists: boolean;
       sources_exists: boolean;
       sources_archived_exists: boolean;
       sources_archived_at_exists: boolean;
@@ -1314,6 +1324,10 @@ export class PGLiteEngine implements BrainEngine {
     const needsOauthClientGrants = probe.oauth_clients_exists && !probe.oauth_client_grants_exist;
     const needsOauthClientsSurface = probe.oauth_clients_exists
       && (!probe.oauth_clients_surface_exists || !probe.oauth_clients_surface_set_by_exists);
+    // v166: fork permission columns must exist before schema replay on a
+    // brain whose existing tables make CREATE TABLE a no-op.
+    const needsOauthPermissions = (probe.oauth_clients_exists && !probe.oauth_clients_permissions_exists)
+      || (probe.access_tokens_exists && !probe.access_tokens_permissions_exists);
     // v0.26.5 (v34): sources.archived + archived_at + archive_expires_at added
     // for soft-delete lifecycle. Not directly referenced by indexes BUT
     // PGLITE_SCHEMA_SQL's `CREATE TABLE IF NOT EXISTS sources` is a no-op on
@@ -1385,6 +1399,7 @@ export class PGLiteEngine implements BrainEngine {
         && !needsPagesRecency && !needsIngestLogSourceId
         && !needsFilesBootstrap && !needsOauthClientsBootstrap
         && !needsOauthClientsSurface && !needsOauthClientGrants
+        && !needsOauthPermissions
         && !needsSourcesArchive && !needsPagesLastRetrievedAt
         && !needsPagesProvenance
         && !needsContextualRetrievalColumns && !needsPagesGeneration
@@ -1574,6 +1589,13 @@ export class PGLiteEngine implements BrainEngine {
       await this.db.exec(`
         ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS surface TEXT;
         ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS surface_set_by TEXT;
+      `);
+    }
+
+    if (needsOauthPermissions) {
+      await this.db.exec(`
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'::jsonb;
+        ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{"takes_holders":["world"]}'::jsonb;
       `);
     }
 
@@ -1775,8 +1797,20 @@ export class PGLiteEngine implements BrainEngine {
 
   private _pageTransaction = false;
 
-  async putPage(slug: string, page: PageInput, opts?: PageWriteOptions): Promise<Page> {
+  async putPage(slug: string, page: PageInput, opts?: PageWriteOptions & { migrationWrite?: boolean }): Promise<Page> {
     slug = validateSlug(slug);
+    // D1 (fork): the privacy chokepoint for every page write. migrationWrite
+    // exempts only copyPageToTarget in src/commands/migrate-engine.ts: a
+    // verbatim copy of a page the source engine already accepted, not a new
+    // write entering a world-federated source.
+    if (!opts?.migrationWrite) {
+      await enforcePrivatePageWrite(this, {
+        requestedSourceId: opts?.sourceId ?? 'default',
+        slug,
+        entityType: page.type,
+        entityName: page.title,
+      });
+    }
     return this.transaction(async tx => {
       const sourceId = opts?.sourceId ?? 'default';
       await tx.lockPageKeys([{ sourceId, slug }]);
@@ -1788,6 +1822,11 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   private async _putPage(slug: string, page: PageInput, opts?: PageWriteOptions): Promise<Page> {
+    // Tombstone race guard (fork, defects 2-4): the ON CONFLICT upsert below
+    // only updates a row that is live or whose deleted_at is at or before
+    // this statement's clock_timestamp(). A future-dated tombstone (synthetic
+    // test or clock skew) yields zero rows and is refused, never resurrected.
+    // A real, already-committed soft delete is still overwritten, as upstream.
     slug = validateSlug(slug);
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
@@ -1863,6 +1902,7 @@ export class PGLiteEngine implements BrainEngine {
          source_uri            = COALESCE(EXCLUDED.source_uri,            pages.source_uri),
          ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
          ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at)
+       WHERE pages.deleted_at IS NULL OR pages.deleted_at <= clock_timestamp()
        RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at`,
       [sourceId, slug, page.type, pageKind, sanitizeText(page.title), sanitizeText(page.compiled_truth), sanitizeText(page.timeline || ''), JSON.stringify(frontmatter), hash, effectiveDate, effectiveDateSource, importFilename, chunkerVersion, sourcePath, sourceKind, sourceUri, ingestedVia, ingestedAt]
     );
@@ -1874,7 +1914,11 @@ export class PGLiteEngine implements BrainEngine {
     if (rows.length === 0) {
       const reread = await this.getPage(slug, { sourceId });
       if (reread) return reread;
-      throw new Error(`putPage: RETURNING produced no row for ${sourceId}/${slug}`);
+      throw new Error(
+        `putPage: '${slug}' in source '${sourceId}' produced no row. Either RETURNING produced ` +
+          'none for a PGLite no-op, or the row was deleted concurrently with this write and is ' +
+          'being left deleted rather than resurrected. Re-check whether the page should exist and retry if so.',
+      );
     }
     return rowToPage(rows[0] as Record<string, unknown>);
   }
@@ -1979,6 +2023,13 @@ export class PGLiteEngine implements BrainEngine {
       params.push(sourceId);
       where.push(`source_id = $${params.length}`);
     }
+    const current = await this.getPage(slug, { includeDeleted: true, ...(sourceId ? { sourceId } : {}) });
+    if (current) await enforcePrivatePageWrite(this, {
+      requestedSourceId: current.source_id,
+      slug,
+      entityType: current.type,
+      entityName: current.title,
+    });
     const { rows } = await this.db.query(
       `UPDATE pages SET deleted_at = NULL WHERE ${where.join(' AND ')} RETURNING slug`,
       params
@@ -2031,6 +2082,7 @@ export class PGLiteEngine implements BrainEngine {
     // Parity with PostgresEngine.refreshPageBody: narrow UPDATE only.
     // The deleted_at filter prevents a redirect retry from reviving a
     // canonical that was already purged.
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
     await this.db.query(
       `UPDATE pages
          SET compiled_truth = $1,
@@ -4881,6 +4933,12 @@ export class PGLiteEngine implements BrainEngine {
     const conf = obs.confidence ?? 0.7;
     const status = obs.status ?? (isNovelDimension(dimension) ? 'quarantined' : 'active');
     const visibility = obs.visibility ?? 'private';
+    await enforcePrivateFactWrite(this, {
+      sourceId,
+      pageSlug: obs.entitySlug,
+      entitySlug: obs.entitySlug,
+      visibility,
+    });
     const validFrom = obs.validFrom ?? null;
     const validUntil = obs.validTo ?? null;
     const factText = `${dimension}: ${obs.value}`;
@@ -5222,7 +5280,10 @@ export class PGLiteEngine implements BrainEngine {
   /** Narrow deps for the peeled facts module. */
   private get factsDeps(): PgliteFactsDeps {
     const self = this;
-    return { get db() { return self.db; } };
+    return {
+      get db() { return self.db; },
+      guardFactWrite: (target) => enforcePrivateFactWrite(self, target),
+    };
   }
 
   async insertFact(
@@ -5465,7 +5526,11 @@ export class PGLiteEngine implements BrainEngine {
 
   // Versions
   async createVersion(slug: string, opts?: { sourceId?: string }): Promise<PageVersion> {
-    return createPageVersion(this, slug, opts?.sourceId ?? 'default');
+    const sourceId = opts?.sourceId ?? 'default';
+    // D1 (fork): the privacy chokepoint runs before upstream's canonical
+    // version snapshot (knowledge_revision, tags, is_deleted).
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
+    return createPageVersion(this, slug, sourceId);
   }
 
   async getVersions(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<PageVersion[]> {

@@ -174,7 +174,7 @@ export function cmdString(binary: string, argv: string[]): string {
  */
 export const OAUTH_SECRET_NOTE =
   'Note: the client secret is sensitive — store it like a password. It mints ' +
-  'short-lived, scoped access tokens; revoke with `gbrain auth revoke-client`.';
+  'short-lived, scoped access tokens; revoke with `gbrain auth revoke-client <client-id> --yes-i-mean-it`.';
 
 /**
  * Paste-ready OpenClaw wiring block — HONEST v1. OpenClaw has no native

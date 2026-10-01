@@ -35,7 +35,7 @@
 import { existsSync } from 'fs';
 import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
-import { SOURCE_FRESHNESS_PHASES, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
+import { SOURCE_FRESHNESS_PHASES, QUEUED_MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
 import { sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
 import { loadActivationPendingSourceIds, skipActivationPendingSync } from '../core/sync-policy.ts';
@@ -442,6 +442,7 @@ export async function dispatchPerSource(
         timeout_ms: opts.timeoutMs,
         maxPending: 1,
       },
+      { allowProtectedSubmit: true },
     );
     if (job.coalesced) {
       if (opts.jsonMode) {
@@ -548,6 +549,7 @@ export async function dispatchPerSource(
           // still in flight (waiting or live-lock active).
           maxPending: 1,
         },
+        { allowProtectedSubmit: true },
       );
       if (job.coalesced) {
         coalesced.push(src.id);
@@ -663,7 +665,7 @@ export async function dispatchGlobalMaintenance(
 
   const job = await queue.add(
     'autopilot-global-maintenance',
-    { repoPath: opts.repoPath, phases: MAINTENANCE_PHASES },
+    { repoPath: opts.repoPath, phases: QUEUED_MAINTENANCE_PHASES },
     {
       queue: 'default',
       // Structural single-flight: one global job per slot; maxPending:1
@@ -674,6 +676,7 @@ export async function dispatchGlobalMaintenance(
       timeout_ms: opts.timeoutMs,
       maxPending: 1,
     },
+    { allowProtectedSubmit: true },
   );
   if (job.coalesced) {
     if (opts.jsonMode) {

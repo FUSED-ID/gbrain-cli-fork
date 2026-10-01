@@ -5,7 +5,7 @@ import { assertLegacyEngineMigration, assertUnmanagedCanonicalWriter } from '../
  * Usage:
  *   gbrain migrate --to supabase [--url <connection_string>]
  *   gbrain migrate --to pglite [--path <db_path>]
- *   gbrain migrate --to <engine> --force  (overwrite non-empty target)
+ *   gbrain migrate --to <engine> --force --yes-i-mean-it  (overwrite non-empty target)
  */
 
 import { createEngine } from '../core/engine-factory.ts';
@@ -26,6 +26,7 @@ import { autopilotPausedMarkerPath, autopilotLockPath, markerHolderAlive, MIGRAT
 export { MIGRATE_PAUSE_MARKER_PREFIX };
 import { listLiveLocks } from '../core/db-lock.ts';
 import { queuePageProjection } from '../core/page-state/projections.ts';
+import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent } from '../core/destructive-guard.ts';
 
 interface MigrateOpts {
   targetEngine: 'postgres' | 'pglite';
@@ -37,7 +38,7 @@ interface MigrateOpts {
 function parseArgs(args: string[]): MigrateOpts {
   const toIdx = args.indexOf('--to');
   if (toIdx === -1 || !args[toIdx + 1]) {
-    throw new Error('Usage: gbrain migrate --to <supabase|pglite> [--url <url>] [--path <path>] [--force]');
+    throw new Error('Usage: gbrain migrate --to <supabase|pglite> [--url <url>] [--path <path>] [--force --yes-i-mean-it]');
   }
 
   const targetRaw = args[toIdx + 1];
@@ -473,6 +474,14 @@ export async function copyPageToTarget(
   // Verbatim copy — the source engine's row is authoritative, so a
   // legitimately blank body (image page, deliberate clear) must land even
   // when a re-run's target row already holds an older non-empty body.
+  // migrationWrite: exempts this write from the D1 privacy-policy guard.
+  // copyMigrationSources (above copyPageToTarget in this file) already
+  // copied `sources` before any page lands, so on a fresh target nothing
+  // "already exists" and every person-shaped page would otherwise look new
+  // to the guard and get refused. This is a verbatim copy of a page the
+  // SOURCE engine already accepted, not a new write entering the target
+  // from outside, so the guard does not apply. Named narrowly, set only
+  // here.
   await target.putPage(page.slug, nullifyUndefinedColumns({
     type: page.type,
     title: page.title,
@@ -480,7 +489,7 @@ export async function copyPageToTarget(
     timeline: page.timeline,
     frontmatter: page.frontmatter,
     content_hash: page.content_hash,
-  }), { ...sourceOpts, allowEmptyOverwrite: true });
+  }), { ...sourceOpts, allowEmptyOverwrite: true, migrationWrite: true });
 
   // #4527: putPage stamps created_at/updated_at with now() (PageInput has no
   // timestamp fields), so without this every migrated page loses its
@@ -779,8 +788,23 @@ export async function quiesceAutopilot(engine?: BrainEngine): Promise<(() => voi
 }
 
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
-  await assertUnmanagedCanonicalWriter(sourceEngine, 'engine migration');
-  await assertLegacyEngineMigration(sourceEngine);
+  const wantsHelp = args.some((arg) => arg === '--help' || arg === '-h' || arg === 'help');
+  if (!wantsHelp) {
+    await assertUnmanagedCanonicalWriter(sourceEngine, 'engine migration');
+    await assertLegacyEngineMigration(sourceEngine);
+  }
+  const consent = requireDestructiveConsent({
+    command: 'migrate',
+    scopeFlags: ['--to'],
+    valueFlags: ['--url', '--path'],
+    args,
+    usage: 'Usage: gbrain migrate --to <supabase|pglite> [--url <url>] [--path <path>] [--force --yes-i-mean-it]',
+    allowedFlags: ['--force'],
+    consentFlags: ['--yes-i-mean-it'],
+    enforceConsent: args.includes('--force'),
+  });
+  if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+
   const opts = parseArgs(args);
   const config = loadConfig();
   if (!config) {
@@ -847,6 +871,15 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   // foreign non-empty brain".
   let manifest = loadManifest();
   if (manifest && !manifestMatchesTarget(manifest, targetId)) {
+    if (!opts.force) {
+      console.error('Previous migration manifest does not match the requested target.');
+      console.error('Refusing to migrate without --force --yes-i-mean-it, or remove the stale manifest.');
+      await targetEngine.disconnect();
+      // Not process.exit: the resume must run (see the quiesce block above).
+      setCliExitVerdict(1);
+      resumeAutopilot();
+      return;
+    }
     console.log('Previous migration was to a different target. Starting fresh.');
     manifest = null;
   }

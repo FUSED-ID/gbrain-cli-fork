@@ -30,6 +30,7 @@ import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { sqlQueryForEngine, executeRawJsonb, type SqlQuery } from '../core/sql-query.ts';
 import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPatch } from '../core/grants/service.ts';
 import { parseRescopeGrantArgs } from '../core/grants/cli.ts';
+import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent } from '../core/destructive-guard.ts';
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -773,7 +774,7 @@ export function formatRegisterClientOutput(name: string, r: RegisteredClient, pa
   } else {
     lines.push('Public client (PKCE-only) — no secret needed.');
   }
-  lines.push(`Revoke with: gbrain auth revoke-client "${r.clientId}"`);
+  lines.push(`Revoke with: gbrain auth revoke-client "${r.clientId}" --yes-i-mean-it`);
   return lines;
 }
 
@@ -1133,7 +1134,7 @@ Usage:
                                                           from mcp_request_log (default 30d window; HTTP clients
                                                           only — stdio use is not logged). Automation-shaped
                                                           clients (>90% context_pack/delta) are flagged.
-  gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
+  gbrain auth revoke-client <client_id> --yes-i-mean-it   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
   gbrain auth local-writer list|register|revoke            Manage durable local CLI/stdio writers (see --help)
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `;
@@ -1181,7 +1182,18 @@ export async function runAuth(args: string[]): Promise<void> {
     }
     case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
     case 'rescope-client': await rescopeClient(rest[0], rest.slice(1)); return;
-    case 'revoke-client': await revokeClient(rest[0]); return;
+    case 'revoke-client': {
+      const consent = requireDestructiveConsent({
+        command: 'auth revoke-client',
+        scopeFlags: [],
+        positionalScope: { name: 'client_id', required: true },
+        args: rest,
+        usage: 'Usage: gbrain auth revoke-client <client_id> --yes-i-mean-it',
+      });
+      if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+      await revokeClient(rest[0]);
+      return;
+    }
     case 'clients': await clientsCmd(rest); return;
     case 'test': {
       const tokenIdx = rest.indexOf('--token');

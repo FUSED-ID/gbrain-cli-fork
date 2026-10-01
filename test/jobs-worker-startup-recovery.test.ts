@@ -44,7 +44,7 @@ beforeEach(async () => {
 /** Orphan fixture: waiting 'subagent' child, terminal owner, aged updated_at. */
 async function seedOrphanQueue(): Promise<{ queueName: string; childId: number }> {
   const queueName = `dream-inline-worker-recovery-${++queueSeq}`;
-  const owner = await queue.add('autopilot-cycle', {});
+  const owner = await queue.add('autopilot-cycle', {}, undefined, { allowProtectedSubmit: true });
   await engine.executeRaw(
     `UPDATE minion_jobs SET status = 'completed', finished_at = now() WHERE id = $1`,
     [owner.id],

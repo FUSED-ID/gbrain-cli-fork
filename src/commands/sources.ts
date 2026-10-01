@@ -27,7 +27,7 @@
  *   - MCP tool-def regen for full source-scoping of all ops (part of Step 2+5)
  */
 
-import { writeFileSync, unlinkSync, existsSync } from 'fs';
+import { writeFileSync, unlinkSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
@@ -42,6 +42,9 @@ import {
   formatSoftDelete,
   clientsReferencingSource,
   formatClientReferentsBlock,
+  DESTRUCTIVE_HELP_REQUESTED,
+  DestructiveConsentError,
+  requireDestructiveConsent,
   SOFT_DELETE_TTL_HOURS,
 } from '../core/destructive-guard.ts';
 import {
@@ -67,6 +70,7 @@ import {
 } from '../core/sources-load.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { preflightOauthClientColumns } from './auth.ts';
+import { parseExcludedPeople } from '../core/private-source-routing.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -124,6 +128,64 @@ async function countPages(engine: BrainEngine, sourceId: string): Promise<number
     [sourceId],
   );
   return rows[0]?.n ?? 0;
+}
+
+// ── Subcommand: provision-private-routing ─────────────────
+
+async function runProvisionPrivateRouting(engine: BrainEngine, args: string[]): Promise<void> {
+  const sourceId = args.find((arg, index) => index === 0 && !arg.startsWith('--')) ?? 'lg-private';
+  const json = args.includes('--json');
+  const source = await fetchSource(engine, sourceId);
+  if (!source) {
+    throw new Error(`Source "${sourceId}" not found.`);
+  }
+  if (!source.local_path) {
+    throw new Error(`Source "${sourceId}" has no local_path; cannot provision private routing policy.`);
+  }
+
+  const excludedPath = join(source.local_path, '_excluded-people.md');
+  const filingPath = join(source.local_path, '_brain-filing-rules.md');
+  let excludedPeople: string;
+  let filingRules: string;
+  try {
+    excludedPeople = readFileSync(excludedPath, 'utf8');
+    filingRules = readFileSync(filingPath, 'utf8');
+  } catch (err) {
+    throw new Error(
+      `Cannot provision private routing policy for source "${sourceId}": ` +
+      `${(err as Error).message}`,
+    );
+  }
+  const excludedEntryCount = parseExcludedPeople(excludedPeople).length;
+  if (excludedEntryCount === 0) {
+    throw new Error(
+      `Cannot provision private routing policy for source "${sourceId}": ` +
+      '_excluded-people.md parsed to zero deny-list entries.',
+    );
+  }
+
+  const config = parseConfig(source.config);
+  const currentRouting = config.private_routing;
+  const routing = currentRouting && typeof currentRouting === 'object' && !Array.isArray(currentRouting)
+    ? currentRouting as Record<string, unknown>
+    : {};
+  config.private_routing = {
+    ...routing,
+    excluded_people_markdown: excludedPeople,
+    filing_rules_markdown: filingRules,
+  };
+  await engine.executeRaw(
+    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
+    [JSON.stringify(normalizeSourceConfig(config)), sourceId],
+  );
+
+  const result = { source_id: sourceId, excluded_entry_count: excludedEntryCount };
+  if (json) {
+    console.log(JSON.stringify(result));
+  } else {
+    console.log(`Provisioned private routing policy for source "${sourceId}".`);
+    console.log(`Excluded people entries: ${excludedEntryCount}`);
+  }
 }
 
 // ── Subcommand: add ─────────────────────────────────────────
@@ -755,6 +817,27 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
 // ── Subcommand: remove ──────────────────────────────────────
 
 async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
+  let consent;
+  try {
+    consent = requireDestructiveConsent({
+    command: 'sources remove',
+    scopeFlags: [],
+    positionalScope: { name: 'id', required: true },
+    args,
+    usage: 'Usage: gbrain sources remove <id> [--yes] [--confirm-destructive] [--dry-run] [--keep-storage]',
+    allowedFlags: ['--keep-storage'],
+    consentFlags: ['--yes', '--confirm-destructive'],
+    allowDryRun: true,
+    });
+  } catch (error) {
+    if (error instanceof DestructiveConsentError) {
+      console.error(error.message);
+      process.exit(error.exitCode);
+    }
+    throw error;
+  }
+  if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+
   const id = args[0];
   if (!id) {
     console.error('Usage: gbrain sources remove <id> [--yes] [--confirm-destructive] [--dry-run] [--keep-storage]');
@@ -762,7 +845,7 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   }
   const yes = args.includes('--yes');
   const dryRun = args.includes('--dry-run');
-  const confirmDestructive = args.includes('--confirm-destructive');
+  const confirmDestructive = args.includes('--confirm-destructive') || args.includes('--yes-i-mean-it');
   const _keepStorage = args.includes('--keep-storage');
   void _keepStorage;
 
@@ -1015,11 +1098,60 @@ async function runRestore(engine: BrainEngine, args: string[]): Promise<void> {
 // ── Subcommand: purge ───────────────────────────────────────
 
 async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
-  const id = args[0];
-  const confirmDestructive = args.includes('--confirm-destructive');
+  // Normalize the equals spelling before the shared guard so --scope is
+  // positional-independent and both accepted CLI spellings validate alike.
+  const normalizedArgs = args.flatMap((arg) => {
+    if (arg.startsWith('--scope=')) return ['--scope', arg.slice('--scope='.length)];
+    return [arg];
+  });
+  const scopeIndex = normalizedArgs.indexOf('--scope');
+  const scopeValue = scopeIndex >= 0 ? normalizedArgs[scopeIndex + 1] : undefined;
+  const scopeValueIndex = scopeIndex >= 0 ? scopeIndex + 1 : -1;
+  const id = normalizedArgs.find((arg, index) =>
+    !arg.startsWith('-') && index !== scopeValueIndex,
+  );
+  let consent;
+  try {
+    consent = requireDestructiveConsent({
+      command: 'sources purge',
+      scopeFlags: id ? [] : ['--scope'],
+      positionalScope: id ? { name: 'id', required: true } : undefined,
+      args: normalizedArgs,
+      usage: 'Usage: gbrain sources purge <id> --confirm-destructive | --scope expired --confirm-destructive',
+      consentFlags: ['--confirm-destructive'],
+    });
+  } catch (error) {
+    if (error instanceof DestructiveConsentError) {
+      console.error(error.message);
+      process.exit(error.exitCode);
+    }
+    throw error;
+  }
+  if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+
+  const confirmDestructive = normalizedArgs.includes('--confirm-destructive') || normalizedArgs.includes('--yes-i-mean-it');
+
+  if (scopeIndex >= 0 && (scopeValue !== 'expired' || id !== undefined)) {
+    throw new DestructiveConsentError(
+      'sources purge',
+      'the scope value "expired" without a source id',
+      'gbrain sources purge --scope expired --confirm-destructive',
+    );
+  }
 
   if (id) {
     // Purge a specific source (must be archived)
+    const archivedRows = await engine.executeRaw<{ archived: boolean | null }>(
+      `SELECT archived FROM sources WHERE id = $1`,
+      [id],
+    );
+    if (archivedRows.length > 0 && archivedRows[0].archived !== true) {
+      throw new DestructiveConsentError(
+        'sources purge',
+        'the source to be archived first',
+        `gbrain sources archive "${id}" && gbrain sources purge "${id}" --confirm-destructive`,
+      );
+    }
     const impact = await assessDestructiveImpact(engine, id);
     if (!impact) {
       console.error(`Source "${id}" not found.`);
@@ -1046,7 +1178,15 @@ async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
     return;
   }
 
-  // No id: purge all expired archives
+  if (scopeIndex < 0) {
+    throw new DestructiveConsentError(
+      'sources purge',
+      'an explicit scope',
+      'gbrain sources purge --scope expired --confirm-destructive',
+    );
+  }
+
+  // No id: purge all expired archives, but only with an explicit scope.
   const { purged, blocked } = await purgeExpiredSources(engine);
   if (purged.length === 0 && blocked.length === 0) {
     console.log('No expired archives to purge.');
@@ -1848,12 +1988,14 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     return;
   }
 
-  if (['add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(sub)) {
+  const wantsHelp = rest.some((arg) => arg === 'help' || arg === '--help' || arg === '-h');
+  if (!wantsHelp && ['add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(sub)) {
     const { runConnectedSourceLifecycle } = await import('./sources-lifecycle.ts');
     if (await runConnectedSourceLifecycle(engine, args)) return;
   }
   switch (sub) {
     case 'add':        return runAdd(engine, rest);
+    case 'provision-private-routing': return runProvisionPrivateRouting(engine, rest);
     case 'list':       return runList(engine, rest);
     case 'remove':     return runRemove(engine, rest);
     case 'rename':     return runRename(engine, rest);
@@ -1910,6 +2052,9 @@ Subcommands:
   add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
                                     Register a new source. --path must be a git repo
                                     with committed files; --force skips that check.
+  provision-private-routing [<id>] [--json]
+                                    Load both private routing policy files from
+                                    the source local_path into sources.config.
   list [--json]                     List registered sources with page counts.
   writer status|claim|activate|transfer  Inspect, activate or transfer canonical ownership (see writer --help).
   reconcile <id> <slug> --brain <id> Preview or apply a guarded file/database repair (see reconcile --help).
@@ -1925,9 +2070,9 @@ Subcommands:
                                     --json emits {schema_version:1, ...} on
                                     stdout for monitoring pipelines.
   archived [--json]                 List soft-deleted sources and their expiry.
-  purge [<id>] [--confirm-destructive]
+  purge <id> --confirm-destructive | --scope expired --confirm-destructive
                                     Permanently delete archived sources.
-                                    Without <id>: purge all expired archives.
+                                    --scope expired purges all expired archives.
                                     With <id>: force-purge (requires --confirm-destructive).
   rename <id> <new-name>            Rename display name (id is immutable).
   default <id>                      Set the brain-level default source.

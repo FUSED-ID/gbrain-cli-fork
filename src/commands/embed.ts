@@ -23,6 +23,7 @@ import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
 import { countRestampOnlyChunks, invalidateStaleSignatureEmbeddingsGuarded } from '../core/embedding-invalidation.ts';
 import { loadConfig, type GBrainConfig } from '../core/config.ts';
 import { slog, serr } from '../core/console-prefix.ts';
+import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent } from '../core/destructive-guard.ts';
 import { filterOutEmbedSkipped } from '../core/embed-skip.ts';
 import { runSlidingPool } from '../core/worker-pool.ts';
 import { isAborted, anySignal, AbortError } from '../core/abort-check.ts';
@@ -842,11 +843,20 @@ export function isKeylessStaleRefusal(args: string[], embeddingDisabled: boolean
 }
 
 export async function runEmbed(engine: BrainEngine, args: string[], selectedConfig: GBrainConfig | null = null): Promise<EmbedResult | EmbedFactsResult | StaleImageSweepResult | undefined> {
+  const consent = requireDestructiveConsent({
+    command: 'embed',
+    scopeFlags: [],
+    args: args.filter((arg) => arg === '--help' || arg === '-h' || arg === 'help'),
+    usage: 'Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--include-null-signature]',
+    enforceConsent: false,
+  });
+  if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
   if (args.includes('--facts')) {
     const result = await embedStaleFacts(engine, parseFactEmbedArgs(args), selectedConfig);
     console.log(JSON.stringify(result, null, 2));
     return result;
   }
+
   // Keyless clean refusal — see isKeylessStaleRefusal. Checked BEFORE the
   // background block so we never queue a job that can only fail. stderr only;
   // stdout stays empty like every other embed outcome (embed has no JSON

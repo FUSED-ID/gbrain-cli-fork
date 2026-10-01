@@ -30,6 +30,7 @@ import { loadConfig, loadConfigWithEngine, isThinClient } from '../core/config.t
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { parseNiceValue, applyNiceness, getEffectiveNiceness, formatNice } from '../core/minions/niceness.ts';
 import { defaultTimeoutMsFor, defaultLockDurationMsFor, clampLockDurationMs } from '../core/minions/handler-timeouts.ts';
+import { DESTRUCTIVE_HELP_REQUESTED, requireDestructiveConsent } from '../core/destructive-guard.ts';
 
 function parseFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -149,6 +150,13 @@ function registerBuiltinJob(
   });
 }
 
+// Shape (a) of the R4 remote-cycle guard: this name is intentionally not in
+// PROTECTED_JOB_NAMES. Its handler below owns a fixed, non-destructive phase
+// list and ignores all caller-supplied job data, so remote ping has a safe
+// queue surface without giving MCP callers a path to purge.
+const REMOTE_AUTOPILOT_PHASES = ['sync', 'extract', 'embed'] as const;
+export const REMOTE_AUTOPILOT_JOB_NAME = 'remote-autopilot-cycle';
+
 /** Parse `--max-waiting N` from CLI args. Returns undefined if absent.
  *  Throws on malformed input (caller should surface the error and exit).
  *  Clamps to [1, 100] to match the queue-layer clamp in MinionQueue.add.
@@ -225,6 +233,20 @@ export function resolveWorkerConcurrency(args: string[], env: NodeJS.ProcessEnv 
     return 1;
   }
   return parsed;
+}
+
+/** Parse the worker job-name allow-list used by bounded drainers. */
+export function parseWorkerOnlyNames(
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): string[] | undefined {
+  const raw = parseFlag(args, '--only') ?? env.GBRAIN_WORKER_ONLY_NAMES;
+  if (raw === undefined) return undefined;
+  const names = [...new Set(raw.split(',').map((name) => name.trim()).filter(Boolean))];
+  if (names.length === 0) {
+    throw new Error('--only must contain at least one comma-separated job name');
+  }
+  return names;
 }
 
 export type JobIsolationMode = 'inline' | 'process';
@@ -373,7 +395,7 @@ USAGE
   gbrain jobs get <id> [--json]
   gbrain jobs cancel <id>
   gbrain jobs retry <id>
-  gbrain jobs prune [--older-than 30d] [--dry-run]
+  gbrain jobs prune --older-than Nd [--dry-run]
   gbrain jobs delete <id>
   gbrain jobs stats [--queue Q] [--cluster-errors] [--json]
                     (dream-inline-* queues report ABANDONED/live only with an
@@ -590,12 +612,11 @@ are shown but never implicitly authorized. IDs, data, schedule and retries persi
   prune: `gbrain jobs prune — delete old terminal jobs
 
 USAGE
-  gbrain jobs prune [--older-than 30d] [--dry-run]
+  gbrain jobs prune --older-than Nd [--dry-run]
 
 OPTIONS
-  --older-than AGE  Delete completed/failed/dead/cancelled jobs older than
-                    AGE in days (default 30d; bare N or Nd — hour forms
-                    are not supported)
+  --older-than AGE  Required. Delete completed/failed/dead/cancelled jobs older
+                    than AGE in days (bare N or Nd — hour forms are not supported)
   --dry-run         Report what would be deleted without deleting
 `,
 };
@@ -1024,8 +1045,18 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
     }
 
     case 'prune': {
-      const olderThanStr = parseFlag(args, '--older-than') ?? '30d';
-      const days = parseInt(olderThanStr, 10);
+      const consent = requireDestructiveConsent({
+        command: 'jobs prune',
+        scopeFlags: ['--older-than'],
+        args: args.slice(1),
+        usage: 'Usage: gbrain jobs prune --older-than Nd [--dry-run] [--yes]',
+        consentFlags: ['--yes'],
+        allowDryRun: true,
+      });
+      if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
+
+      const olderThanStr = parseFlag(args, '--older-than');
+      const days = parseInt(olderThanStr ?? '', 10);
       if (isNaN(days) || days <= 0) {
         console.error('Error: --older-than must be a positive number (days). Example: --older-than 30d');
         process.exit(1);
@@ -1573,6 +1604,7 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
 
       const queueName = parseFlag(args, '--queue') ?? 'default';
       const concurrency = resolveWorkerConcurrency(args);
+      const onlyNames = parseWorkerOnlyNames(args);
       // --max-rss: explicit value wins (including 0 to disable the watchdog).
       // Absent → cgroup-aware auto-size (issue #1678): the flat 2048MB default
       // killed legit embed work (~10GB) on every cycle and produced a silent
@@ -1717,6 +1749,13 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
         reportWorkerConfiguration(error);
         process.exit(WORKER_EXIT_CONFIGURATION);
       }
+      if (onlyNames) {
+        const unknown = onlyNames.filter((name) => !worker.registeredNames.includes(name));
+        if (unknown.length > 0) {
+          throw new Error(`Unknown worker job name(s): ${unknown.join(', ')}`);
+        }
+        worker.keepOnly(onlyNames);
+      }
 
       // Subscribe to self-health failures emitted by the worker. Library code
       // (worker.ts) never calls process.exit directly so it stays embeddable;
@@ -1794,7 +1833,8 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
       const isolationNote = jobIsolation === 'process'
         ? `, isolation: process (child cli: ${childCliInvocation?.cmd}${childTiniPath ? ', tini' : ''})`
         : '';
-      console.log(`Minion worker started (queue: ${queueName}, concurrency: ${concurrency}${watchdogNote}${healthNote}${niceNote}${isolationNote})`);
+      const onlyNote = onlyNames ? `, only: ${onlyNames.join(',')}` : '';
+      console.log(`Minion worker started (queue: ${queueName}, concurrency: ${concurrency}${onlyNote}${watchdogNote}${healthNote}${niceNote}${isolationNote})`);
       console.log(`Registered handlers: ${worker.registeredNames.join(', ')}`);
 
       // Register in the live worker registry (issue #1815) so jobs stats / doctor
@@ -2789,11 +2829,13 @@ export async function registerBuiltinHandlers(
     // fast cycles). Validates against ALL_PHASES to prevent injection, then
     // normalizes per-source payloads to the freshness set (queue payloads
     // are machine-authored; see normalizeQueuedSourcePhases in cycle.ts).
-    const { ALL_PHASES, normalizeQueuedSourcePhases } = await import('../core/cycle.ts');
+    const { ALL_PHASES, QUEUED_AUTOPILOT_PHASES, normalizeQueuedSourcePhases } = await import('../core/cycle.ts');
     const validPhases = new Set(ALL_PHASES);
-    const requestedPhases = Array.isArray(job.data.phases)
+    const rawRequestedPhases = Array.isArray(job.data.phases)
       ? (job.data.phases as string[]).filter(p => validPhases.has(p as any))
       : undefined;
+    const phasesRejectedBySafety = rawRequestedPhases?.filter((p) => p === 'purge') ?? [];
+    const requestedPhases = rawRequestedPhases?.filter((p) => p !== 'purge');
     const { phases: effectivePhases, rejected: phasesRejectedByNormalization } =
       normalizeQueuedSourcePhases(requestedPhases as any, sourceId);
     // An explicitly-empty phase list (arrived empty, or emptied by the
@@ -2804,10 +2846,13 @@ export async function registerBuiltinHandlers(
         partial: false,
         status: 'skipped',
         report: {
-          reason: phasesRejectedByNormalization.length > 0
+          reason: phasesRejectedBySafety.length > 0 && phasesRejectedByNormalization.length === 0
+            ? 'all_phases_rejected_by_safety'
+            : phasesRejectedByNormalization.length > 0
             ? 'all_phases_rejected_by_normalization'
             : 'empty_phase_list',
           ...(sourceId ? { source_id: sourceId } : {}),
+          phases_rejected_by_safety: phasesRejectedBySafety,
           phases_rejected_by_normalization: phasesRejectedByNormalization,
         },
       };
@@ -2837,7 +2882,9 @@ export async function registerBuiltinHandlers(
       deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
       privateQueueOwnerJobId: job.id,
       ...(sourceId ? { sourceId } : {}),
-      ...(effectivePhases !== undefined ? { phases: effectivePhases as any } : {}),
+      ...(effectivePhases !== undefined
+        ? { phases: effectivePhases as any }
+        : (sourceId ? {} : { phases: QUEUED_AUTOPILOT_PHASES })),
       yieldBetweenPhases: async () => {
         // Yield to the event loop so worker lock-renewal can fire.
         await new Promise<void>(r => setImmediate(r));
@@ -2851,9 +2898,31 @@ export async function registerBuiltinHandlers(
       // Surfaced so operators can see the queue-boundary normalization at
       // work in job results (runCycle never sees rejected phases, so its
       // excludedPhases skip-reporting cannot cover them).
+      ...(phasesRejectedBySafety.length > 0
+        ? { phases_rejected_by_safety: phasesRejectedBySafety }
+        : {}),
       ...(phasesRejectedByNormalization.length > 0
         ? { phases_rejected_by_normalization: phasesRejectedByNormalization }
         : {}),
+    };
+  });
+
+  registerBuiltinJob(worker, engine, REMOTE_AUTOPILOT_JOB_NAME, async (job) => {
+    const { runCycle } = await import('../core/cycle.ts');
+    const repoPath = (await engine.getConfig('sync.repo_path')) ?? null;
+    const report = await runCycle(engine, {
+      brainDir: repoPath,
+      pull: true,
+      signal: job.signal,
+      deadlineAtMs: job.deadlineAtMs,
+      privateQueueOwnerJobId: job.id,
+      phases: [...REMOTE_AUTOPILOT_PHASES],
+      yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
+    });
+    return {
+      partial: report.status === 'partial' || report.status === 'failed',
+      status: report.status,
+      report,
     };
   });
 
@@ -2862,7 +2931,7 @@ export async function registerBuiltinHandlers(
   // No source_id → uses the legacy global cycle lock; stamps autopilot.last_global_at
   // on success so the dispatch gate backs off.
   worker.register('autopilot-global-maintenance', async (job) => {
-    const { runCycle, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } = await import('../core/cycle.ts');
+    const { runCycle, MAINTENANCE_PHASES, QUEUED_MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } = await import('../core/cycle.ts');
     const repoPath: string | null = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
       : (await engine.getConfig('sync.repo_path')) ?? null;
@@ -2874,8 +2943,24 @@ export async function registerBuiltinHandlers(
     const maintenanceSet = new Set<string>(MAINTENANCE_PHASES);
     const requested = Array.isArray(job.data.phases)
       ? (job.data.phases as string[]).filter((p) => maintenanceSet.has(p))
-      : MAINTENANCE_PHASES;
-    const phases = (requested.length > 0 ? requested : MAINTENANCE_PHASES) as typeof MAINTENANCE_PHASES;
+      : undefined;
+    const phasesRejectedBySafety = requested?.filter((p) => p === 'purge') ?? [];
+    const phases = (requested === undefined
+      ? QUEUED_MAINTENANCE_PHASES
+      : requested.filter((p) => p !== 'purge')) as typeof MAINTENANCE_PHASES;
+
+    if (requested !== undefined && phases.length === 0) {
+      return {
+        partial: false,
+        status: 'skipped',
+        report: {
+          reason: phasesRejectedBySafety.length > 0
+            ? 'all_phases_rejected_by_safety'
+            : 'all_phases_rejected_by_normalization',
+          phases_rejected_by_safety: phasesRejectedBySafety,
+        },
+      };
+    }
 
     const report = await runCycle(engine, {
       brainDir: repoPath,
@@ -2918,6 +3003,9 @@ export async function registerBuiltinHandlers(
       partial: report.status === 'partial' || report.status === 'failed',
       status: report.status,
       report,
+      ...(phasesRejectedBySafety.length > 0
+        ? { phases_rejected_by_safety: phasesRejectedBySafety }
+        : {}),
     };
   });
 
@@ -3009,26 +3097,69 @@ export async function registerBuiltinHandlers(
     const scope = (typeof job.data.scope === 'string' && ['pages', 'sources', 'all'].includes(job.data.scope))
       ? (job.data.scope as 'pages' | 'sources' | 'all')
       : 'all';
-    const olderThanHours = typeof job.data.olderThanHours === 'number' ? job.data.olderThanHours : 72;
+    // R4 BLOCKER, 2026-09-17, found by the second Fable break pass. This job
+    // was the FOURTH route to the same hard delete, and the worst of them:
+    //
+    //   - it defaulted olderThanHours to 72, the silent default the incident
+    //     was caused by;
+    //   - it computed `dryRun` and then NEVER PASSED IT to purgeDeletedPages,
+    //     so a caller asking for a rehearsal got a real, cascading delete and
+    //     a result object that said `dryRun: true`. A destructive operation
+    //     that lies about having been a rehearsal is worse than one with no
+    //     dry run at all;
+    //   - `purge` is not in PROTECTED_JOB_NAMES, so submit_job over HTTP MCP
+    //     could enqueue it. That defeated purge_deleted_pages's localOnly:true
+    //     and made a remote admin token enough to empty the soft-delete set.
+    //
+    // Now: the cutoff must be supplied explicitly, a real run needs the same
+    // literal consent string as every other route, and dryRun actually runs
+    // the dry-run arm. `purge` is added to PROTECTED_JOB_NAMES alongside this.
+    const olderThanHours = job.data.olderThanHours;
+    if (typeof olderThanHours !== 'number' || !Number.isFinite(olderThanHours) || olderThanHours < 0) {
+      throw new Error(
+        'purge job: olderThanHours is required and must be a non-negative number. '
+        + 'There is deliberately no default: the 72-hour fallback hard-deleted 2,582 pages on 2026-09-16.',
+      );
+    }
     const dryRun = !!job.data.dryRun;
+    if (!dryRun && job.data.confirm !== 'yes-i-mean-it') {
+      throw new Error(
+        "purge job: refusing to hard-delete without explicit consent. Pass confirm='yes-i-mean-it', "
+        + 'or dryRun:true to rehearse. This cascades through content_chunks, page_links and '
+        + 'chunk_relations and is not recoverable.',
+      );
+    }
     let pagesPurged = 0;
     let pagesBlocked: Array<{ source_id: string; slug: string; reason: string }> = [];
     let pagesError: string | undefined;
     let sourcesPurged: string[] = [];
     if (scope === 'pages' || scope === 'all') {
-      const result = await (await import('../core/persistence/purge-deleted.ts')).purgeDeletedPagesCoordinated(engine, olderThanHours);
-      pagesPurged = result.count; pagesBlocked = result.blocked; pagesError = result.error?.message;
+      if (dryRun) {
+        // The dryRun option is what makes the rehearsal a rehearsal. Omitting it
+        // here is the defect this block exists to fix. The coordinated purge has
+        // no dry-run arm, so a rehearsal goes straight to the engine preview.
+        const preview = await engine.purgeDeletedPages(olderThanHours, { dryRun: true });
+        pagesPurged = preview.count;
+      } else {
+        const result = await (await import('../core/persistence/purge-deleted.ts')).purgeDeletedPagesCoordinated(engine, olderThanHours);
+        pagesPurged = result.count; pagesBlocked = result.blocked; pagesError = result.error?.message;
+      }
     }
     let sourcesBlocked: Array<{ id: string; reason: string }> = [];
-    if (scope === 'sources' || scope === 'all') {
+    if (!dryRun && (scope === 'sources' || scope === 'all')) {
       const { purgeExpiredSources } = await import('../core/destructive-guard.ts');
       const purgeResult = await purgeExpiredSources(engine);
       sourcesPurged = purgeResult.purged;
       sourcesBlocked = purgeResult.blocked;
     }
     // GC stale op_checkpoints rows (folded scope item +C from review).
-    const { purgeStaleCheckpoints } = await import('../core/op-checkpoint.ts');
-    const checkpointsPurged = await purgeStaleCheckpoints(engine, 7);
+    // Also skipped on a dry run: a rehearsal that deletes checkpoint rows is
+    // still a delete, which is the whole shape this block is fixing.
+    let checkpointsPurged = 0;
+    if (!dryRun) {
+      const { purgeStaleCheckpoints } = await import('../core/op-checkpoint.ts');
+      checkpointsPurged = await purgeStaleCheckpoints(engine, 7);
+    }
     // #5405: a coordinated purge failure fails the job after the other purges ran.
     if (pagesError) throw new Error(pagesError);
     return { pagesPurged, pagesBlocked, sourcesPurged, sourcesBlocked, checkpointsPurged, dryRun };

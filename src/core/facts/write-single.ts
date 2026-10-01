@@ -268,7 +268,8 @@ export async function writeSingleFact(
  * written; a partial supersede is an audit gap, not data loss — but a
  * failure is logged with both ids, never swallowed.
  */
-async function expireSuperseded(engine: BrainEngine, oldId: number, newId: number): Promise<void> {
+/** @internal Engine-seam test helper; production callers reach this via writeSingleFact. */
+export async function expireSuperseded(engine: BrainEngine, oldId: number, newId: number): Promise<void> {
   const report = (step: string, err: unknown) => console.warn(
     `[facts.supersede] FACTS_SUPERSEDE_BOOKKEEPING_FAILED: ${step} for fact ${oldId} -> ${newId}: ${err instanceof Error ? err.message : String(err)}`,
   );
@@ -283,7 +284,7 @@ async function expireSuperseded(engine: BrainEngine, oldId: number, newId: numbe
     report('fence strike', err);
   }
   try {
-    await engine.executeRaw(`UPDATE facts SET superseded_by = $1 WHERE id = $2`, [newId, oldId]);
+    await engine.expireFact(oldId, { supersededBy: newId }); // gbrain-allow-direct-insert: fork D1 links superseded_by through the engine fact seam instead of raw SQL
   } catch (err) {
     report('superseded_by link', err);
   }

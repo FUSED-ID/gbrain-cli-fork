@@ -25,6 +25,7 @@ import {
   MIXED_PHASES,
   GLOBAL_PHASES,
   MAINTENANCE_PHASES,
+  QUEUED_MAINTENANCE_PHASES,
   PHASE_SCOPE,
   resolveCyclePhases,
   deriveStatus,
@@ -179,7 +180,8 @@ describe('dispatchGlobalMaintenance — single-flight gate', () => {
     // across slot rotation (upstream issue #2).
     expect(added[0].opts.maxPending).toBe(1);
     expect(added[0].opts.maxWaiting).toBeUndefined();
-    expect(added[0].data.phases).toEqual(MAINTENANCE_PHASES);
+    expect(added[0].data.phases).toEqual(QUEUED_MAINTENANCE_PHASES);
+    expect(added[0].data.phases).not.toContain('purge');
   });
 
   test('fresh → does NOT dispatch', async () => {
@@ -317,7 +319,7 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
     expect(source?.config.last_full_cycle_at).toBeUndefined();
   });
 
-  test('a maintenance job with NO phases payload defaults to MAINTENANCE_PHASES (mixed included), not GLOBAL_PHASES', async () => {
+  test('a maintenance job with NO phases payload defaults to queued maintenance phases (mixed included), not GLOBAL_PHASES', async () => {
     // Regression pin for the split's changed default: a legacy queued
     // maintenance job (or a hand-submitted one) with no explicit phases now
     // runs mixed + global — synthesize/patterns must appear in the report.
@@ -328,7 +330,8 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
     // runCycle (worker jobs always carry one).
     const result = await handler!({ id: 4101, data: { repoPath }, signal: undefined });
     const ranPhases = result.report.phases.map((p: any) => p.phase);
-    for (const p of MAINTENANCE_PHASES) expect(ranPhases).toContain(p);
+    for (const p of QUEUED_MAINTENANCE_PHASES) expect(ranPhases).toContain(p);
+    expect(ranPhases).not.toContain('purge');
     expect(ranPhases).toContain('synthesize');
     expect(ranPhases).toContain('patterns');
     expect(ranPhases).not.toContain('sync');

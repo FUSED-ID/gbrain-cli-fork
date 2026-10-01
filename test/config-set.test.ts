@@ -110,6 +110,10 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('orphans.exclude_slugs');
   });
 
+  test('registers slug namespace rewrites so config set accepts the key', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('slug_namespace_rewrites');
+  });
+
   test('no duplicate entries', () => {
     const set = new Set(KNOWN_CONFIG_KEYS);
     expect(set.size).toBe(KNOWN_CONFIG_KEYS.length);

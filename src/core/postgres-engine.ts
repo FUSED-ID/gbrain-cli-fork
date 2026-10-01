@@ -101,6 +101,7 @@ import { ConnectionManager, DEFAULT_DIRECT_POOL_SIZE } from './connection-manage
 import { logConnectionEvent } from './connection-audit.ts';
 import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { enforcePrivateFactWrite, enforcePrivatePageWrite } from './private-source-routing.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery } from './search/sql-ranking.ts';
 import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
@@ -715,8 +716,20 @@ export class PostgresEngine implements BrainEngine {
 
   private _pageTransaction = false;
 
-  async putPage(slug: string, page: PageInput, opts?: PageWriteOptions): Promise<Page> {
+  async putPage(slug: string, page: PageInput, opts?: PageWriteOptions & { migrationWrite?: boolean }): Promise<Page> {
     slug = validateSlug(slug);
+    // D1 (fork): the privacy chokepoint for every page write. migrationWrite
+    // exempts only copyPageToTarget in src/commands/migrate-engine.ts: a
+    // verbatim copy of a page the source engine already accepted, not a new
+    // write entering a world-federated source.
+    if (!opts?.migrationWrite) {
+      await enforcePrivatePageWrite(this, {
+        requestedSourceId: opts?.sourceId ?? 'default',
+        slug,
+        entityType: page.type,
+        entityName: page.title,
+      });
+    }
     return this.transaction(async tx => {
       const sourceId = opts?.sourceId ?? 'default';
       await tx.lockPageKeys([{ sourceId, slug }]);
@@ -728,6 +741,11 @@ export class PostgresEngine implements BrainEngine {
   }
 
   private async _putPage(slug: string, page: PageInput, opts?: PageWriteOptions): Promise<Page> {
+    // Tombstone race guard (fork, defects 2-4): the ON CONFLICT upsert below
+    // only updates a row that is live or whose deleted_at is at or before
+    // this statement's clock_timestamp(). A future-dated tombstone (synthetic
+    // test or clock skew) yields zero rows and is refused, never resurrected.
+    // A real, already-committed soft delete is still overwritten, as upstream.
     slug = validateSlug(slug);
     const sql = this.sql;
     const hash = page.content_hash || contentHash(page);
@@ -806,8 +824,17 @@ export class PostgresEngine implements BrainEngine {
         source_uri            = COALESCE(EXCLUDED.source_uri,            pages.source_uri),
         ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
         ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at)
+      WHERE pages.deleted_at IS NULL OR pages.deleted_at <= clock_timestamp()
       RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at
     `;
+    if (rows.length === 0) {
+      // Tombstone race guard (fork): zero rows means a future-dated
+      // deleted_at; refuse rather than resurrect it.
+      throw new Error(
+        `putPage: '${slug}' in source '${sourceId}' was deleted concurrently with this write; ` +
+          'refusing to resurrect it. Re-check whether the page should exist and retry if so.',
+      );
+    }
     return rowToPage(rows[0]);
   }
 
@@ -905,6 +932,13 @@ export class PostgresEngine implements BrainEngine {
   async restorePage(slug: string, opts?: { sourceId?: string }): Promise<boolean> {
     const sql = this.sql;
     const sourceId = opts?.sourceId;
+    const current = await this.getPage(slug, { includeDeleted: true, ...(sourceId ? { sourceId } : {}) });
+    if (current) await enforcePrivatePageWrite(this, {
+      requestedSourceId: current.source_id,
+      slug,
+      entityType: current.type,
+      entityName: current.title,
+    });
     const sourceCondition = sourceId ? sql`AND source_id = ${sourceId}` : sql``;
     const rows = await sql`
       UPDATE pages SET deleted_at = NULL
@@ -955,6 +989,7 @@ export class PostgresEngine implements BrainEngine {
     timeline: string,
     contentHash: string,
   ): Promise<void> {
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
     const sql = this.sql;
     // Narrow UPDATE — leaves frontmatter, type, chunks, links, embeddings,
     // tags, takes untouched. Skips soft-deleted rows so a redirect retry
@@ -4035,6 +4070,12 @@ export class PostgresEngine implements BrainEngine {
     const conf = obs.confidence ?? 0.7;
     const status = obs.status ?? (isNovelDimension(dimension) ? 'quarantined' : 'active');
     const visibility = obs.visibility ?? 'private';
+    await enforcePrivateFactWrite(this, {
+      sourceId,
+      pageSlug: obs.entitySlug,
+      entitySlug: obs.entitySlug,
+      visibility,
+    });
     const validFrom = obs.validFrom ?? null;
     const validUntil = obs.validTo ?? null;
     const factText = `${dimension}: ${obs.value}`;
@@ -4363,6 +4404,7 @@ export class PostgresEngine implements BrainEngine {
     return {
       get sql() { return self.sql; },
       resolveFactsEmbeddingCast: () => self.resolveFactsEmbeddingCast(),
+      guardFactWrite: (target) => enforcePrivateFactWrite(self, target),
     };
   }
 
@@ -4651,7 +4693,11 @@ export class PostgresEngine implements BrainEngine {
 
   // Versions
   async createVersion(slug: string, opts?: { sourceId?: string }): Promise<PageVersion> {
-    return createPageVersion(this, slug, opts?.sourceId ?? 'default');
+    const sourceId = opts?.sourceId ?? 'default';
+    // D1 (fork): the privacy chokepoint runs before upstream's canonical
+    // version snapshot (knowledge_revision, tags, is_deleted).
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
+    return createPageVersion(this, slug, sourceId);
   }
 
   async getVersions(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<PageVersion[]> {
@@ -4694,6 +4740,16 @@ export class PostgresEngine implements BrainEngine {
     opts?: { sourceId?: string },
   ): Promise<void> {
     const sql = this.sql;
+    const current = await this.getPage(slug, {
+      includeDeleted: true,
+      ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
+    });
+    if (current) await enforcePrivatePageWrite(this, {
+      requestedSourceId: current.source_id,
+      slug,
+      entityType: current.type,
+      entityName: current.title,
+    });
     // v0.31.8 (D12): two-branch. With opts.sourceId, scope BOTH the page lookup
     // AND the version reference. Without it, multi-source brains can revert
     // the wrong same-slug page.

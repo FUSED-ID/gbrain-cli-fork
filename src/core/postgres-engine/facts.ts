@@ -34,6 +34,7 @@ export interface PgFactsDeps {
   readonly sql: PgSql;
   /** Cast-suffix probe for facts.embedding (cache state lives on the engine). */
   resolveFactsEmbeddingCast(): Promise<'::vector' | '::halfvec'>;
+  guardFactWrite(target: { sourceId: string; pageSlug?: string | null; entitySlug?: string | null; visibility?: string | null }): Promise<void>;
 }
 
 export async function insertFact(
@@ -42,6 +43,11 @@ export async function insertFact(
     ctx: { source_id: string; supersedeId?: number },
   ): Promise<{ id: number; status: FactInsertStatus }> {
     const sql = deps.sql;
+    await deps.guardFactWrite({
+      sourceId: ctx.source_id,
+      entitySlug: input.entity_slug,
+      visibility: input.visibility ?? 'private',
+    });
     const validFrom = input.valid_from ?? new Date();
     const validUntil = input.valid_until ?? null;
     const kind = input.kind ?? 'fact';
@@ -122,8 +128,11 @@ export async function expireFact(deps: PgFactsDeps, id: number, opts?: { superse
     const at = opts?.at ?? new Date();
     const supersededBy = opts?.supersededBy ?? null;
     const result = await sql`
-      UPDATE facts SET expired_at = ${at}, superseded_by = COALESCE(${supersededBy}, superseded_by)
-      WHERE id = ${id} AND expired_at IS NULL
+      UPDATE facts SET
+        expired_at = COALESCE(expired_at, ${at}),
+        superseded_by = COALESCE(${supersededBy}::int, superseded_by)
+      WHERE id = ${id}
+        AND (expired_at IS NULL OR ${supersededBy}::int IS NOT NULL)
     `;
     return (result.count ?? 0) > 0;
   }
@@ -135,6 +144,13 @@ export async function insertFacts(
     opts?: { deleteForPageFirst?: { slug: string; excludeSourcePrefixes?: string[]; preserveExpiredLegacy?: boolean } },
   ): Promise<{ inserted: number; ids: number[]; warnings: string[]; deleted: number }> {
     if (rows.length === 0) return { inserted: 0, ids: [], warnings: [], deleted: 0 };
+
+    for (const row of rows) await deps.guardFactWrite({
+      sourceId: ctx.source_id,
+      pageSlug: row.source_markdown_slug,
+      entitySlug: row.entity_slug,
+      visibility: row.visibility ?? 'private',
+    });
 
     const sql = deps.sql;
     // v0.41.15.0 (T6, codex #20): resolve the embedding-cast suffix

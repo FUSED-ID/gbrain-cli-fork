@@ -16,8 +16,15 @@ export const PROVIDER_ENV_KEYS = [
   'OLLAMA_API_KEY', 'OLLAMA_BASE_URL',
   'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_ORG_ID', 'OPENAI_PROJECT',
   'OPENROUTER_API_KEY', 'OPENROUTER_BASE_URL', 'OPENROUTER_REFERER', 'OPENROUTER_TITLE',
-  'PERPLEXITY_API_KEY', 'TOGETHER_API_KEY', 'VOYAGE_API_KEY',
-  'ZHIPUAI_API_KEY',
+  'PERPLEXITY_API_KEY',
+  // FUSED-ID fork: the SuperGrok mesh recipe (P2) declares this as an
+  // optional auth_env and it was never added here, so the keyless fixture
+  // would not strip it and a test could inherit a real shim URL. Upstream's
+  // provider-fixture-env test is NEW since v0.48.2.0 and caught it on the
+  // first gate run against v0.48.5.0.
+  'SUPERGROK_BASE_URL',
+  'TOGETHER_API_KEY', 'VOYAGE_API_KEY',
+  'ZEROENTROPY_API_KEY', 'ZHIPUAI_API_KEY',
 ] as const;
 
 type Env = Readonly<Record<string, string | undefined>>;

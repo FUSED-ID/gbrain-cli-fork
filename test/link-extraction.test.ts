@@ -397,7 +397,9 @@ describe('extractPageLinks', () => {
       // opts.globalBasename omitted (= false)
     );
     expect(candidates.find(c => c.targetSlug === 'projects/struktura')).toBeUndefined();
-    expect(candidates.map(c => c.targetSlug)).toEqual(['struktura']);
+    // Same-directory candidate (concepts/struktura) is emitted ahead of the
+    // root-exact form. Downstream existence checks drop whichever is missing.
+    expect(candidates.map(c => c.targetSlug)).toEqual(['concepts/struktura', 'struktura']);
     expect(candidates[0].linkSource).toBe('markdown');
   });
 
@@ -423,7 +425,7 @@ describe('extractPageLinks', () => {
       expect(c.linkSource).toBe('wikilink-resolved');
     }
     expect(candidates.map(c => c.targetSlug).sort()).toEqual(
-      ['archive/struktura', 'projects/struktura', 'struktura'],
+      ['archive/struktura', 'concepts/struktura', 'projects/struktura', 'struktura'],
     );
   });
 
@@ -441,8 +443,8 @@ describe('extractPageLinks', () => {
     const basename = candidates.filter(c => c.linkType === 'wikilink_basename');
     expect(basename.length).toBe(1);
     expect(basename[0].targetSlug).toBe('projects/struktura');
-    // #4062: plus the root-exact direct candidate.
-    expect(candidates.map(c => c.targetSlug).sort()).toEqual(['projects/struktura', 'struktura']);
+    // #4062: plus the root-exact direct candidate, and the same-directory form.
+    expect(candidates.map(c => c.targetSlug).sort()).toEqual(['concepts/struktura', 'projects/struktura', 'struktura']);
   });
 
   test('basename self-link is dropped (codex P2c)', async () => {
@@ -504,7 +506,7 @@ describe('extractPageLinks', () => {
     // put_page allSlugs filter / addLinksBatch JOINs) drop it since no page
     // named `never-existed` exists, so no dangling row is ever persisted.
     expect(candidates.filter(c => c.linkSource === 'wikilink-resolved')).toEqual([]);
-    expect(candidates.map(c => c.targetSlug)).toEqual(['never-existed']);
+    expect(candidates.map(c => c.targetSlug)).toEqual(['concepts/never-existed', 'never-existed']);
     expect(candidates[0].linkSource).toBe('markdown');
   });
 
@@ -729,7 +731,7 @@ describe('extractPageLinks', () => {
       {}, 'concept', resolver, { globalBasename: true },
     );
     expect(candidates.filter(c => c.linkSource === 'wikilink-resolved')).toEqual([]);
-    expect(candidates.map(c => c.targetSlug)).toEqual(['struktura']);
+    expect(candidates.map(c => c.targetSlug)).toEqual(['concepts/struktura', 'struktura']);
   });
 });
 
@@ -1230,6 +1232,19 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
     expect(src).toBeDefined();
     expect(src!.fromSlug).toBe('people/pedro');
     expect(src!.targetSlug).toBe('meetings/2026-04-03');
+  });
+
+  test('related and see_also use the schema-pack relates_to vocabulary', async () => {
+    const relatedResolver = makeFixtureResolver({
+      'notes/related-target': 'notes/related-target',
+      'notes/see-also-target': 'notes/see-also-target',
+    });
+    const { candidates } = await extractFrontmatterLinks(
+      'notes/source', 'note' as never,
+      { related: 'notes/related-target', see_also: 'notes/see-also-target' },
+      relatedResolver,
+    );
+    expect(candidates.map(c => c.linkType)).toEqual(['relates_to', 'relates_to']);
   });
 
   test('unresolvable name goes to unresolved list, not candidates', async () => {
@@ -1811,7 +1826,7 @@ describe('extractFrontmatterLinks — [[wikilink]] related: values (end-to-end)'
     expect(candidates[0]).toMatchObject({
       fromSlug: 'wiki/originals/ideas/note',
       targetSlug: '90-people/nicolai',
-      linkType: 'related_to',
+      linkType: 'relates_to',
       linkSource: 'frontmatter',
     });
   });
@@ -2013,10 +2028,11 @@ describe('#4062 — bare [[name]] emits a root-exact direct candidate flag-off',
       'notes/some-page', 'see [[example-rail]] for details', {}, 'concept' as any,
       resolver, { globalBasename: false, skipFrontmatter: true },
     );
-    expect(r.candidates.length).toBe(1);
-    expect(r.candidates[0].targetSlug).toBe('example-rail');
-    expect(r.candidates[0].linkType).toBe('mentions');
-    expect(r.candidates[0].linkSource).toBe('markdown');
+    expect(r.candidates.map(c => c.targetSlug)).toEqual(['notes/example-rail', 'example-rail']);
+    const root = r.candidates.find(c => c.targetSlug === 'example-rail')!;
+    expect(root.linkType).toBe('mentions');
+    expect(root.linkSource).toBe('markdown');
+    expect(r.candidates.every(c => c.linkSource === 'markdown')).toBe(true);
   });
 
   test('flag-off: display alias slugifies to the root-exact target', async () => {
@@ -2024,7 +2040,7 @@ describe('#4062 — bare [[name]] emits a root-exact direct candidate flag-off',
       'notes/some-page', 'see [[Example Rail]] for details', {}, 'concept' as any,
       resolver, { globalBasename: false, skipFrontmatter: true },
     );
-    expect(r.candidates.map(c => c.targetSlug)).toEqual(['example-rail']);
+    expect(r.candidates.map(c => c.targetSlug)).toEqual(['notes/example-rail', 'example-rail']);
   });
 
   test('flag-off: self-loop guarded — [[own-slug]] on the root page emits nothing', async () => {
@@ -2045,6 +2061,7 @@ describe('#4062 — bare [[name]] emits a root-exact direct candidate flag-off',
     // keeps the wikilink_basename provenance.
     expect(targets).toEqual([
       'example-rail:mentions',
+      'notes/example-rail:mentions',
       'projects/example-rail:wikilink_basename',
     ]);
   });
@@ -2189,16 +2206,18 @@ describe('#4062 — bare [[name]] direct candidate tries both slug grammars', ()
       'notes/some-page', 'met [[Đức Example]] today', {}, 'concept' as any,
       resolver, { globalBasename: false, skipFrontmatter: true },
     );
-    expect(r.candidates.map(c => c.targetSlug).sort()).toEqual(['duc-example', 'đuc-example']);
+    expect(r.candidates.map(c => c.targetSlug).sort()).toEqual([
+      'duc-example', 'notes/duc-example', 'notes/đuc-example', 'đuc-example',
+    ]);
     expect(new Set(r.candidates.map(c => c.linkSource))).toEqual(new Set(['markdown']));
   });
 
-  test('flag-off: an ASCII wikilink still emits exactly one candidate (grammars agree)', async () => {
+  test('flag-off: an ASCII wikilink still emits one root candidate (grammars agree)', async () => {
     const r = await extractPageLinks(
       'notes/some-page', 'see [[Example Rail]]', {}, 'concept' as any,
       resolver, { globalBasename: false, skipFrontmatter: true },
     );
-    expect(r.candidates.map(c => c.targetSlug)).toEqual(['example-rail']);
+    expect(r.candidates.map(c => c.targetSlug)).toEqual(['notes/example-rail', 'example-rail']);
   });
 
   test('flag-off: self-loop guard covers the folded form too', async () => {

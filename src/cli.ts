@@ -30,6 +30,7 @@ import type { GBrainConfig } from './core/config.ts';
 import type { AIGatewayConfig } from './core/ai/types.ts';
 import type { BrainEngine } from './core/engine.ts';
 import { operations, OperationError } from './core/operations.ts';
+import { DestructiveConsentError } from './core/destructive-guard.ts';
 import { resolveSourceIdEngineFree } from './core/source-resolver.ts';
 import { formatVolunteeredPage } from './core/context/volunteer.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
@@ -293,6 +294,13 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, () => Promise<(engine: never, arg
   // configured, matching the reader who runs `sources --help` because they
   // have no brain yet.
   sources: async () => (await import('./commands/sources.ts')).runSources as never,
+  // R4, 2026-09-17. `pages` was in CLI_ONLY_SELF_HELP but not here, so
+  // `gbrain pages purge-deleted --help` fell past the pre-dispatch help scan,
+  // called connectEngine() (which runs pending migrations and takes the PGLite
+  // writer lock) and only THEN hit the consent guard. Help with side effects on
+  // the command that deleted 2,582 pages is the wrong shape even when nothing
+  // is deleted. runPages answers --help before touching `engine`.
+  pages: async () => (await import('./commands/pages.ts')).runPages as never,
   // runConnectors's --help / no-subcommand / `providers` / `logout` branches
   // never touch `engine` — safe engine-free for the reader with no brain yet.
   connectors: async () => (await import('./commands/connectors/index.ts')).runConnectors as never,
@@ -1874,6 +1882,9 @@ export function formatResult(
     }
     case 'get_timeline': {
       const entries = result as any[];
+      // Same `params.json === true` shape as get_versions. Human lines stay
+      // date, summary, and source. `--json` keeps detail and id.
+      if (params.json === true) return JSON.stringify(entries, null, 2) + '\n';
       if (entries.length === 0) return 'No timeline entries.\n';
       return entries.map(e =>
         `${e.date}  ${e.summary}${e.source ? ` [${e.source}]` : ''}`,
@@ -4017,7 +4028,7 @@ JOBS (Minions)
   jobs get <id> [--json]              Job details + history
   jobs cancel <id>                    Cancel job
   jobs retry <id>                     Re-queue failed/dead job
-  jobs prune [--older-than 30d]       Clean old jobs
+  jobs prune --older-than Nd          Clean old jobs
   jobs stats [--json]                 Job health dashboard
   jobs watch [--follow]               Live queue dashboard
   jobs work [--queue Q]               Start worker daemon (Postgres only)
@@ -4100,6 +4111,11 @@ if (import.meta.main) {
         console.log(JSON.stringify({ error: 'pglite_busy', retryable: true, reason: e.reason,
           next_action: 'Wait for the current command or server to close, then retry. Do not remove a live lock.' }));
         flushThenExit(1);
+        return;
+      }
+      if (e instanceof DestructiveConsentError) {
+        console.error(e.message);
+        flushThenExit(e.exitCode);
         return;
       }
       // db-availability loop: this choke point covers CONNECT-TIME failures

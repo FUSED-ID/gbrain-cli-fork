@@ -31,6 +31,7 @@ import {
 } from '../src/core/sources-ops.ts';
 import { readdirSync } from 'fs';
 import { runSources } from '../src/commands/sources.ts';
+import { DestructiveConsentError } from '../src/core/destructive-guard.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -301,6 +302,21 @@ describe('listSources', () => {
 // ---------------------------------------------------------------------------
 
 describe('removeSource — clone-cleanup', () => {
+  test('requires confirmation for a zero-page source that still has facts', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ($1, $2, '{}'::jsonb)`,
+      ['facts-only', 'Facts only'],
+    );
+    await engine.insertFact(
+      { fact: 'retained live fact', kind: 'fact', entity_slug: 'facts-only', source: 'test' },
+      { source_id: 'facts-only' },
+    );
+
+    await expect(removeSource(engine, { id: 'facts-only' })).rejects.toThrow(
+      /0 pages, 1 facts, and 0 chunks without --confirm-destructive/,
+    );
+  });
+
   test('counts soft-deleted pages for destructive removal while list/status show active pages', async () => {
     await withEnv2(async () => {
       await addSource(engine, { id: 'soft-only', localPath: '/tmp/soft-only-fixture' });
@@ -449,6 +465,43 @@ describe('removeSource — clone-cleanup', () => {
         expect((e as SourceOpError).code).toBe('protected_id');
       }
     });
+  });
+
+  test('sources purge refuses a live source and points at sources archive', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ($1, $2, '{}'::jsonb)`,
+      ['live-purge-guard', 'Live purge guard'],
+    );
+
+    try {
+      await runSources(engine, ['purge', 'live-purge-guard', '--confirm-destructive']);
+      throw new Error('expected live-source purge refusal');
+    } catch (error) {
+      expect(error).toBeInstanceOf(DestructiveConsentError);
+      expect((error as DestructiveConsentError).exitCode).toBe(2);
+      expect((error as Error).message).toContain('gbrain sources archive');
+    }
+
+    const rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE id = $1`,
+      ['live-purge-guard'],
+    );
+    expect(rows).toHaveLength(1);
+  });
+
+  test('sources purge accepts --scope expired after confirmation wherever the flags appear', async () => {
+    await runSources(engine, ['purge', '--confirm-destructive', '--scope', 'expired']);
+    await runSources(engine, ['purge', '--scope=expired', '--confirm-destructive']);
+  });
+
+  test('sources purge rejects an invalid scope with a typed exit-2 refusal', async () => {
+    try {
+      await runSources(engine, ['purge', '--confirm-destructive', '--scope', 'not-expired']);
+      throw new Error('expected invalid-scope refusal');
+    } catch (error) {
+      expect(error).toBeInstanceOf(DestructiveConsentError);
+      expect((error as DestructiveConsentError).exitCode).toBe(2);
+    }
   });
 });
 

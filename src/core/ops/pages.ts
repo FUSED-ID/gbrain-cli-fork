@@ -11,28 +11,51 @@ import { assertPurgeParams } from '../persistence/purge-params.ts';
  */
 
 import { clampSearchLimit, type BrainEngine } from '../engine.ts';
-import type { Page } from '../types.ts';
+import type { Page, PageType } from '../types.ts';
 import { decodeDeepResearchId, deepResearchPageUrl } from '../deep-research-id.ts';
 import { PageSnapshotAmbiguousError, type PageSnapshot } from '../page-state/types.ts';
-import { serializePageToMarkdown } from '../markdown.ts';
-import { isAutoLinkEnabled } from '../link-extraction.ts';
+import { importFromContent } from '../import-file.ts';
+import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
+import { assertPageWriteThroughReady, writePageThrough, deletePageThrough, resolvePageWriteTarget, type WriteThroughResult } from '../write-through.ts';
+import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from '../link-extraction.ts';
+import type { WriterLintPayload } from '../output/post-write.ts';
+// #3190: pack-aware link typing on the put_page auto-link path.
+import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
+import { isFactsBackstopEligible } from '../facts/eligibility.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from '../search/private-visibility.ts';
+import { enforcePrivatePageWrite, resolvePrivateWriteSource } from '../private-source-routing.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { OperationError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import {
   assertExplicitSourceLive,
+  enforcePrivateWriteGuard,
   enforceSubagentSlugFence,
   slugOutsideCallerFence,
   enforceClientSlugFence,
   federatedSearchScope,
+  GBRAIN_SLUG_NAMESPACE_REWRITES_ENV,
+  normalizePageWriteSlug,
   normalizeSlugPrefix,
+  normalizePageWriteSlugWithConfig,
+  parseSlugNamespaceRewrites,
   parseSourceIdParam,
   validatePageSlug,
 } from './context.ts';
+
+/** Dry-run must stay engine-free; real writes read the DB-plane policy. */
+async function normalizeWriteSlug(ctx: OperationContext, slug: string): Promise<string> {
+  if (ctx.dryRun) {
+    return normalizePageWriteSlug(
+      slug,
+      parseSlugNamespaceRewrites(process.env[GBRAIN_SLUG_NAMESPACE_REWRITES_ENV]),
+    );
+  }
+  return normalizePageWriteSlugWithConfig(ctx.engine, slug, ctx.logger);
+}
 
 // --- Page CRUD ---
 
@@ -82,7 +105,10 @@ const get_page: Operation = {
     source_id: { type: 'string', description: "#4329: scope the lookup to a single source (a multi-source brain can hold the same slug in several sources). Defaults to ctx.sourceId / the caller's grant. '__all__' spans every source for trusted local callers, your granted sources for remote callers." },
   },
   handler: async (ctx, p) => {
-    const slug = p.slug as string;
+    // Fork namespace guard (opt-in, default OFF): read through the same
+    // namespace rewrite as writes, and report the rewrite as resolved_slug.
+    const requestedSlug = p.slug as string;
+    const slug = await normalizePageWriteSlugWithConfig(ctx.engine, requestedSlug, ctx.logger);
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
     const includeContent = (p.include_content as boolean) === true;
@@ -110,10 +136,25 @@ const get_page: Operation = {
     // oracle), composing with — not replacing — the source-grant scope above.
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
 
-    let snapshot = await ctx.engine.readPageSnapshot(slug, { includeDeleted, excludePrivate, ...sourceOpts, resolveAlias: true });
+    let snapshot: PageSnapshot | null;
+    if (typeof ctx.engine.readPageSnapshot === 'function') {
+      snapshot = await ctx.engine.readPageSnapshot(slug, { includeDeleted, excludePrivate, ...sourceOpts, resolveAlias: true });
+    } else {
+      // Fork compatibility seam for older test doubles/engines that predate the
+      // snapshot reader; production engines implement readPageSnapshot.
+      const fallbackPage = await ctx.engine.getPage(slug, { includeDeleted, excludePrivate, ...sourceOpts });
+      snapshot = fallbackPage ? {
+        page: fallbackPage,
+        tags: await ctx.engine.getTags(fallbackPage.slug, { sourceId: fallbackPage.source_id }),
+        revision: String((fallbackPage as Page & { revision?: string }).revision ?? ''),
+        sourceIncarnation: '',
+        withdrawals: [],
+      } : null;
+    }
     let page = snapshot?.page ?? null;
     if (page && excludePrivate && isPrivatePage(page)) page = null;
-    let resolved_slug: string | undefined = page && page.slug !== slug ? page.slug : undefined;
+    let resolved_slug: string | undefined = page && page.slug !== slug ? page.slug
+      : slug !== requestedSlug ? slug : undefined;
 
     if (!page && fuzzy) {
       const fallback = await ctx.engine.transaction(async tx => {
@@ -293,16 +334,61 @@ const put_page: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    pageMutationSource(ctx, p, 'put_page');
-    if (ctx.dryRun) {
-      if (typeof p.slug === 'string') {
-        validatePageSlug(p.slug);
-        enforceClientSlugFence(ctx, p.slug, 'put_page');
-        enforceSubagentSlugFence(ctx, p.slug, 'put_page');
-      }
-      return { dry_run: true, action: 'put_page', slug: p.slug };
+    const requestedSourceId = pageMutationSource(ctx, p, 'put_page');
+    // Fork namespace guard (opt-in slug_namespace_rewrites, default OFF):
+    // fence the slug as requested, rewrite its namespace, then fence the
+    // rewritten slug too. A rewrite can move a request out of the client's
+    // original prefix, so checking only the requested slug would leave a gap.
+    let slug: unknown = p.slug;
+    if (typeof p.slug === 'string') {
+      validatePageSlug(p.slug);
+      enforceSubagentSlugFence(ctx, p.slug, 'put_page');
+      enforceClientSlugFence(ctx, p.slug, 'put_page');
+      slug = await normalizeWriteSlug(ctx, p.slug);
+      validatePageSlug(slug as string);
+      enforceSubagentSlugFence(ctx, slug as string, 'put_page');
+      enforceClientSlugFence(ctx, slug as string, 'put_page');
     }
-    return submitPageMutation(ctx, { operation: 'put_page', params: p });
+    if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug };
+    // D1 (fork): a page the privacy policy routes to the private source is
+    // refused for remote callers and, for local callers, written to the
+    // private source through the upstream mutation pipeline. The exposed copy
+    // in the requested source is tombstoned only after that write commits.
+    if (typeof slug === 'string' && typeof p.content === 'string') {
+      const route = await resolvePrivateWriteSource(ctx.engine, { requestedSourceId, slug, content: p.content });
+      if (route.routed && ctx.remote !== false) {
+        throw new OperationError(
+          'permission_denied',
+          `put_page slug '${slug}' is routed to private source '${route.privateSourceId}' and cannot be written by a remote caller`,
+        );
+      }
+      if (route.routed && route.sourceId !== requestedSourceId) {
+        try {
+          await assertPageWriteThroughReady(ctx.engine, slug, route.sourceId);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new OperationError(
+            'storage_error',
+            `put_page: the routed page cannot be written before its file target is ready (${detail}).`,
+            'Check that the private source repo exists and is writable, then retry.',
+          );
+        }
+        const routed = await submitPageMutation(ctx, { operation: 'put_page', params: { ...p, slug, source_id: route.sourceId } });
+        await ctx.engine.softDeletePage(slug, { sourceId: requestedSourceId });
+        return routed;
+      }
+    }
+    // D1 (fork): assert the privacy chokepoint before the pipeline. The engine
+    // enforces it again inside the write, but the pipeline reports a refusal
+    // there only as a generic publication failure; callers need the reason
+    // (NOT ARMED, unreadable policy, deny-list match).
+    if (typeof slug === 'string' && typeof p.content === 'string') {
+      const parsed = parseMarkdown(p.content, slug);
+      await enforcePrivatePageWrite(ctx.engine, {
+        requestedSourceId, slug, entityType: parsed.type, entityName: parsed.title,
+      });
+    }
+    return submitPageMutation(ctx, { operation: 'put_page', params: { ...p, slug } });
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
@@ -387,7 +473,7 @@ const restore_page: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    pageMutationSource(ctx, p, 'restore_page');
+    const sourceId = pageMutationSource(ctx, p, 'restore_page');
     if (ctx.dryRun) {
       if (typeof p.slug === 'string') {
         validatePageSlug(p.slug);
@@ -396,6 +482,17 @@ const restore_page: Operation = {
       }
       return { dry_run: true, action: 'restore_page', slug: p.slug };
     }
+    // D1 (fork): refuse a private-routed restore before the upstream
+    // mutation pipeline runs. The pipeline owns the restore itself.
+    const slug = p.slug as string;
+    enforceClientSlugFence(ctx, slug, 'restore_page');
+    const current = await ctx.engine.getPage(slug, { includeDeleted: true, sourceId });
+    await enforcePrivateWriteGuard(ctx, 'restore_page', {
+      requestedSourceId: sourceId,
+      slug,
+      entityType: current?.type,
+      entityName: current?.title,
+    }, current ?? undefined);
     return submitPageMutation(ctx, { operation: 'restore_page', params: p });
   },
   cliHints: { name: 'restore', positional: ['slug'] },
@@ -403,16 +500,53 @@ const restore_page: Operation = {
 
 const purge_deleted_pages: Operation = {
   name: 'purge_deleted_pages',
-  description: 'v0.26.5 — admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72). Cascades through content_chunks, page_links, chunk_relations. Local CLI only (not exposed over HTTP MCP). Manual escape hatch alongside the autopilot purge phase.',
+  description: "v0.26.5 — admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours. REQUIRES an explicit older_than_hours (no default) and confirm='yes-i-mean-it'; a dry run needs the cutoff but not the consent. Cascades through content_chunks, page_links, chunk_relations and is not recoverable. Local CLI only (not exposed over HTTP MCP).",
   params: {
-    older_than_hours: { type: 'number', description: 'Age cutoff in hours. Default 72.' },
+    older_than_hours: { type: 'number', description: 'Age cutoff in hours. REQUIRED, no default.' },
+    confirm: { type: 'string', description: "Must be the literal string 'yes-i-mean-it' for a real purge. Not needed for a dry run." },
   },
   mutating: true,
   scope: 'admin',
   localOnly: true,
+  // R4 BLOCKER, 2026-09-17. THIS IS THE SECOND ROUTE TO THE PURGE.
+  //
+  // `gbrain pages purge-deleted` is guarded in src/commands/pages.ts. This
+  // operation is the OTHER way in, and it was left wide open: cliHints below
+  // registers it as the TOP-LEVEL command `gbrain purge-deleted` (cli.ts
+  // builds cliOps from every unhidden cliHints.name), and `gbrain call
+  // purge_deleted_pages` reaches the same handler. Neither passes through the
+  // command-layer guard. Before this change:
+  //
+  //   gbrain pages purge-deleted              -> refused, exit 2
+  //   gbrain purge-deleted                    -> DELETED, silent 72h default
+  //   gbrain call purge_deleted_pages         -> DELETED, silent 72h default
+  //   gbrain purge-deleted --older-than-hours 0 -> deleted EVERY soft-deleted page
+  //
+  // That is the 2026-09-16 incident shape under a shorter name, and the docs
+  // spell it the unguarded way. A guard on one spelling of a destructive
+  // operation is not a guard.
+  //
+  // Enforced HERE, in the operation, rather than in the CLI dispatcher,
+  // because that is the single point every route passes through: CLI alias,
+  // `gbrain call`, and any local MCP caller. The silent default is gone with
+  // it: an omitted cutoff is now a refusal, never 72 hours.
   handler: async (ctx, p) => {
-    const olderThanHours = (p.older_than_hours as number | undefined) ?? 72;
+    const olderThanHours = p.older_than_hours as number | undefined;
+    if (olderThanHours === undefined || !Number.isFinite(olderThanHours) || olderThanHours < 0) {
+      throw new Error(
+        'purge_deleted_pages: older_than_hours is required and must be a non-negative number. ' +
+        'There is deliberately no default: the 72-hour fallback hard-deleted 2,582 pages on 2026-09-16. ' +
+        'Preview first with a dry run, then pass the cutoff explicitly.',
+      );
+    }
     if (ctx.dryRun) return { dry_run: true, action: 'purge_deleted_pages', older_than_hours: olderThanHours };
+    if (p.confirm !== 'yes-i-mean-it') {
+      throw new Error(
+        'purge_deleted_pages: refusing to hard-delete without explicit consent. ' +
+        "Pass confirm='yes-i-mean-it' (CLI: --confirm yes-i-mean-it) once a dry run shows the set you expect. " +
+        'This operation cascades through content_chunks, page_links and chunk_relations and is NOT recoverable.',
+      );
+    }
     const result = await (await import('../persistence/purge-deleted.ts')).purgeDeletedPagesCoordinated(ctx.engine, olderThanHours);
     return { status: result.failed ? 'partial' : 'purged', count: result.count, slugs: result.slugs, ...(result.blocked.length ? { blocked: result.blocked } : {}) };
   },
@@ -600,7 +734,12 @@ const capture: Operation = {
       }
       return { dry_run: true, action: 'capture', slug: p.slug };
     }
-    return submitPageMutation(ctx, { operation: 'capture', params: p });
+    // Fork namespace guard (opt-in, default OFF): rewrite a caller-supplied
+    // slug's namespace before the upstream pipeline fences and writes it.
+    const params = typeof p.slug === 'string' && p.slug.length > 0
+      ? { ...p, slug: await normalizeWriteSlug(ctx, p.slug) }
+      : p;
+    return submitPageMutation(ctx, { operation: 'capture', params });
   },
 };
 

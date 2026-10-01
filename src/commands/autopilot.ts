@@ -1538,7 +1538,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       // extract + embed, which didn't match the Minions-dispatch
       // path's phase set). Now both converge on the same primitive.
       try {
-        const { runCycle } = await import('../core/cycle.ts');
+        const { runCycle, QUEUED_AUTOPILOT_PHASES } = await import('../core/cycle.ts');
         // #1872: track the promise so closeEngine can drain it on shutdown,
         // and pass the abort signal so the cycle winds down between phases.
         const cyclePromise = runCycle(engine, {
@@ -1548,6 +1548,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           // for cron safety; that choice is scoped to dream only.
           pull: true,
           signal: shutdownAbort.signal,
+          phases: QUEUED_AUTOPILOT_PHASES,
           yieldBetweenPhases: async () => {
             await new Promise(r => setImmediate(r));
           },

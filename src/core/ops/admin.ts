@@ -1,6 +1,6 @@
 import { pageMutationSource, submitPageMutation } from '../persistence/page-mutations.ts';
 import { PAGE_MUTATION_PARAMS } from '../persistence/params.ts';
-import { readPolicyOpts } from './context.ts';
+import { enforcePrivateWriteGuard, readPolicyOpts } from './context.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 /**
  * Admin operation cluster — pure move from operations.ts (v0.46.x tranche 2).
@@ -186,9 +186,30 @@ const revert_version: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    pageMutationSource(ctx, p, 'revert_version');
+    const sourceId = pageMutationSource(ctx, p, 'revert_version');
     enforceClientSlugFence(ctx, p.slug as string, 'revert_version');
     if (ctx.dryRun) return { dry_run: true, action: 'revert_version', slug: p.slug, version_id: p.version_id };
+    // D1 (fork): refuse a private-routed revert before the upstream mutation
+    // pipeline runs. The pipeline owns the revert itself.
+    const sourceOpts = { sourceId };
+    const requestedSourceId = sourceId;
+    const versions = await ctx.engine.getVersions(p.slug as string, sourceOpts);
+    const version = versions.find((candidate) => candidate.id === p.version_id);
+    const versionType = version?.frontmatter && typeof version.frontmatter.type === 'string'
+      ? version.frontmatter.type
+      : undefined;
+    const current = await ctx.engine.getPage(p.slug as string, { includeDeleted: true, ...sourceOpts });
+    await enforcePrivateWriteGuard(ctx, 'revert_version', {
+      requestedSourceId,
+      slug: p.slug as string,
+      content: version?.compiled_truth,
+      entityType: versionType ?? current?.type,
+      entityName: current?.title,
+    }, version ? {
+      type: versionType ?? current?.type,
+      title: current?.title,
+      frontmatter: version.frontmatter,
+    } : undefined);
     return submitPageMutation(ctx, { operation: 'revert_version', params: p });
   },
   cliHints: { name: 'revert', positional: ['slug', 'version_id'] },
