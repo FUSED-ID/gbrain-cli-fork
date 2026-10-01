@@ -7,9 +7,12 @@ import { FORK_VERSION_KEY } from '../src/core/migrate.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 /**
- * A PGLite backup stamped 166 is the old fork oauth migration, which this
- * binary reads as upstream schema 165 plus fork ledger 1. 167 is newer than
- * anything this binary can restore.
+ * A PGLite backup stamped 166 is the old fork oauth migration when the dump
+ * has the fork oauth columns and no facts.embedding_model column. Restore
+ * reads that as upstream schema 165 plus fork ledger 1, including when the
+ * caller simulates LATEST_VERSION 166. A stamp 166 dump that already has
+ * facts.embedding_model is upstream 166 and stays 166. 167 stays above the
+ * real schema ceiling and is refused.
  */
 let temporary = '';
 let root = '';
@@ -115,4 +118,45 @@ test('schema 166 without fork oauth columns is refused', async () => {
   await expect(restorePgliteBackup({ archive, into })).rejects.toMatchObject({
     code: 'newer_backup_schema',
   });
+}, 120_000);
+
+test('fork stamp 166 under simulated latest 166 restores as upstream 165 plus fork ledger 1', async () => {
+  const into = join(temporary, 'restored-166-simulated-latest');
+  const result = await restorePgliteBackup({ archive: archive166, into, latestVersion: 166 });
+  expect(result.root).toBe(into);
+  await withEngine(join(into, '.gbrain', 'brain.pglite'), async (engine) => {
+    expect(await engine.getConfig('version')).toBe('165');
+    expect(await engine.getConfig(FORK_VERSION_KEY)).toBe('1');
+    const shape = await oauthPermissions(engine);
+    expect(shape.client_permissions).toBe('jsonb');
+    expect(shape.token_permissions).toBe('jsonb');
+  }, true);
+}, 120_000);
+
+test('upstream schema 166 with facts.embedding_model restores unchanged under simulated latest 166', async () => {
+  const databasePath = join(root, '.gbrain', 'brain.pglite');
+  await withEngine(databasePath, async (engine) => {
+    await engine.executeRaw('ALTER TABLE oauth_clients DROP COLUMN IF EXISTS permissions');
+    await engine.executeRaw('ALTER TABLE access_tokens DROP COLUMN IF EXISTS permissions');
+    await engine.executeRaw('ALTER TABLE facts ADD COLUMN IF NOT EXISTS embedding_model TEXT');
+    await engine.setConfig('version', '166');
+    await engine.unsetConfig(FORK_VERSION_KEY);
+  });
+  const archive = join(temporary, 'stamp-166-upstream.gbrain-backup');
+  await createPgliteBackup({ root, output: archive });
+  const into = join(temporary, 'restored-166-upstream');
+  const result = await restorePgliteBackup({ archive, into, latestVersion: 166 });
+  expect(result.root).toBe(into);
+  await withEngine(join(into, '.gbrain', 'brain.pglite'), async (engine) => {
+    expect(await engine.getConfig('version')).toBe('166');
+    expect(await engine.getConfig(FORK_VERSION_KEY)).toBeNull();
+    const shape = await oauthPermissions(engine);
+    expect(shape.client_permissions).toBeNull();
+    expect(shape.token_permissions).toBeNull();
+    const [column] = await engine.executeRaw<{ embedding_model: string | null }>(
+      `SELECT data_type AS embedding_model FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'facts' AND column_name = 'embedding_model'`,
+    );
+    expect(column?.embedding_model).toBe('text');
+  }, true);
 }, 120_000);

@@ -205,13 +205,20 @@ export async function createPgliteBackup(options: { output: string; root?: strin
   }
 }
 
-/** True when both fork oauth permission columns are present. */
-async function forkOauthColumnsPresent(engine: PGLiteEngine): Promise<boolean> {
+/**
+ * Fork oauth columns, and whether upstream v166's facts.embedding_model
+ * column is already in the opened dump.
+ */
+async function openedDumpForkSignals(engine: PGLiteEngine): Promise<{
+  forkOauth: boolean;
+  factsEmbeddingModel: boolean;
+}> {
   const [row] = await engine.executeRaw<{
     oauth_clients: string | null;
     access_tokens: string | null;
     client_permissions: string | null;
     token_permissions: string | null;
+    facts_embedding_model: string | null;
   }>(
     `SELECT
        to_regclass('public.oauth_clients')::text AS oauth_clients,
@@ -219,25 +226,31 @@ async function forkOauthColumnsPresent(engine: PGLiteEngine): Promise<boolean> {
        (SELECT data_type FROM information_schema.columns
          WHERE table_schema = 'public' AND table_name = 'oauth_clients' AND column_name = 'permissions') AS client_permissions,
        (SELECT data_type FROM information_schema.columns
-         WHERE table_schema = 'public' AND table_name = 'access_tokens' AND column_name = 'permissions') AS token_permissions`,
+         WHERE table_schema = 'public' AND table_name = 'access_tokens' AND column_name = 'permissions') AS token_permissions,
+       (SELECT data_type FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'facts' AND column_name = 'embedding_model') AS facts_embedding_model`,
   );
-  return !!row
-    && (row.oauth_clients ?? '').includes('oauth_clients')
-    && (row.access_tokens ?? '').includes('access_tokens')
-    && row.client_permissions === 'jsonb'
-    && row.token_permissions === 'jsonb';
+  return {
+    forkOauth: !!row
+      && (row.oauth_clients ?? '').includes('oauth_clients')
+      && (row.access_tokens ?? '').includes('access_tokens')
+      && row.client_permissions === 'jsonb'
+      && row.token_permissions === 'jsonb',
+    factsEmbeddingModel: !!row?.facts_embedding_model,
+  };
 }
 
-function metadataOf(manifest: ArchiveManifest): BackupMetadata {
+function metadataOf(manifest: ArchiveManifest, latestVersion: number): BackupMetadata {
   const value = manifest as unknown as BackupMetadata;
   if (value.kind !== 'gbrain-pglite' || value.classification !== 'sensitive-full-database-state' || typeof value.original_root !== 'string' || !Number.isInteger(value.schema_version) || value.schema_version < 1 || !Array.isArray(value.sources) || !Array.isArray(value.managed_paths) || !Array.isArray(value.credential_references) || !Array.isArray(value.omitted)) {
     throw new AgentInstallError('invalid_backup', 'Invalid PGLite backup metadata.');
   }
   if (relativeBackupPath(value.original_root, value.original_root) !== '') throw new AgentInstallError('invalid_backup', 'Invalid archived root.');
-  // 166 is the old fork stamp. Acceptance waits until the dump is open and
-  // only succeeds when the fork oauth columns are present. Every other
-  // schema above this binary is refused here.
-  if (value.schema_version > LATEST_VERSION && value.schema_version !== OLD_FORK_SCHEMA_STAMP) throw new AgentInstallError('newer_backup_schema', 'Upgrade GBrain before restoring this newer database schema.');
+  // Stamp 166 is admitted here. After the dump is open it is the old fork
+  // stamp only when the fork oauth columns are present and
+  // facts.embedding_model is absent. That judgement does not use
+  // LATEST_VERSION. Every other schema above this binary is refused here.
+  if (value.schema_version > latestVersion && value.schema_version !== OLD_FORK_SCHEMA_STAMP) throw new AgentInstallError('newer_backup_schema', 'Upgrade GBrain before restoring this newer database schema.');
   checkedManagedPaths(null, value.managed_paths);
   if ([...value.credential_references, ...value.omitted].some(v => typeof v !== 'string')) throw new AgentInstallError('invalid_backup', 'Invalid backup reconnect inventory.');
   for (const source of value.sources) {
@@ -248,7 +261,16 @@ function metadataOf(manifest: ArchiveManifest): BackupMetadata {
   return value;
 }
 
-export async function restorePgliteBackup(options: { archive: string; into: string } & SharedSkillRestoreOptions): Promise<{ root: string; quarantined_jobs: number; reconnect_required: string[]; shared_skills: SharedSkillRestore | null }> {
+export async function restorePgliteBackup(options: {
+  archive: string;
+  into: string;
+  /**
+   * Test seam. Schema ceiling for this restore. Production omits it and
+   * the real LATEST_VERSION is used. Does not change the migration list.
+   */
+  latestVersion?: number;
+} & SharedSkillRestoreOptions): Promise<{ root: string; quarantined_jobs: number; reconnect_required: string[]; shared_skills: SharedSkillRestore | null }> {
+  const latestVersion = options.latestVersion ?? LATEST_VERSION;
   const mode = validateSharedSkillRestoreMode(options);
   const root = checkedRoot(options.into);
   if (!existsSync(dirname(root))) throw new AgentInstallError('parent_missing', 'Restore parent directory must already exist.');
@@ -269,7 +291,7 @@ export async function restorePgliteBackup(options: { archive: string; into: stri
   try {
     const payload = join(stage, 'payload'); mkdirSync(payload, { mode: 0o700 });
     const manifest = readBackupArchive(resolve(options.archive), payload);
-    const metadata = metadataOf(manifest);
+    const metadata = metadataOf(manifest, latestVersion);
     if (!manifest.entries.some(e => e.path === 'database.tar') || !manifest.entries.some(e => e.path === 'config.json') || manifest.entries.some(e => e.path !== 'database.tar' && e.path !== 'config.json' && !e.path.startsWith('files/'))) throw new AgentInstallError('invalid_backup', 'Unexpected backup payload.');
     for (const entry of manifest.entries.filter(e => e.path.startsWith('files/'))) {
       const rel = entry.path.slice(6);
@@ -287,8 +309,16 @@ export async function restorePgliteBackup(options: { archive: string; into: stri
     if (!Number.isInteger(databaseSchema) || databaseSchema !== metadata.schema_version) {
       throw new AgentInstallError('backup_schema_mismatch', 'The archived database schema does not match the backup inventory. Preserve the archive and use a verified backup.');
     }
-    const legacyForkStamp = metadata.schema_version === OLD_FORK_SCHEMA_STAMP && metadata.schema_version > LATEST_VERSION;
-    if (legacyForkStamp && !(await forkOauthColumnsPresent(engine))) {
+    // Content, not a comparison with LATEST_VERSION. A fork-era 166 dump has
+    // the oauth columns and no facts.embedding_model, so it restores as
+    // upstream 165 plus fork ledger 1 even after upstream itself ships 166.
+    // A real upstream 166 dump has facts.embedding_model and keeps stamp 166.
+    let legacyForkStamp = false;
+    if (metadata.schema_version === OLD_FORK_SCHEMA_STAMP) {
+      const signals = await openedDumpForkSignals(engine);
+      legacyForkStamp = signals.forkOauth && !signals.factsEmbeddingModel;
+    }
+    if (metadata.schema_version > latestVersion && !legacyForkStamp) {
       throw new AgentInstallError('newer_backup_schema', 'Upgrade GBrain before restoring this newer database schema.');
     }
     // No initSchema, migration, sync, provider request, or worker is run here.
