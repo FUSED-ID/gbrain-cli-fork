@@ -977,7 +977,7 @@ export async function runMigrateEmbeddings(
       // --pace-max-concurrency also has a space-separated form, so it needs to
       // be a valueFlag as well as prefix-allowed, or its value token is read as
       // a stray positional and refused.
-      valueFlags: ['--dim', '--reranker', '--batch-size', '--pace-max-concurrency'],
+      valueFlags: ['--dim', '--reranker', '--batch-size', '--max-cost-usd', '--pace-max-concurrency'],
       args,
       usage: `Usage: gbrain migrate embeddings --to <provider:model> [flags]
 
