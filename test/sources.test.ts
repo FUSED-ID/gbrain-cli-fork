@@ -81,7 +81,11 @@ describe('sources provision-private-routing', () => {
       excluded_people_markdown: excluded,
       filing_rules_markdown: filing,
     });
-    expect(JSON.parse(lines[0])).toEqual({ source_id: 'lg-private', excluded_entry_count: 2 });
+    expect(JSON.parse(lines[0])).toEqual({
+      source_id: 'lg-private',
+      excluded_entry_count: 2,
+      unresolved_identity_entry_count: 0,
+    });
   });
 });
 

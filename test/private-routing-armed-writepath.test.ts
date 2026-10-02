@@ -277,14 +277,64 @@ describe('private routing armed guard at the put_page write path', () => {
       frontmatter: {},
     } as const;
 
-    await expect(engine.putPage(slug, page, { sourceId: 'default' })).rejects.toThrow(/routed|world-federated|refus/i);
+    await expect(engine.putPage(slug, page, { sourceId: 'default' })).rejects.toThrow(/unresolved_identity_policy/);
     await engine.putPage(slug, page, { sourceId: 'default', migrationWrite: true });
     await expect(engine.softDeletePage(slug, { sourceId: 'default' })).resolves.toMatchObject({ slug });
-    await expect(engine.restorePage(slug, { sourceId: 'default' })).rejects.toThrow(/routed|world-federated|refus/i);
+    await expect(engine.restorePage(slug, { sourceId: 'default' })).rejects.toThrow(/unresolved_identity_policy/);
     await expect(engine.insertFact(
       { fact: 'must not write', entity_slug: slug, visibility: 'world', source: 'd1-test' },
       { source_id: 'default' },
-    )).rejects.toThrow(/routed|world-visible|refus/i);
+    )).rejects.toThrow(/unresolved_identity_policy/);
+  });
+
+  test('RED/GREEN: identity-unresolved restore has an independent refusal proof', async () => {
+    await pointPrivateSource(policyDir);
+    writePolicy(`## Family deny-list
+| Slug pattern | Name |
+|---|---|
+| \`unrelated\` | Unrelated |
+
+## Do not enrich, identity unresolved
+| Slug pattern | Contact |
+|---|---|
+| \`d1-restore-unresolved\` | unresolved@example.test |
+`);
+    const slug = 'wiki/d1-restore-unresolved';
+    await engine.putPage(slug, {
+      type: 'note',
+      title: 'Restore Unresolved Identity',
+      compiled_truth: 'body',
+      timeline: '',
+      frontmatter: {},
+    }, { sourceId: 'default', migrationWrite: true });
+    await expect(engine.softDeletePage(slug, { sourceId: 'default' })).resolves.toMatchObject({ slug });
+    await expect(engine.restorePage(slug, { sourceId: 'default' })).rejects.toThrow(/unresolved_identity_policy/);
+  });
+
+  test('RED/GREEN: identity-unresolved insertFact has an independent refusal proof', async () => {
+    await pointPrivateSource(policyDir);
+    writePolicy(`## Family deny-list
+| Slug pattern | Name |
+|---|---|
+| \`unrelated\` | Unrelated |
+
+## Do not enrich, identity unresolved
+| Slug pattern | Contact |
+|---|---|
+| \`d1-fact-unresolved\` | unresolved@example.test |
+`);
+    const slug = 'wiki/d1-fact-unresolved';
+    await engine.putPage(slug, {
+      type: 'note',
+      title: 'Fact Unresolved Identity',
+      compiled_truth: 'body',
+      timeline: '',
+      frontmatter: {},
+    }, { sourceId: 'default', migrationWrite: true });
+    await expect(engine.insertFact(
+      { fact: 'must not write', entity_slug: slug, visibility: 'world', source: 'd1-test' },
+      { source_id: 'default' },
+    )).rejects.toThrow(/unresolved_identity_policy/);
   });
 
   test('RED/GREEN: a slug live in lg-private is refused; the same shape not live there is allowed', async () => {

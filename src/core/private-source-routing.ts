@@ -183,8 +183,16 @@ function globMatches(pattern: string, keys: Set<string>): boolean {
   return [...keys].some((key) => re.test(key));
 }
 
+function policySectionPattern(heading: string): RegExp {
+  return new RegExp(`^##\\s+${heading}\\b`, 'im');
+}
+
+function hasPolicySection(doc: string, heading: string): boolean {
+  return policySectionPattern(heading).test(doc);
+}
+
 function parsePolicySection(doc: string, heading: string): ExcludedPerson[] {
-  const start = doc.search(new RegExp(`^##\\s+${heading}\\b`, 'im'));
+  const start = doc.search(policySectionPattern(heading));
   if (start < 0) return [];
   const rest = doc.slice(start);
   const next = rest.slice(1).search(/^##\s+/m);
@@ -203,8 +211,12 @@ export function parseExcludedPeople(doc: string): ExcludedPerson[] {
   return parsePolicySection(doc, 'Family deny-list');
 }
 
-function parseUnresolvedIdentity(doc: string): ExcludedPerson[] {
+export function parseUnresolvedIdentity(doc: string): ExcludedPerson[] {
   return parsePolicySection(doc, 'Do not enrich, identity unresolved');
+}
+
+export function hasUnresolvedIdentityPolicySection(doc: string): boolean {
+  return hasPolicySection(doc, 'Do not enrich, identity unresolved');
 }
 
 async function getConfiguredPrivateSourceId(engine: BrainEngine): Promise<string | null> {
@@ -652,7 +664,7 @@ export async function enforcePrivateFactWrite(
   if (route.routed && route.sourceId !== target.sourceId && target.sourceId === DEFAULT_SOURCE_ID) {
     throw new Error(
       `private-write routing refused fact write for '${slug}' in world-federated source ` +
-      `'${target.sourceId}'; route the fact to '${route.sourceId}'.`,
+      `'${target.sourceId}' (${route.reason ?? 'private_routing_policy'}); route the fact to '${route.sourceId}'.`,
     );
   }
   // Explicitly retain the world-on-default denial. The allowlist never

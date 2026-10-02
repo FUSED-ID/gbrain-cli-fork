@@ -70,7 +70,11 @@ import {
 } from '../core/sources-load.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { preflightOauthClientColumns } from './auth.ts';
-import { parseExcludedPeople } from '../core/private-source-routing.ts';
+import {
+  hasUnresolvedIdentityPolicySection,
+  parseExcludedPeople,
+  parseUnresolvedIdentity,
+} from '../core/private-source-routing.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -169,22 +173,46 @@ async function runProvisionPrivateRouting(engine: BrainEngine, args: string[]): 
   const routing = currentRouting && typeof currentRouting === 'object' && !Array.isArray(currentRouting)
     ? currentRouting as Record<string, unknown>
     : {};
+  const previousExcludedPeople = typeof routing.excluded_people_markdown === 'string'
+    ? routing.excluded_people_markdown
+    : null;
   config.private_routing = {
     ...routing,
     excluded_people_markdown: excludedPeople,
     filing_rules_markdown: filingRules,
   };
+  const unresolvedIdentityHeadingPresent = hasUnresolvedIdentityPolicySection(excludedPeople);
+  const unresolvedIdentityEntryCount = parseUnresolvedIdentity(excludedPeople).length;
+  if (previousExcludedPeople !== null
+    && hasUnresolvedIdentityPolicySection(previousExcludedPeople)
+    && !unresolvedIdentityHeadingPresent) {
+    throw new Error(
+      `Cannot provision private routing policy for source "${sourceId}": ` +
+      'the previously stored "Do not enrich, identity unresolved" heading is missing from the current _excluded-people.md. Refusing to remove the section.',
+    );
+  }
+  if (unresolvedIdentityHeadingPresent && unresolvedIdentityEntryCount === 0) {
+    throw new Error(
+      `Cannot provision private routing policy for source "${sourceId}": ` +
+      'the "Do not enrich, identity unresolved" heading is present but parsed to zero entries.',
+    );
+  }
   await engine.executeRaw(
     `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
     [JSON.stringify(normalizeSourceConfig(config)), sourceId],
   );
 
-  const result = { source_id: sourceId, excluded_entry_count: excludedEntryCount };
+  const result = {
+    source_id: sourceId,
+    excluded_entry_count: excludedEntryCount,
+    unresolved_identity_entry_count: unresolvedIdentityEntryCount,
+  };
   if (json) {
     console.log(JSON.stringify(result));
   } else {
     console.log(`Provisioned private routing policy for source "${sourceId}".`);
     console.log(`Excluded people entries: ${excludedEntryCount}`);
+    console.log(`Unresolved identity entries: ${unresolvedIdentityEntryCount}`);
   }
 }
 
