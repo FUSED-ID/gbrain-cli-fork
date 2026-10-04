@@ -7,7 +7,7 @@ import type { PageType } from '../types.ts';
 
 export type ChronicleEligibility = { ok: true } | { ok: false; reason: string };
 
-const ELIGIBLE_TYPES: PageType[] = ['meeting', 'conversation', 'calendar-event'];
+const ELIGIBLE_TYPES: PageType[] = ['meeting', 'meeting-transcript', 'conversation', 'calendar-event'];
 // Directory rescue: a meetings/… page that frontmatter-typed itself 'note' is
 // still conversation-shape. life/diary excluded explicitly below.
 const RESCUE_SLUG_PREFIXES = ['meetings/', 'conversations/', 'cal/', 'calendar/'] as const;

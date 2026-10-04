@@ -31,6 +31,9 @@ describe('isChronicleEligible', () => {
   test('meeting is eligible', () => {
     expect(isChronicleEligible({ type: 'meeting', slug: 'meetings/x', body }).ok).toBe(true);
   });
+  test('meeting transcript is eligible', () => {
+    expect(isChronicleEligible({ type: 'meeting-transcript', slug: 'transcripts/x', body }).ok).toBe(true);
+  });
   test('meetings/ slug rescues a note-typed page', () => {
     expect(isChronicleEligible({ type: 'note', slug: 'meetings/x', body }).ok).toBe(true);
   });

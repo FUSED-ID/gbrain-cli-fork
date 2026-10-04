@@ -18,7 +18,7 @@ beforeAll(async () => {
 afterAll(async () => { await engine.disconnect(); });
 beforeEach(async () => {
   await engine.executeRaw(`DELETE FROM minion_jobs WHERE name = 'chronicle_extract'`);
-  await engine.executeRaw(`DELETE FROM pages WHERE type IN ('meeting','diary')`);
+  await engine.executeRaw(`DELETE FROM pages WHERE type IN ('meeting','meeting-transcript','diary')`);
 });
 
 describe('chronicle_backfill op', () => {
@@ -31,6 +31,13 @@ describe('chronicle_backfill op', () => {
     expect(r.enqueued).toBe(0);
     const jobs = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM minion_jobs WHERE name='chronicle_extract'`);
     expect(Number(jobs[0].n)).toBe(0);
+  });
+
+  test('dry-run includes meeting transcripts', async () => {
+    await engine.putPage('transcripts/t1', { type: 'meeting-transcript', title: 't1', compiled_truth: LONG });
+    const r = await operationsByName.chronicle_backfill.handler(mkCtx(), { dry_run: true }) as { eligible: number; enqueued: number };
+    expect(r.eligible).toBe(1);
+    expect(r.enqueued).toBe(0);
   });
 
   test('enqueues one chronicle_extract per eligible meeting', async () => {
