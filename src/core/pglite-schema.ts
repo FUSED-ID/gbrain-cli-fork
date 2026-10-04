@@ -915,7 +915,8 @@ CREATE TABLE IF NOT EXISTS access_tokens (
   scopes       TEXT[],
   created_at   TIMESTAMPTZ DEFAULT now(),
   last_used_at TIMESTAMPTZ,
-  revoked_at   TIMESTAMPTZ
+  revoked_at   TIMESTAMPTZ,
+  permissions  JSONB DEFAULT '{"takes_holders":["world"]}'::jsonb NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON access_tokens (token_hash) WHERE revoked_at IS NULL;
