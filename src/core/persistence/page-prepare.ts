@@ -7,6 +7,7 @@ import type { GBrainConfig } from '../config.ts';
 import type { Page, PageVersion } from '../types.ts';
 import { importFromContent, type ParsedPage } from '../import-file.ts';
 import { parseMarkdown, serializePageToMarkdown, resolveSourceLocalFilePath } from '../markdown.ts';
+import { applyInference } from '../frontmatter-inference.ts';
 import { OperationError } from '../ops/contract.ts';
 import { assertPageRevision, type PageSnapshot } from '../page-state/types.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
@@ -94,7 +95,8 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
   // A normal edit may replace only the bytes represented by its read snapshot.
   // Unknown local edits require explicit import/recovery, even for force writes.
   if (before && snapshot) {
-    const parsed = parseMarkdown(before.toString('utf8'), row.slug);
+    const relativePath = snapshot.page.source_path ?? scannerSourcePath(root, path, mode ?? 'source-root');
+    const parsed = parseMarkdown(applyInference(relativePath, before.toString('utf8')).content, relativePath);
     const expected = canonical(snapshot.page, snapshot.tags);
     // #1035 parity (#5521): a file without an explicit `type:` keeps the stored type on import.
     const type = parsed.typeExplicit ? parsed.type : snapshot.page.type;

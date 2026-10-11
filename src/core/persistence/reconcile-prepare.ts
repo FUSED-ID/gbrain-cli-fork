@@ -1,9 +1,10 @@
-import { basename } from 'node:path';
+import { basename, relative } from 'node:path';
 import { readFileSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { importFromContent, type ParsedPage } from '../import-file.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
+import { applyInference } from '../frontmatter-inference.ts';
 import { parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, restoreHiddenFactRows } from '../facts-fence.ts';
 import { OperationError } from '../ops/contract.ts';
 import { sealPageTextProjection } from '../page-state/projections.ts';
@@ -99,7 +100,8 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
       if (!ready.noop) { await prepared.project!(tx); await sealPageTextProjection(tx, row.slug, row.source_id); }
       const final = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id });
       const scanStateTransferred = final ? await transferLegacyAtomPageState(tx, state.snapshot, final) : false;
-      const file = parseMarkdown(readFileSync(state.path, 'utf8'), row.slug);
+      const relativePath = state.snapshot.page.source_path ?? state.originSourcePath ?? relative(state.root, state.path).replaceAll('\\', '/');
+      const file = parseMarkdown(applyInference(relativePath, readFileSync(state.path, 'utf8')).content, row.slug);
       if (!sameCanonicalImport(final, prepared.result) || digest(reconcileCanonical(file, file.tags)) !== artifact.result_digest) {
         throw new OperationError('storage_error', 'Reconciliation canonical readback did not match the reviewed result.');
       }

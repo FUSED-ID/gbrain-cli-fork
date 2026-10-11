@@ -5,11 +5,12 @@ import type { BrainEngine } from '../engine.ts';
 import { loadConfig, loadConfigWithEngine } from '../config.ts';
 import { loadOperatorLiterals } from '../content-sanity-literals.ts';
 import { parseMarkdown, resolveSourceLocalFilePath } from '../markdown.ts';
+import { applyInference } from '../frontmatter-inference.ts';
 import { parseDataFrontmatter } from '../data-frontmatter.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
-import { recordedPathFromFileUri, scannerSlugRootMode } from '../write-through.ts';
+import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
 import { localHostId } from './identity.ts';
 import { isDatabaseOnlyPage, slugDerivedOrigin } from './unbound-pages.ts';
 import { isUnboundSourcePage } from './unbound-source.ts';
@@ -108,7 +109,8 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
   if (!Buffer.from(text).equals(raw)) throw new OperationError('invalid_params', 'The canonical file must contain valid UTF-8.');
   try { parseDataFrontmatter(text); }
   catch { throw new OperationError('invalid_params', 'Canonical file metadata cannot be parsed losslessly; repair its syntax before previewing.'); }
-  const parsed = parseMarkdown(text, slug, { validate: true, expectedSlug: slug });
+  const relativePath = snapshot.page.source_path ?? derived?.sourcePath ?? scannerSourcePath(root, path, mode);
+  const parsed = parseMarkdown(applyInference(relativePath, text).content, slug, { validate: true, expectedSlug: slug });
   const errors = parsed.errors?.filter(e => !['MISSING_OPEN', 'MISSING_CLOSE', 'EMPTY_FRONTMATTER'].includes(e.code)) ?? [];
   if (errors.length || parsed.errors?.some(e => e.code === 'MISSING_CLOSE') || parsed.slug !== slug) {
     throw new OperationError('invalid_params', 'Canonical file metadata cannot be parsed losslessly; repair its syntax before previewing.');
