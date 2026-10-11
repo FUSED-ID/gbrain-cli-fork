@@ -19,6 +19,7 @@ import { resolve, dirname } from 'path';
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { consentGate } from '../core/consent-cli.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
 // LEAF module, deliberately NOT './autopilot.ts': the flag-registry generator
 // follows a command's dynamic imports and would fold autopilot's entire flag
@@ -965,6 +966,24 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
 
   // Check if target has data
   const targetStats = await targetEngine.getStats();
+  if (opts.force && targetStats.page_count > 0) {
+    const auth = await consentGate({
+      command: 'migrate --force',
+      effects: ['destructive'],
+      actor: 'agent',
+      what: `Wipe ${targetStats.page_count} existing page(s) from the migration target`,
+      why: 'The forced engine migration replaces the target brain from the source copy.',
+      risk: 'Deletes every target page before the migration copy starts; the target must be rebuilt from the source.',
+      user_message: `Wipe ${targetStats.page_count} existing target page(s) before migrating?`,
+      argv: ['gbrain', 'migrate', ...args.filter(arg => arg !== '--yes')],
+      args,
+    }, { json: args.includes('--json') });
+    if (!auth) {
+      await targetEngine.disconnect();
+      resumeAutopilot();
+      return;
+    }
+  }
   if (opts.force) {
     if (targetStats.page_count > 0) {
       console.log('--force: wiping target brain...');
