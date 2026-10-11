@@ -20,6 +20,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { parseSourceConfig } from '../sources-load.ts';
 
 export type FactVisibility = 'private' | 'world';
 
@@ -59,4 +60,28 @@ export async function resolveVisibilityParam(
   if (value === 'private') return 'private';
   if (value == null) return resolveDefaultVisibility(engine);
   return 'private';
+}
+
+/**
+ * Per-source backstop for the fork's privacy contract. A world fact is only
+ * durable when the source is explicitly federated and opts into world facts.
+ * Missing or malformed source state fails closed to private.
+ */
+export async function resolveSourceVisibility(
+  engine: BrainEngine,
+  sourceId: string,
+  requested?: FactVisibility,
+): Promise<FactVisibility> {
+  try {
+    const source = (await engine.listAllSources({ includeArchived: true })).find(row => row.id === sourceId);
+    if (!source) return 'private';
+    const config = parseSourceConfig(source.config);
+    if (requested === 'private') return 'private';
+    if (requested === 'world') return config.federated === true && config.facts_visibility === 'world' ? 'world' : 'private';
+    if (config.facts_visibility === 'private') return 'private';
+    if (config.facts_visibility === 'world') return config.federated === true ? 'world' : 'private';
+    return resolveDefaultVisibility(engine);
+  } catch {
+    return 'private';
+  }
 }

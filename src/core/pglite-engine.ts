@@ -113,6 +113,8 @@ import type {
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { enforcePrivatePageWrite, enforcePrivateFactWrite } from './private-source-routing.ts';
+import { resolveSourceVisibility } from './facts/visibility.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
 import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
 import { PAGE_SORT_SQL } from './types.ts';
@@ -1229,6 +1231,7 @@ export class PGLiteEngine implements BrainEngine {
     slug = validateSlug(slug);
     const write = async (tx: BrainEngine) => {
       const sourceId = opts?.sourceId ?? 'default';
+      if (!opts?.migrationWrite) await enforcePrivatePageWrite(tx, { requestedSourceId: sourceId, slug, entityType: page.type, entityName: page.title });
       await tx.lockPageKeys([{ sourceId, slug }]);
       if (opts?.expectedRevision !== undefined || opts?.force !== undefined) {
         assertPageRevision(await tx.readPageSnapshot(slug, { sourceId, includeDeleted: true }), opts);
@@ -1281,6 +1284,9 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async restorePage(slug: string, opts?: { sourceId?: string }): Promise<boolean> {
+    const sourceId = opts?.sourceId ?? 'default';
+    const page = await this.getPage(slug, { sourceId, includeDeleted: true });
+    if (page) await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug, entityType: page.type, entityName: page.title });
     return pagesImpl.restorePage(this.engineSql, slug, opts);
   }
 
@@ -2397,7 +2403,9 @@ export class PGLiteEngine implements BrainEngine {
     input: NewFact,
     ctx: { source_id: string; supersedeId?: number },
   ): Promise<{ id: number; status: FactInsertStatus }> {
-    return factsImpl.insertFact(this.engineSql, undefined, input, ctx);
+    await enforcePrivateFactWrite(this, { sourceId: ctx.source_id, entitySlug: input.entity_slug, visibility: input.visibility ?? 'private' });
+    const visibility = await resolveSourceVisibility(this, ctx.source_id, input.visibility);
+    return factsImpl.insertFact(this.engineSql, undefined, { ...input, visibility }, ctx);
   }
 
   async expireFact(id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean> {
@@ -2409,7 +2417,11 @@ export class PGLiteEngine implements BrainEngine {
     ctx: { source_id: string },
     opts?: { deleteForPageFirst?: { slug: string; excludeSourcePrefixes?: string[]; preserveExpiredLegacy?: boolean } },
   ): Promise<{ inserted: number; ids: number[]; warnings: string[]; deleted: number }> {
-    return factsImpl.insertFacts(this.engineSql, undefined, rows, ctx, opts);
+    for (const row of rows) {
+      await enforcePrivateFactWrite(this, { sourceId: ctx.source_id, pageSlug: row.source_markdown_slug, entitySlug: row.entity_slug, visibility: row.visibility ?? 'private' });
+    }
+    const normalized = await Promise.all(rows.map(async row => ({ ...row, visibility: await resolveSourceVisibility(this, ctx.source_id, row.visibility) })));
+    return factsImpl.insertFacts(this.engineSql, undefined, normalized, ctx, opts);
   }
 
   async deleteFactsForPage(

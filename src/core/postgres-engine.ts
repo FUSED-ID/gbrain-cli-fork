@@ -109,6 +109,8 @@ import { ConnectionManager, DEFAULT_DIRECT_POOL_SIZE } from './connection-manage
 import { logConnectionEvent } from './connection-audit.ts';
 import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { enforcePrivatePageWrite, enforcePrivateFactWrite } from './private-source-routing.ts';
+import { resolveSourceVisibility } from './facts/visibility.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns } from './search/sql-ranking.ts';
 import { buildKeywordChunkMatch } from './search/keyword-chunk-match.ts';
@@ -792,6 +794,7 @@ export class PostgresEngine implements BrainEngine {
     slug = validateSlug(slug);
     const write = async (tx: BrainEngine) => {
       const sourceId = opts?.sourceId ?? 'default';
+      if (!opts?.migrationWrite) await enforcePrivatePageWrite(tx, { requestedSourceId: sourceId, slug, entityType: page.type, entityName: page.title });
       await tx.lockPageKeys([{ sourceId, slug }]);
       if (opts?.expectedRevision !== undefined || opts?.force !== undefined) {
         assertPageRevision(await tx.readPageSnapshot(slug, { sourceId, includeDeleted: true }), opts);
@@ -842,6 +845,9 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async restorePage(slug: string, opts?: { sourceId?: string }): Promise<boolean> {
+    const sourceId = opts?.sourceId ?? 'default';
+    const page = await this.getPage(slug, { sourceId, includeDeleted: true });
+    if (page) await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug, entityType: page.type, entityName: page.title });
     return pagesImpl.restorePage(this.engineSql, slug, opts);
   }
 
@@ -2176,7 +2182,9 @@ export class PostgresEngine implements BrainEngine {
     input: NewFact,
     ctx: { source_id: string; supersedeId?: number },
   ): Promise<{ id: number; status: FactInsertStatus }> {
-    return factsImpl.insertFact(this.engineSql, () => this.resolveFactsEmbeddingCast(), input, ctx);
+    await enforcePrivateFactWrite(this, { sourceId: ctx.source_id, entitySlug: input.entity_slug, visibility: input.visibility ?? 'private' });
+    const visibility = await resolveSourceVisibility(this, ctx.source_id, input.visibility);
+    return factsImpl.insertFact(this.engineSql, () => this.resolveFactsEmbeddingCast(), { ...input, visibility }, ctx);
   }
 
   async expireFact(id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean> {
@@ -2188,7 +2196,11 @@ export class PostgresEngine implements BrainEngine {
     ctx: { source_id: string },
     opts?: { deleteForPageFirst?: { slug: string; excludeSourcePrefixes?: string[]; preserveExpiredLegacy?: boolean } },
   ): Promise<{ inserted: number; ids: number[]; warnings: string[]; deleted: number }> {
-    return factsImpl.insertFacts(this.engineSql, () => this.resolveFactsEmbeddingCast(), rows, ctx, opts);
+    for (const row of rows) {
+      await enforcePrivateFactWrite(this, { sourceId: ctx.source_id, pageSlug: row.source_markdown_slug, entitySlug: row.entity_slug, visibility: row.visibility ?? 'private' });
+    }
+    const normalized = await Promise.all(rows.map(async row => ({ ...row, visibility: await resolveSourceVisibility(this, ctx.source_id, row.visibility) })));
+    return factsImpl.insertFacts(this.engineSql, () => this.resolveFactsEmbeddingCast(), normalized, ctx, opts);
   }
 
   async deleteFactsForPage(
