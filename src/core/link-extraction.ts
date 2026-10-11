@@ -872,17 +872,23 @@ export async function extractPageLinks(
       // flag off. Exact slugs only; downstream existence checks drop the miss.
       const bareDirect = new Set<string>();
       if (slashIdx === -1) {
-        for (const form of [slugifyPath(ref.slug), normalizeBasename(ref.slug)]) {
+        const forms = [...new Set([slugifyPath(ref.slug), normalizeBasename(ref.slug)])];
+        const cut = slug.lastIndexOf('/');
+        const dir = cut >= 0 ? slug.slice(0, cut) : '';
+        for (const form of forms) {
           if (!form || form === slug) continue;
-          bareDirect.add(form);
-          const litIdx = ref.index ?? content.indexOf(ref.slug);
-          const litContext = litIdx >= 0 ? excerpt(content, litIdx, 240) : ref.name;
-          candidates.push({
-            targetSlug: form,
-            ...typeFor(litContext, form, litIdx),
-            context: litContext,
-            linkSource: 'markdown',
-          });
+          for (const target of [dir ? `${dir}/${form}` : '', form]) {
+            if (!target || target === slug || bareDirect.has(target)) continue;
+            bareDirect.add(target);
+            const litIdx = ref.index ?? content.indexOf(ref.slug);
+            const litContext = litIdx >= 0 ? excerpt(content, litIdx, 240) : ref.name;
+            candidates.push({
+              targetSlug: target,
+              ...typeFor(litContext, target, litIdx),
+              context: litContext,
+              linkSource: 'markdown',
+            });
+          }
         }
       }
       if (typeof resolver.resolveBasenameMatches !== 'function') continue;
