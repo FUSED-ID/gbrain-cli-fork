@@ -872,23 +872,8 @@ export async function extractPageLinks(
       // flag off. Exact slugs only; downstream existence checks drop the miss.
       const bareDirect = new Set<string>();
       if (slashIdx === -1) {
-        const forms = [...new Set([slugifyPath(ref.slug), normalizeBasename(ref.slug)])];
-        const cut = slug.lastIndexOf('/');
-        const dir = cut >= 0 ? slug.slice(0, cut) : '';
-        for (const form of forms) {
-          if (!form || form === slug) continue;
-          for (const target of [dir ? `${dir}/${form}` : '', form]) {
-            if (!target || target === slug || bareDirect.has(target)) continue;
-            bareDirect.add(target);
-            const litIdx = ref.index ?? content.indexOf(ref.slug);
-            const litContext = litIdx >= 0 ? excerpt(content, litIdx, 240) : ref.name;
-            candidates.push({
-              targetSlug: target,
-              ...typeFor(litContext, target, litIdx),
-              context: litContext,
-              linkSource: 'markdown',
-            });
-          }
+        for (const form of [slugifyPath(ref.slug), normalizeBasename(ref.slug)]) {
+          if (form && form !== slug) bareDirect.add(form);
         }
       }
       // Issue #972 (codex): resolve by the wikilink TARGET (ref.slug — the
