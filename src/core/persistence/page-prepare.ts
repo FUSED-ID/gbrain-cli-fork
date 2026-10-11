@@ -11,6 +11,7 @@ import type { GBrainConfig } from '../config.ts';
 import type { Page, PageVersion } from '../types.ts';
 import { importFromContent, verifyPageReadable, type ParsedPage } from '../import-file.ts';
 import { frontmatterHoldMessageWithoutKeys, parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, resolveSourceLocalFilePath, type ParseOpts } from '../markdown.ts';
+import { applyInference } from '../frontmatter-inference.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { isOpPageSlug } from '../ops/context.ts';
@@ -132,7 +133,8 @@ export function publishesDatabaseOnly(root: string, slug: string, snapshot: Page
  */
 export async function fileMatchesSnapshot(engine: BrainEngine, slug: string, bytes: string, snapshot: PageSnapshot,
   activePack?: ParseOpts['activePack']): Promise<boolean> {
-  const parsed = parseMarkdown(bytes, slug, { activePack });
+  const relativePath = snapshot.page.source_path ?? `${slug}.md`;
+  const parsed = parseMarkdown(applyInference(relativePath, bytes).content, slug, { activePack });
   // #5521 parity for subtype (#5928): a pack rule is not part of the file's bytes, so a file
   // without an explicit `subtype:` keeps the stored subtype (or none); the import still stamps it.
   delete parsed.inferredSubtype;

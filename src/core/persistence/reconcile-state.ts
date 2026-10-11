@@ -5,6 +5,7 @@ import type { BrainEngine } from '../engine.ts';
 import { loadConfig, loadConfigWithEngine } from '../config.ts';
 import { loadOperatorLiterals } from '../content-sanity-literals.ts';
 import { parseMarkdown, resolveSourceLocalFilePath } from '../markdown.ts';
+import { applyInference } from '../frontmatter-inference.ts';
 import { parseDataFrontmatter } from '../data-frontmatter.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -190,7 +191,8 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
       `Nothing changed. Fix the frontmatter of the canonical file of ${slug} in '${sourceId}' (quote values containing ': ', close the --- block), then preview the page again.`);
   }
   // Preserve a terminal .md in the page key while parsing the canonical Markdown.
-  const parsed = parseMarkdown(text, `${slug}.md`, { validate: true, expectedSlug: slug });
+  const relativePath = snapshot.page.source_path ?? derived?.sourcePath ?? `${slug}.md`;
+  const parsed = parseMarkdown(applyInference(relativePath, text).content, `${slug}.md`, { validate: true, expectedSlug: slug });
   const errors = parsed.errors?.filter(e => !['MISSING_OPEN', 'MISSING_CLOSE', 'EMPTY_FRONTMATTER'].includes(e.code)) ?? [];
   if (!errors.length && !parsed.errors?.some(e => e.code === 'MISSING_CLOSE') && parsed.slug !== slug) {
     // #5966 (W14 P1.7): a well-formed file whose path derives another slug is a legacy render of a slug the
