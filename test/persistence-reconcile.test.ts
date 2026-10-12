@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { configDir } from '../src/core/config.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { importFromContent } from '../src/core/import-file.ts';
+import { importFromContent, importFromFile } from '../src/core/import-file.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../src/core/markdown.ts';
 import { acceptWriterTransfer, acquireWorktree, claimWorktree, getWorktreeBinding, prepareWriterTransfer } from '../src/core/persistence/ownership.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration, type LocalRegistration } from '../src/core/persistence/identity.ts';
@@ -61,6 +61,23 @@ async function fixture(engine: BrainEngine, enabled = false, body = 'A useful du
   const registration = await registerLocalWriter(engine, 'cli');
   return { id, root, slug, file, binding, registration, snapshot };
 }
+async function inferredFileFixture(engine: BrainEngine, content = 'A useful bare-file observation.') {
+  await disposePersistenceConsumer(engine);
+  await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+  const id = `inference-${randomUUID().slice(0, 12)}`;
+  const root = join(home, id);
+  const relativePath = 'notes/2026-10-11 inferred note.md';
+  const file = join(root, relativePath);
+  mkdirSync(join(root, 'notes'), { recursive: true });
+  await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,\'{}\')', [id, root]);
+  writeFileSync(file, content);
+  const imported = await importFromFile(engine, file, relativePath, { sourceId: id, noEmbed: true });
+  expect(imported.status).toBe('imported');
+  const binding = await claimWorktree(engine, id, root);
+  const registration = await registerLocalWriter(engine, 'cli');
+  const snapshot = (await engine.readPageSnapshot(imported.slug, { sourceId: id }))!;
+  return { id, root, relativePath, file, binding, registration, snapshot };
+}
 const local = <T>(engine: BrainEngine, registration: LocalRegistration, fn: () => Promise<T>) => withVerifiedLocalRegistration(engine, registration, fn);
 const isolated = (fn: (engine: BrainEngine) => Promise<void>) => withEnv({ GBRAIN_HOME: home, OPENAI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined }, async () => {
   for (const engine of engines) await fn(engine);
@@ -109,6 +126,27 @@ test('repairs claimed enabled and disabled sources without topology changes and 
     expect((await engine.executeRaw('SELECT incarnation,last_commit,last_sync_at,config FROM sources WHERE id=$1', [f.id]))[0]).toEqual(sourceBefore);
     expect((await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1'))[0].enabled).toBe(enabled);
   }
+}), 120_000);
+
+test('page preparation accepts a bare imported file when inference matches the database', async () => isolated(async engine => {
+  const f = await inferredFileFixture(engine);
+  await local(engine, f.registration, async () => {
+    await expect(prepareFileTarget(engine, { source_id: f.id, slug: f.snapshot.page.slug, worktree_id: f.binding.worktree_id }, f.snapshot, 'next')).resolves.toBeDefined();
+    const preview = await runReconcilePreview(engine, { source_id: f.id, slug: f.snapshot.page.slug });
+    expect(preview).toMatchObject({ status: 'ready', preview: { result: { type: 'note', title: 'Inferred Note' } } });
+  });
+}), 120_000);
+
+test('page preparation still refuses a frontmatter edit after a real import', async () => isolated(async engine => {
+  const f = await inferredFileFixture(engine);
+  writeFileSync(f.file, '---\ntype: note\ntitle: Changed title\n---\nA useful bare-file observation.');
+  await expect(prepareFileTarget(engine, { source_id: f.id, slug: f.snapshot.page.slug, worktree_id: f.binding.worktree_id }, f.snapshot, 'next')).rejects.toMatchObject({ code: 'source_changed' });
+}), 120_000);
+
+test('page preparation still refuses a body edit in a bare imported file', async () => isolated(async engine => {
+  const f = await inferredFileFixture(engine);
+  writeFileSync(f.file, 'A useful bare-file observation.\n\nA local body edit.');
+  await expect(prepareFileTarget(engine, { source_id: f.id, slug: f.snapshot.page.slug, worktree_id: f.binding.worktree_id }, f.snapshot, 'next')).rejects.toMatchObject({ code: 'source_changed' });
 }), 120_000);
 
 test('same-ID replay precedes raw CAS, survives compaction and never allocates another backup', async () => isolated(async engine => {

@@ -423,6 +423,8 @@ const MATRIX: Record<CyclePhase, Entry> = {
     seed: async ({ engine, sourceId }) => put(engine, sourceId, 'notes/schema-example', page('note', 'Schema', 'A plain note.')),
   },
   purge: {
+    // R4: the fork's purge phase runs only with an explicit cutoff and consent.
+    cycle: { purgeConsent: { olderThanHours: 72 } },
     seed: async ({ engine, sourceId }) => {
       await put(engine, sourceId, 'notes/expired', page('note', 'Expired', 'Gone soon.'));
       const snapshot = await engine.readPageSnapshot('notes/expired', { sourceId });

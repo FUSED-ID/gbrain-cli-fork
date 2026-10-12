@@ -7,7 +7,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runSources } from '../src/commands/sources.ts';
@@ -52,6 +52,42 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}): {
 
   return { engine, calls, configSet };
 }
+
+describe('sources provision-private-routing', () => {
+  test('loads both policy files into sources.config and reports the entry count', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-provision-'));
+    const excluded = '## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `person-a` | Person A |\n| `person-b` | Person B |\n';
+    const filing = '# filing rules\n';
+    writeFileSync(join(dir, '_excluded-people.md'), excluded);
+    writeFileSync(join(dir, '_brain-filing-rules.md'), filing);
+    const { engine, calls } = makeStub({
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [{
+        id: 'lg-private', name: 'Private', local_path: dir, last_commit: null,
+        last_sync_at: null, config: '{}', created_at: new Date(),
+      }],
+    });
+    const lines: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => { lines.push(args.map(String).join(' ')); });
+    try {
+      await runSources(engine, ['provision-private-routing', 'lg-private', '--json']);
+    } finally {
+      logSpy.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+    const update = calls.find(call => call.sql.includes('UPDATE sources SET config'));
+    expect(update).toBeDefined();
+    const stored = JSON.parse(update!.params[0] as string);
+    expect(stored.private_routing).toEqual({
+      excluded_people_markdown: excluded,
+      filing_rules_markdown: filing,
+    });
+    expect(JSON.parse(lines[0])).toEqual({
+      source_id: 'lg-private',
+      excluded_entry_count: 2,
+      unresolved_identity_entry_count: 0,
+    });
+  });
+});
 
 // ── add ─────────────────────────────────────────────────────
 
@@ -272,7 +308,7 @@ describe('sources remove', () => {
     expect(code).toBe(2); // agent contract v1 A3: invalid input exits 2 (3 is confirmation_required)
   });
 
-  test('refuses without --yes', async () => {
+  test('refuses without explicit consent', async () => {
     const { engine } = makeStub({
       'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [
         { id: 'gstack', name: 'gstack', local_path: '/tmp/g', last_commit: null, last_sync_at: null, config: '{}', created_at: new Date() },
@@ -280,7 +316,7 @@ describe('sources remove', () => {
       'COUNT(*)::int AS n FROM pages': [{ n: 10 }],
     });
     const code = await withExitCapture(() => runSources(engine, ['remove', 'gstack']));
-    expect(code).toBe(5);
+    expect(code).toBe(2);
   });
 
   test('--dry-run reports but does not DELETE', async () => {

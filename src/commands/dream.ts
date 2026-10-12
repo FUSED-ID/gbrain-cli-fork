@@ -31,6 +31,7 @@ import {
   type CyclePhase,
   type CycleReport,
 } from '../core/cycle.ts';
+import { SOFT_DELETE_TTL_HOURS } from '../core/destructive-guard.ts';
 import { ALL_SOURCES, isResolverUserError, resolveImplicitDefaultSourceId, resolveSourceId } from '../core/source-resolver.ts';
 import { jsonGuardActive, jsonRequested, setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
 import { BUDGET_STOP_EXIT_CODE } from '../core/exit-codes.ts';
@@ -101,6 +102,7 @@ interface DreamArgs {
    * skillopt, drift) — a no-op for phases that always run when named directly.
    */
   once: boolean;
+  yesIMeanIt: boolean;
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -309,6 +311,7 @@ function parseArgs(args: string[]): DreamArgs {
     drain,
     windowSeconds,
     once,
+    yesIMeanIt: args.includes('--yes-i-mean-it'),
   };
 }
 
@@ -397,6 +400,7 @@ Options:
                       but skips the synthesis subagents; propose_takes,
                       grade_takes and calibration_profile are skipped.
                       "--dry-run" does NOT mean "zero LLM calls."
+  --yes-i-mean-it     Explicitly authorize the final purge phase.
   --json              Emit the CycleReport as JSON (agent-readable)
   --phase <name>      Run only the named phase(s). Repeatable — every named
                       phase runs, in canonical cycle order (#4493).
@@ -523,6 +527,11 @@ function printHuman(report: CycleReport) {
     if (skipLines.length > 0) {
       console.log('Skipped:');
       for (const line of skipLines) console.log(line);
+    }
+    const purgeSkip = report.phases.find((p) => p.phase === 'purge' && p.status === 'skipped');
+    if (purgeSkip) {
+      console.log('Skipped:');
+      console.log(`  - purge: ${purgeSkip.summary}`);
     }
     return;
   }
@@ -873,6 +882,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     // issue #2860: exactly one phase is guaranteed here when opts.once is
     // set (parseArgs enforces --once requires a single explicit --phase).
     onceForPhase: opts.once ? opts.phases[0]! : undefined,
+    ...(opts.yesIMeanIt ? { purgeConsent: { olderThanHours: SOFT_DELETE_TTL_HOURS } } : {}),
   });
 
   // Exit non-zero when the cycle failed overall or any phase failed (agent-first

@@ -90,7 +90,7 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
     // Verbatim copy: the source row is authoritative, so the copy carries
     // putPage's empty-overwrite escape hatch (a legitimately blank body must
     // land over a drifted non-empty target row on re-run).
-    expect(call.opts).toEqual({ sourceId: 'default', allowEmptyOverwrite: true });
+    expect(call.opts).toEqual({ sourceId: 'default', allowEmptyOverwrite: true, migrationWrite: true });
   });
 
   test('already-null / already-populated fields are left as-is (no double-mapping)', async () => {
@@ -366,7 +366,7 @@ describe('runMigrateEngine — per-page failures are surfaced, not swallowed (#3
 
       // --force on an empty target must NOT trust that stale manifest —
       // `real-page` must actually get copied, not skipped as "already done".
-      await runMigrateEngine(source, ['--to', 'pglite', '--path', targetDbPath, '--force']);
+      await runMigrateEngine(source, ['--to', 'pglite', '--path', targetDbPath, '--force', '--yes-i-mean-it']);
       expect(currentExitCode()).toBe(0);
 
       verifyEngine = new PGLiteEngine();

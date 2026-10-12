@@ -105,7 +105,8 @@ afterAll(async () => {
 beforeEach(async () => {
   await resetPgliteState(engine);
   await engine.setConfig('version', schemaVersion);
-  ownerJobId = (await new MinionQueue(engine).add('autopilot-global-maintenance', {})).id;
+  // R4: the fork protects this job name, so the fixture submits as the trusted local submitter.
+  ownerJobId = (await new MinionQueue(engine).add('autopilot-global-maintenance', {}, {}, { allowProtectedSubmit: true })).id;
   await engine.putPage('atoms/example', { title: 'Example', type: 'note', compiled_truth: 'A synthetic note.', timeline: '' });
   rmSync(corpusPath, { recursive: true, force: true });
   mkdirSync(corpusPath);

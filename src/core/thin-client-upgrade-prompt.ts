@@ -41,18 +41,18 @@ export interface BrainIdentityShape {
 
 /**
  * Validate a version string before handing it to `compareVersions`. Accepts
- * 3-segment or 4-segment dotted-numeric forms (digits only, no suffix). Anything
- * else fails closed.
+ * 3-segment or 4-segment dotted-numeric forms plus a local channel suffix.
+ * Comparisons use only the numeric release base.
  */
-function isValidSemverLike(v: string): boolean {
-  if (typeof v !== 'string' || v.length === 0) return false;
-  const parts = v.split('.');
-  if (parts.length < 3 || parts.length > 4) return false;
+function numericVersionBase(v: string, allowChannelSuffix = false): string | null {
+  if (typeof v !== 'string' || v.length === 0) return null;
+  const base = allowChannelSuffix ? v.replace(/^v/, '').split(/[-+]/, 1)[0] : v;
+  const parts = base.split('.');
+  if (parts.length < 3 || parts.length > 4) return null;
   for (const p of parts) {
-    if (p.length === 0) return false;
-    if (!/^\d+$/.test(p)) return false;
+    if (p.length === 0 || !/^\d+$/.test(p)) return null;
   }
-  return true;
+  return base;
 }
 
 /**
@@ -61,8 +61,18 @@ function isValidSemverLike(v: string): boolean {
  * so callers can fail closed (no prompt) rather than firing on garbage.
  */
 export function safeCompare(a: string, b: string): -1 | 0 | 1 | null {
-  if (!isValidSemverLike(a) || !isValidSemverLike(b)) return null;
-  return compareVersions(a, b);
+  const aa = numericVersionBase(a);
+  const bb = numericVersionBase(b);
+  if (!aa || !bb) return null;
+  return compareVersions(aa, bb);
+}
+
+/** Compare release versions while ignoring a local channel suffix. */
+export function safeCompareRelease(a: string, b: string): -1 | 0 | 1 | null {
+  const aa = numericVersionBase(a, true);
+  const bb = numericVersionBase(b, true);
+  if (!aa || !bb) return null;
+  return compareVersions(aa, bb);
 }
 
 /**
@@ -72,11 +82,27 @@ export function safeCompare(a: string, b: string): -1 | 0 | 1 | null {
  * minor/major drift only.
  */
 export function driftLevel(local: string, remote: string): 'major' | 'minor' | 'patch' | 'none' {
-  if (!isValidSemverLike(local) || !isValidSemverLike(remote)) return 'none';
-  const cmp = compareVersions(local, remote);
+  const localBase = numericVersionBase(local);
+  const remoteBase = numericVersionBase(remote);
+  if (!localBase || !remoteBase) return 'none';
+  const cmp = compareVersions(localBase, remoteBase);
   if (cmp >= 0) return 'none';
-  const la = local.split('.').map(n => parseInt(n, 10) || 0);
-  const ra = remote.split('.').map(n => parseInt(n, 10) || 0);
+  const la = localBase.split('.').map(n => parseInt(n, 10) || 0);
+  const ra = remoteBase.split('.').map(n => parseInt(n, 10) || 0);
+  if ((la[0] ?? 0) !== (ra[0] ?? 0)) return 'major';
+  if ((la[1] ?? 0) !== (ra[1] ?? 0)) return 'minor';
+  return 'patch';
+}
+
+/** Classify release drift while ignoring a local channel suffix. */
+export function driftLevelRelease(local: string, remote: string): 'major' | 'minor' | 'patch' | 'none' {
+  const localBase = numericVersionBase(local, true);
+  const remoteBase = numericVersionBase(remote, true);
+  if (!localBase || !remoteBase) return 'none';
+  const cmp = compareVersions(localBase, remoteBase);
+  if (cmp >= 0) return 'none';
+  const la = localBase.split('.').map(n => parseInt(n, 10) || 0);
+  const ra = remoteBase.split('.').map(n => parseInt(n, 10) || 0);
   if ((la[0] ?? 0) !== (ra[0] ?? 0)) return 'major';
   if ((la[1] ?? 0) !== (ra[1] ?? 0)) return 'minor';
   return 'patch';

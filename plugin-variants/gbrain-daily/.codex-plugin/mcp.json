@@ -72,6 +72,7 @@
         "PATH",
         "PERPLEXITY_API_KEY",
         "PPLX_API_KEY",
+        "SUPERGROK_BASE_URL",
         "TOGETHER_API_KEY",
         "TYPESAFE_API_KEY",
         "VOYAGE_API_KEY",

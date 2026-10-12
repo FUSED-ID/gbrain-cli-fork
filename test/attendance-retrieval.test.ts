@@ -917,11 +917,15 @@ describe('shared and filesystem canonical attendance grammar', () => {
     const targets = new Map([[meeting, 'meeting'], ['demo-example', 'person'], ['đemo-example', 'person']]);
     for (const body of ['Attendees: [[Đemo Example]]', 'See [[Đemo Example]]']) {
       const shared = await extractPageLinks(meeting, body, {}, 'meeting', resolver, { targetType: slug => targets.get(slug) });
-      expect(shared.candidates.map(row => row.targetSlug).sort()).toEqual(['demo-example', 'đemo-example']);
+      // The fork also emits same-directory bare-wikilink candidates (meetings/demo-example), unchecked for existence
+      // and dropped downstream; the ordinary expansion this test pins is the set that names an existing page.
+      expect(shared.candidates.map(row => row.targetSlug).filter(target => targets.has(target)).sort()).toEqual(['demo-example', 'đemo-example']);
       expect(shared.candidates.every(row => row.linkType === 'mentions' && !row.canonicalAttendance)).toBe(true);
       const fs = await extractLinksFromFile(`---\ntype: meeting\n---\n${body}`, `${meeting}.md`, new Set(targets.keys()), { pageTypes: targets });
-      expect(fs).toHaveLength(1);
-      expect(fs[0]).toMatchObject({ from_slug: meeting, to_slug: 'đemo-example', link_type: 'mentions' });
+      // Fork (293141b37): the FS path takes the DB bare-wikilink forms, so both slug grammars yield an edge, as on the DB path.
+      expect(fs).toHaveLength(2);
+      expect(fs.map(row => row.to_slug).sort()).toEqual(['demo-example', 'đemo-example']);
+      expect(fs.every(row => row.from_slug === meeting && row.link_type === 'mentions')).toBe(true);
     }
     targets.delete('demo-example');
     const body = 'Attendees: [[Đemo Example]]';

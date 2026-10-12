@@ -246,7 +246,7 @@ if [ -f "$STATE_FILE" ]; then
     case " $EMPLOYEES " in
       *" $st_slug:"*) ;;
       *) echo "STALE: '$st_slug' ($st_client) is no longer in the roster but its credentials still work." >&2
-         echo "       Revoke with: $GBRAIN auth revoke-client $st_client" >&2 ;;
+         echo "       Revoke with: $GBRAIN auth revoke-client $st_client --yes-i-mean-it" >&2 ;;
     esac
   done < "$STATE_FILE"
 fi

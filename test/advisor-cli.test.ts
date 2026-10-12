@@ -31,7 +31,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { runAdvisorCli } from '../src/commands/advisor.ts';
-import { LATEST_VERSION } from '../src/core/migrate.ts';
+import { FORK_VERSION_KEY, LATEST_VERSION } from '../src/core/migrate.ts';
 import { DEFAULT_EMBEDDING_MODEL } from '../src/core/ai/defaults.ts';
 import { getRecipe } from '../src/core/ai/recipes/index.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -71,6 +71,9 @@ function fakeEngine(opts: FakeEngineOpts = {}): BrainEngine {
   const engine = {
     getConfig: async (key: string): Promise<string | null> => {
       if (key === 'version') return opts.schemaVersion ?? String(LATEST_VERSION);
+      // Recorded fork ledger. A missing fork_version is pending on its own,
+      // which would turn a current upstream stamp into a critical finding.
+      if (key === FORK_VERSION_KEY) return '1';
       return null; // schema_pack → default resolution; everything else unset
     },
     executeRaw: async (sql: string): Promise<unknown[]> => {

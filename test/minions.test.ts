@@ -387,7 +387,7 @@ describe('MinionQueue: #1737 per-handler default timeout', () => {
   });
 
   test('autopilot-cycle + subagent also get the long default', async () => {
-    const cycle = await queue.add('autopilot-cycle', {});
+    const cycle = await queue.add('autopilot-cycle', {}, undefined, { allowProtectedSubmit: true });
     // subagent is a protected name → needs the trusted-submit flag (4th arg).
     const sub = await queue.add('subagent', {}, undefined, { allowProtectedSubmit: true });
     expect(cycle.timeout_ms).toBe(30 * 60 * 1000);

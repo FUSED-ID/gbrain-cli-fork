@@ -43,6 +43,7 @@ import { countStaleFactEmbeddings } from '../core/facts/embedding-identity.ts';
 import { authorizeMigrationBudget, assertMigrationLeases, ceilCents, MigrationBudgetRefusal, type MigrationBudgetRefusalDetails, type MigrationWorstCase } from '../core/embedding-migration-budget.ts';
 import { planMigrationWorstCase, MIGRATION_PROBE_TEXT, RERANKER_PROBE } from '../core/embedding-migration-worst-case.ts';
 import { withAIInvocationGuard } from '../core/ai/invocation-guard.ts';
+import { DESTRUCTIVE_HELP_REQUESTED, DestructiveConsentError, requireDestructiveConsent } from '../core/destructive-guard.ts';
 
 /**
  * Brain-wide migration lock (round-2 #4): serializes whole migrations so two
@@ -936,9 +937,15 @@ export async function runMigrateEmbeddings(
     if (code !== 0) for (const line of Object.values(EMBEDDING_MIGRATION_RECOVERY)) serr(`  Recovery: ${line}`);
     return (opts.exit ?? ((value: number) => process.exit(value)))(code);
   };
-  if (args.includes('--help') || args.includes('-h')) {
+  // R4, 2026-09-17. Help must print the REAL help. The first cut of this guard
+  // routed --help through requireDestructiveConsent with a two-line stub whose
+  // text said "Run gbrain migrate embeddings --help for the complete flag
+  // list", so --help told you to run --help and printHelp() below became dead
+  // code. The guard's job here is only to stop --help falling through to the
+  // executing path, which returning does. The help text itself stays local.
+  if (args.includes('--help') || args.includes('-h') || args.includes('help')) {
     printHelp();
-    exit(0);
+    return;
   }
   const flags = parseMigrateEmbeddingsFlags(args);
 
@@ -1028,6 +1035,34 @@ export async function runMigrateEmbeddings(
     }
     exit(0);
   }
+
+  let consent;
+  try {
+    consent = requireDestructiveConsent({
+      command: 'migrate embeddings',
+      scopeFlags: ['--to'],
+      // --pace-max-concurrency also has a space-separated form, so it needs to
+      // be a valueFlag as well as prefix-allowed, or its value token is read as
+      // a stray positional and refused.
+      valueFlags: ['--dim', '--reranker', '--batch-size', '--max-cost-usd', '--pace-max-concurrency'],
+      args,
+      usage: `Usage: gbrain migrate embeddings --to <provider:model> [flags]
+
+Re-embed the whole brain. --dry-run plans without changing it; executing requires
+--yes (the existing confirmation) or --yes-i-mean-it.`,
+      allowedFlags: ['--dry-run', '--json', '--no-embed', '--ignore-env-override', '--force-sunset-target', '--retarget', '--pace'],
+      allowedPrefixes: ['--pace'],
+      consentFlags: ['--yes', '--non-interactive'],
+      allowDryRun: true,
+    });
+  } catch (error) {
+    if (error instanceof DestructiveConsentError) {
+      serr(error.message);
+      exit(error.exitCode);
+    }
+    throw error;
+  }
+  if (consent === DESTRUCTIVE_HELP_REQUESTED) return;
 
   if (!flags.to) {
     serr('Missing --to <provider:model>. Example: gbrain migrate embeddings --to openai:text-embedding-3-small');

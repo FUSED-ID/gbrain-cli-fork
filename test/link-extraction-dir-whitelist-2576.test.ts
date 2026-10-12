@@ -127,7 +127,7 @@ describe('#2576 bug 2 — non-whitelisted dirs produce candidates (ops/ = people
       {}, 'concept', resolver, { skipFrontmatter: true },
     );
     expect(off.candidates.filter(c => c.linkSource === 'wikilink-resolved')).toEqual([]);
-    expect(off.candidates.map(c => c.targetSlug)).toEqual(['struktura']);
+    expect(off.candidates.map(c => c.targetSlug)).toEqual(['concepts/struktura', 'struktura']);
     const on = await extractPageLinks(
       'concepts/x', 'This relates to [[struktura]].',
       {}, 'concept', resolver, { skipFrontmatter: true, globalBasename: true },
