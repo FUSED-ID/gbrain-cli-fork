@@ -10,6 +10,14 @@ import { installFixtureChunks } from '../helpers/page-projection.ts';
 
 const model = 'openai:text-embedding-3-small';
 const vector = new Float32Array(8).fill(0.25);
+const syntheticWorldSourceConfig = {
+  federated: true,
+  facts_visibility: 'world',
+  private_routing: {
+    excluded_people_markdown: '## Family deny-list\n| slug | name |\n| `never-matches` | Never Matches |',
+    filing_rules_markdown: '## Filing rules\nFixture policy only.',
+  },
+};
 for (const kind of ['pglite', 'postgres'] as const) {
   const suite = kind === 'postgres' && !process.env.DATABASE_URL ? describe.skip : describe;
   suite(`migration wave prepared publication (${kind})`, () => {
@@ -28,7 +36,10 @@ for (const kind of ['pglite', 'postgres'] as const) {
         const sourceId = `synthetic-${order}`;
         const slug = 'synthetic-claim';
         const claim = `withdrawalsentinel ${order} synthetic claim`;
-        await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+        await engine.executeRaw(
+          `INSERT INTO sources(id,name,config) VALUES($1,$1,$2::jsonb)`,
+          [sourceId, JSON.stringify(syntheticWorldSourceConfig)],
+        );
         await engine.putPage(slug, { type: 'note', title: 'Synthetic race', compiled_truth: 'Safe retained prose', timeline: renderFactsTable([
           { rowNum: 1, claim, kind: 'fact', confidence: 1, visibility: 'world', notability: 'medium', active: true },
         ]) }, { sourceId });
