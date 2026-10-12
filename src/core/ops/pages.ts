@@ -15,7 +15,7 @@ import { clampSearchLimit, type BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
 import { decodeDeepResearchId, deepResearchPageUrl } from '../deep-research-id.ts';
 import { PageSnapshotAmbiguousError, type PageSnapshot } from '../page-state/types.ts';
-import { serializePageToMarkdown } from '../markdown.ts';
+import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { pageTrustForRead, projectFetchText, projectGetPage, readQuarantined } from './get-page-projection.ts';
 import { MIN_TRUST_PARAM } from '../eligibility/policy.ts';
 import { stampRowTrust } from '../eligibility/stamp.ts';
@@ -332,6 +332,15 @@ const put_page: Operation = {
         await suffixedSlugDryRun(ctx, sourceId, p.slug);
       }
       return { dry_run: true, action: 'put_page', slug: p.slug };
+    }
+    if (typeof p.slug === 'string' && typeof p.content === 'string') {
+      const parsed = parseMarkdown(p.content, p.slug);
+      await enforcePrivatePageWrite(ctx.engine, {
+        requestedSourceId: sourceId,
+        slug: p.slug,
+        entityType: parsed.type,
+        entityName: parsed.title,
+      });
     }
     return submitPageMutation(ctx, { operation: 'put_page', params: p }).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
   },

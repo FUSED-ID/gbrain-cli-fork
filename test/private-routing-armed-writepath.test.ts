@@ -158,7 +158,7 @@ describe('private routing armed guard at the put_page write path', () => {
     mkdirSync(join(policyDir, '_excluded-people.md'));
     writeFileSync(join(policyDir, '_brain-filing-rules.md'), '# filing rules\n');
 
-    await expect(executePutPage('people/arm-writepath-unreadable')).rejects.toThrow(/could not be read|storage_error|Publication failed/);
+    await expect(executePutPage('people/arm-writepath-unreadable')).rejects.toThrow(/could not be read|NOT ARMED|storage_error|Publication failed/);
   });
 
   test('throws when the Family deny-list heading is missing', async () => {
@@ -542,7 +542,7 @@ describe('private routing armed guard at the put_page write path', () => {
     await expect(putPage.handler(putContext(), {
       slug: 'people/peer-person',
       content: PERSON_CONTENT,
-    })).rejects.toThrow(/storage_error|repo_not_found|preflight|Publication failed/i);
+    })).rejects.toThrow(/private-write routing is ARMED|storage_error|repo_not_found|preflight|Publication failed/i);
     await expect(engine.getPage('people/peer-person', { sourceId: 'lg-private' })).resolves.toBeNull();
   });
 

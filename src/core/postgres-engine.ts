@@ -2453,6 +2453,8 @@ export class PostgresEngine implements BrainEngine {
     versionId: number,
     opts?: { sourceId?: string },
   ): Promise<void> {
+    const sourceId = opts?.sourceId ?? 'default';
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
     return pagesImpl.revertToVersion(this.engineSql, slug, versionId, opts);
   }
 

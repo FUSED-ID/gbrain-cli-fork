@@ -90,6 +90,8 @@ import {
 import { embed, getEmbeddingDimensions, getEmbeddingModel, isAvailable } from '../ai/gateway.ts';
 import { isAborted } from '../abort-check.ts';
 import { parseMarkdown } from '../markdown.ts';
+import { resolveSourceVisibility } from '../facts/visibility.ts';
+import { enforcePrivateFactWrite } from '../private-source-routing.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { acquirePageLock } from '../page-lock.ts';
 import {
@@ -400,8 +402,15 @@ async function planFenceReconcile(db: BrainEngine, page: { compiled_truth: strin
   const pageEffectiveDate = page.effective_date ? new Date(page.effective_date) : null;
   // #1781: duplicate ACTIVE rows (same claim and source) index once.
   const duplicates = duplicateActiveFenceRows(parsed.facts);
-  const extracted = extractFactsFromFenceText(parsed.facts, slug, sourceId, { pageEffectiveDate })
+  const extractedRaw = extractFactsFromFenceText(parsed.facts, slug, sourceId, { pageEffectiveDate })
     .filter(f => !duplicates.has(f.row_num));
+  // Visibility is source policy, not merely a fence-cell preference. Clamp it
+  // before planning so a non-federated private source does not look dirty on
+  // every run after its world cell is overridden at write time.
+  const extracted = await Promise.all(extractedRaw.map(async f => ({
+    ...f,
+    visibility: await resolveSourceVisibility(db, sourceId, f.visibility),
+  })));
   // Reconcile by row number, the fence's own unique identity. A DB row whose
   // (row_num, claim) is still in the fence keeps its id and has its other
   // cells updated in place; a row whose number disappeared or whose claim
@@ -467,6 +476,8 @@ async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: stri
     );
   }
   for (const f of plan.updates) {
+    const visibility = await resolveSourceVisibility(tx, sourceId, f.visibility);
+    await enforcePrivateFactWrite(tx, { sourceId, pageSlug: slug, entitySlug: f.entity_slug, visibility });
     await tx.executeRaw(
       `UPDATE facts SET kind = $3, visibility = $4, notability = $5, context = $6,
           valid_from = COALESCE($7::timestamptz, valid_from),
@@ -475,7 +486,7 @@ async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: stri
           source = $11, confidence = $12,
           claim_metric = $13, claim_value = $14, claim_unit = $15, claim_period = $16
         WHERE id = $1 AND source_id = $2`,
-      [plan.matched.get(f.row_num)!.id, sourceId, f.kind ?? 'fact', f.visibility ?? 'private', f.notability ?? 'medium',
+      [plan.matched.get(f.row_num)!.id, sourceId, f.kind ?? 'fact', visibility, f.notability ?? 'medium',
         f.context ?? null, f.valid_from?.toISOString() ?? null, f.expired_at == null,
         f.valid_until?.toISOString() ?? null, f.expired_at?.toISOString() ?? null, f.source, f.confidence ?? 1.0,
         f.claim_metric ?? null, f.claim_value ?? null, f.claim_unit ?? null, f.claim_period ?? null],
