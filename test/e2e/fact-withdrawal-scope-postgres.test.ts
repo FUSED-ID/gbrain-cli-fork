@@ -19,7 +19,7 @@ describePg('Postgres fact-withdrawal scope', () => {
     const sourceId = 'withdrawal-postgres-scale';
     const claim = 'indexed withdrawal needle sentinel';
     try {
-      await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+      await engine.executeRaw('INSERT INTO sources(id,name,config) VALUES($1,$1,$2::jsonb)', [sourceId, JSON.stringify({ federated: true })]);
       await engine.executeRaw(`ALTER TABLE pages DISABLE TRIGGER USER`);
       await engine.executeRaw(`INSERT INTO pages(source_id,slug,type,title,compiled_truth,timeline,frontmatter,search_vector)
         SELECT $1,'notes/scale-'||n,'note','Scale '||n,

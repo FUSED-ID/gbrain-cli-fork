@@ -58,7 +58,7 @@ for (const backend of testBackends()) describe(`bounded withdrawal ${backend}`, 
   async function fixture() {
     const sourceId = `withdrawal-${randomUUID()}`, root = mkdtempSync(join(tmpdir(), 'gbrain-withdrawal-bounded-'));
     roots.push(root);
-    await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::jsonb)', [sourceId, root, JSON.stringify({ federated: true })]);
     const binding = await claimWorktree(engine, sourceId, root, hostId);
     for (const [slug, body] of [['affected', fence('uses A | B')], ['unrelated', fence('a different claim')], ['private', fence('uses A | B', 'private')]]) {
       await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: body }, { sourceId });
@@ -185,7 +185,7 @@ for (const backend of testBackends()) describe(`bounded withdrawal ${backend}`, 
   test('both prepared writer orderings retain committed withdrawal intent including a new page', async () => {
     for (const first of ['writer', 'withdrawal']) {
       const sourceId = `ordering-${randomUUID()}`;
-      await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+    await engine.executeRaw('INSERT INTO sources(id,name,config) VALUES($1,$1,$2::jsonb)', [sourceId, JSON.stringify({ federated: true })]);
       const fact = await engine.insertFact({ fact: 'ordering sentinel', visibility: 'world', source: 'synthetic' }, { source_id: sourceId });
       let ready: PreparedContentImport | undefined;
       await importFromContent(engine, 'new-page', `---\ntitle: Ordering\ntype: note\n---\n${fence('ordering sentinel')}`, {
@@ -207,7 +207,7 @@ for (const backend of testBackends()) describe(`bounded withdrawal ${backend}`, 
 
   test('an over-capacity target set refuses atomically instead of partially withdrawing', async () => {
     const sourceId = `capacity-${randomUUID()}`;
-    await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+    await engine.executeRaw('INSERT INTO sources(id,name,config) VALUES($1,$1,$2::jsonb)', [sourceId, JSON.stringify({ federated: true })]);
     await engine.executeRaw(`INSERT INTO pages(source_id,slug,type,title,compiled_truth,timeline,frontmatter)
       SELECT $1,'page-'||n,'note','Synthetic capacity',$2,'','{}'::jsonb FROM generate_series(1,257) n`, [sourceId, fence('capacity sentinel')]);
     const fact = await engine.insertFact({ fact: 'capacity sentinel', source: 'synthetic', visibility: 'world' }, { source_id: sourceId });
@@ -311,7 +311,7 @@ for (const backend of testBackends()) describe(`bounded withdrawal ${backend}`, 
 
   test('a claim whose affected set exceeds the bound refuses loudly with the matched count, even in a small source', async () => {
     const sourceId = `capacity-report-${randomUUID()}`;
-    await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+      await engine.executeRaw('INSERT INTO sources(id,name,config) VALUES($1,$1,$2::jsonb)', [sourceId, JSON.stringify({ federated: true })]);
     try {
       await engine.executeRaw(`INSERT INTO pages(source_id,slug,type,title,compiled_truth,timeline,frontmatter)
         SELECT $1,'page-'||lpad(n::text,3,'0'),'note','Synthetic capacity',$2,'','{}'::jsonb FROM generate_series(1,300) n`, [sourceId, fence('widely repeated sentinel')]);

@@ -61,6 +61,7 @@ import {
   extractFrontmatterLinks, isGlobalBasenameEnabled, isCrossSourceLinksEnabled,
   WIKILINK_BASENAME_LINK_TYPE,
   buildBasenameIndex, queryBasenameIndex, stripCodeBlocks, normalizeBasename,
+  bareWikilinkForms,
   parseInlineCitationTimelineEntries,
   type UnresolvedFrontmatterRef, type LinkCandidate, type LinkExtractionPack,
 } from '../core/link-extraction.ts';
@@ -548,23 +549,44 @@ export async function extractLinksFromFile(
   const attendanceRanges = attendanceEvidenceRanges(content);
   const statedType = statedRelationTypes(content, { ...opts?.lineGrammar, declaredVerbs: pack?.link_types.map(lt => lt.name) });
 
-  for (const { name, relTarget, index } of extractMarkdownLinks(scanContent, true)) {
+  for (const { name, relTarget, index, wikilink } of extractMarkdownLinks(scanContent, true)) {
     const resolvedSlugs = resolveSlugAll(fileDir, relTarget, allSlugs, { globalBasename });
-    if (resolvedSlugs.length === 0) continue;
+    // Bare wikilinks also take the DB-path forms (same-directory, then
+    // root-exact, then hyphen-split). Ancestor-walk hits stay as they are.
+    // These only add a target the walk missed, and only when that slug is
+    // already in allSlugs, so a dangling link is still dropped.
+    const bareExtras: string[] = [];
+    if (wikilink) {
+      const targetNoExt = relTarget.endsWith('.md') ? relTarget.slice(0, -3) : relTarget;
+      if (targetNoExt && !targetNoExt.includes('/')) {
+        const forms = bareWikilinkForms(slug, targetNoExt);
+        const seen = new Set(resolvedSlugs);
+        for (const target of [...forms.direct, ...forms.hyphenSplits]) {
+          if (seen.has(target) || !allSlugs.has(target)) continue;
+          seen.add(target);
+          bareExtras.push(target);
+        }
+      }
+    }
+    if (resolvedSlugs.length === 0 && bareExtras.length === 0) continue;
     // Single hit on the ancestor path → emit one edge with the inferred
     // verb type. Multiple hits (only possible when globalBasename is on
     // AND ancestor walk missed) → emit one edge per match, all tagged
     // `wikilink_basename` so users can audit via `gbrain graph-query
-    // <slug> --type wikilink_basename`.
+    // <slug> --type wikilink_basename`. Extras from the DB bare forms are
+    // direct edges, not basename edges.
     const isBasename = resolvedSlugs.length > 1
       || (globalBasename && resolvedSlugs.length === 1
           && resolveSlug(fileDir, relTarget, allSlugs) === null);
-    for (const resolved of resolvedSlugs) {
+    const extraSet = new Set(bareExtras);
+    const allTargets = [...resolvedSlugs, ...bareExtras];
+    for (const resolved of allTargets) {
       const target = canonical(resolved);
+      const asBasename = isBasename && !extraSet.has(resolved);
       // Issue #972 (codex [P2]): drop a basename self-loop ([[own-tail]] on
       // its own page resolving back to itself).
-      if (isBasename && target === slug) continue;
-      const context = isBasename
+      if (asBasename && target === slug) continue;
+      const context = asBasename
         ? `wikilink (basename match): [${name}]`
         : `markdown link: [${name}]`;
       const targetType = opts?.pageTypes?.get(target) ?? parseMarkdown('', `${target}.md`, { activePack }).type;
@@ -580,7 +602,7 @@ export async function extractLinksFromFile(
         .map(form => join(dirname(target), form)).filter(candidate => allSlugs.has(candidate)
           && (opts?.pageTypes?.get(candidate) ?? parseMarkdown('', `${candidate}.md`, { activePack }).type) === 'person')).size > 1;
       const canonicalAttendance = !inferred && guessedPageType === 'meeting' && targetType === 'person'
-        && resolvedSlugs.length === 1 && !ambiguousAttendance
+        && allTargets.length === 1 && !ambiguousAttendance
         && !(packOwnsAttendance && pack?.link_types.some(lt => lt.name === 'attended' && (lt.inference?.page_type || lt.inference?.target_type)))
         && hasAttendanceEvidence(attendanceRanges, position);
       if (!inferred) {
@@ -593,13 +615,13 @@ export async function extractLinksFromFile(
       const link: ExtractedLink = {
         from_slug: slug,
         to_slug: target,
-        link_type: isBasename && !canonicalAttendance
+        link_type: asBasename && !canonicalAttendance
           ? WIKILINK_BASENAME_LINK_TYPE
           : inferred,
         context: canonicalAttendance ? evidence : context,
         // Issue #972: tag basename edges so the FS path matches DB/put_page
         // provenance and migration v112's widened CHECK is exercised here too.
-        link_source: isBasename ? 'wikilink-resolved' : canonicalAttendance ? 'markdown' : undefined,
+        link_source: asBasename ? 'wikilink-resolved' : canonicalAttendance ? 'markdown' : undefined,
       };
       links.push(canonicalAttendance ? orientCanonicalAttendance(link) : link);
     }

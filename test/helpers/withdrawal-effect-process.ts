@@ -22,7 +22,7 @@ const hostId = localHostId(), sourceId = 'synthetic-withdrawal-crash';
 try {
   if (mode === 'seed') {
     await engine.initSchema(); await registerLocalWriter(engine, 'cli');
-    await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::jsonb)', [sourceId, root, JSON.stringify({ federated: true })]);
     const binding = await claimWorktree(engine, sourceId, root, hostId);
     for (const slug of ['affected', 'untouched']) {
       const body = slug === 'affected' ? renderFactsTable([{ rowNum: 1, claim: 'synthetic crash claim', kind: 'fact', confidence: 1,
