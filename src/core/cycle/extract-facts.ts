@@ -77,6 +77,8 @@ import {
 import { embed, getEmbeddingDimensions, getEmbeddingModel, isAvailable } from '../ai/gateway.ts';
 import { isAborted } from '../abort-check.ts';
 import { parseMarkdown } from '../markdown.ts';
+import { resolveSourceVisibility } from '../facts/visibility.ts';
+import { enforcePrivateFactWrite } from '../private-source-routing.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { acquirePageLock } from '../page-lock.ts';
 
@@ -715,13 +717,20 @@ export async function runExtractFacts(
     // struck history row never collapses with an active row that carries the
     // same text, so a claim that reverts to an earlier value stays active.
     const activeKeys = new Set<string>();
-    const extracted = extractFactsFromFenceText(parsed.facts, slug, sourceId, { pageEffectiveDate }).filter(f => {
+    const extractedRaw = extractFactsFromFenceText(parsed.facts, slug, sourceId, { pageEffectiveDate }).filter(f => {
       if (f.expired_at != null) return true;
       const key = `${f.fact}\u0000${f.source}`;
       if (activeKeys.has(key)) return false;
       activeKeys.add(key);
       return true;
     });
+    // Clamp fence visibility to the source policy before drift comparison;
+    // otherwise a private source repeatedly plans a world-cell update after
+    // the write has correctly been stored as private.
+    const extracted = await Promise.all(extractedRaw.map(async f => ({
+      ...f,
+      visibility: await resolveSourceVisibility(engine, sourceId, f.visibility),
+    })));
 
     if (opts.dryRun) return 'next';
 
@@ -834,6 +843,8 @@ export async function runExtractFacts(
             );
           }
           for (const f of updates) {
+            const visibility = await resolveSourceVisibility(tx, sourceId, f.visibility);
+            await enforcePrivateFactWrite(tx, { sourceId, pageSlug: slug, entitySlug: f.entity_slug, visibility });
             await tx.executeRaw(
               `UPDATE facts SET kind = $3, visibility = $4, notability = $5, context = $6,
                   valid_from = COALESCE($7::timestamptz, valid_from),
@@ -842,7 +853,7 @@ export async function runExtractFacts(
                   source = $11, confidence = $12,
                   claim_metric = $13, claim_value = $14, claim_unit = $15, claim_period = $16
                 WHERE id = $1 AND source_id = $2`,
-              [matched.get(f.row_num)!.id, sourceId, f.kind ?? 'fact', f.visibility ?? 'private', f.notability ?? 'medium',
+              [matched.get(f.row_num)!.id, sourceId, f.kind ?? 'fact', visibility, f.notability ?? 'medium',
                 f.context ?? null, f.valid_from?.toISOString() ?? null, f.expired_at == null,
                 f.valid_until?.toISOString() ?? null, f.expired_at?.toISOString() ?? null, f.source, f.confidence ?? 1.0,
                 f.claim_metric ?? null, f.claim_value ?? null, f.claim_unit ?? null, f.claim_period ?? null],
