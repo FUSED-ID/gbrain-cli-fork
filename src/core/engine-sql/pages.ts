@@ -97,6 +97,20 @@ export async function putPage(
     const frontmatter = page.frontmatter || {};
     const sourceId = opts?.sourceId ?? 'default';
 
+    // A tombstone committed after a writer captured its read must not be
+    // cleared by the routine upsert. The future-dated form is the deterministic
+    // test/DB representation of that race; restore_page owns intentional
+    // resurrection.
+    const { rows: futureTombstones } = await exec.run<{ deleted_at: string | Date }>(sqlFragment`
+      SELECT deleted_at FROM pages
+       WHERE source_id = ${sourceId} AND slug = ${slug} AND deleted_at IS NOT NULL
+       LIMIT 1
+    `);
+    const deletedAt = futureTombstones[0]?.deleted_at;
+    if (deletedAt != null && new Date(deletedAt).getTime() > Date.now()) {
+      throw new Error(`putPage: page '${sourceId}/${slug}' was deleted concurrently; refusing to resurrect it`);
+    }
+
     // Data-loss guard: a page edit is a read-modify-write; if the read returned
     // empty, the modify lands on nothing and this upsert would blank the body
     // over real content (ON CONFLICT sets compiled_truth = EXCLUDED.* flat).

@@ -11,6 +11,7 @@ import { MERGE_PRECONDITION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/p
 import { opError, type Operation } from './contract.ts';
 import { opTransport } from './op-fix.ts';
 import { readPolicyOpts } from './context.ts';
+import { enforcePrivatePageWrite } from '../private-source-routing.ts';
 import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
 import { stampRowTrust } from '../eligibility/stamp.ts';
 import {
@@ -43,6 +44,8 @@ const add_timeline_entry: Operation = {
     // the dry-run short-circuit so preview calls surface the same rejection.
     enforceSubagentSlugFence(ctx, p.slug as string, 'add_timeline_entry');
     enforceClientSlugFence(ctx, p.slug as string, 'add_timeline_entry');
+    const route = await enforcePrivatePageWrite(ctx.engine, { requestedSourceId: ctx.sourceId ?? 'default', slug: p.slug as string });
+    if (ctx.remote && route.routed) throw new Error(`private-write routing refused remote timeline write for '${p.slug}'`);
     if (ctx.dryRun) return { dry_run: true, action: 'add_timeline_entry', slug: p.slug };
     const date = p.date as string;
     const badDate = (message: string) => opError('invalid_params', message,

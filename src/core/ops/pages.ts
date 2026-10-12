@@ -31,6 +31,7 @@ import { OperationError, opError, type Operation, type OperationContext } from '
 import { invalidParam, readFix } from './op-fix.ts';
 import { isDatetimeInputError } from '../utils.ts';
 import { rethrowNamingRevisionSource } from './put-page-revision-source.ts';
+import { enforcePrivatePageWrite } from '../private-source-routing.ts';
 import {
   assertExplicitSourceLive,
   enforceSubagentSlugFence,
@@ -422,6 +423,8 @@ const restore_page: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     const sourceId = pageMutationSource(ctx, p, 'restore_page');
+    const route = await enforcePrivatePageWrite(ctx.engine, { requestedSourceId: sourceId, slug: p.slug as string });
+    if (ctx.remote && route.routed) throw new Error(`private-write routing refused remote restore for '${p.slug}'`);
     if (ctx.dryRun) {
       if (typeof p.slug === 'string') {
         await validateMutationSlug(ctx, 'restore_page', p.slug, sourceId);

@@ -64,9 +64,24 @@ export async function resolveVisibilityParam(
 
 /**
  * Per-source backstop for the fork's privacy contract. A world fact is only
- * durable when the source is explicitly federated and opts into world facts.
- * Missing or malformed source state fails closed to private.
+ * durable when the source is explicitly federated. Missing or malformed source
+ * state fails closed to private.
  */
+const clampWarnedOnce = new Set<string>();
+
+function warnVisibilityClamp(
+  sourceId: string,
+  requested: FactVisibility,
+  reason: 'source_not_federated' | 'source_not_found' | 'resolution_failed',
+): void {
+  const key = `visibility-clamp:${sourceId}:${reason}`;
+  if (clampWarnedOnce.has(key)) return;
+  clampWarnedOnce.add(key);
+  console.error(
+    `[facts:visibility] explicit visibility '${requested}' was OVERRIDDEN to 'private' for source '${sourceId}' (${reason}).`,
+  );
+}
+
 export async function resolveSourceVisibility(
   engine: BrainEngine,
   sourceId: string,
@@ -74,14 +89,30 @@ export async function resolveSourceVisibility(
 ): Promise<FactVisibility> {
   try {
     const source = (await engine.listAllSources({ includeArchived: true })).find(row => row.id === sourceId);
-    if (!source) return 'private';
+    if (!source) {
+      if (requested) warnVisibilityClamp(sourceId, requested, 'source_not_found');
+      return 'private';
+    }
     const config = parseSourceConfig(source.config);
-    if (requested === 'private') return 'private';
-    if (requested === 'world') return config.federated === true && config.facts_visibility === 'world' ? 'world' : 'private';
+    const federated = config.federated === true;
+    const policy = config.facts_visibility;
+    if (requested) {
+      if (requested === 'world' && !federated) {
+        warnVisibilityClamp(sourceId, requested, 'source_not_federated');
+        return 'private';
+      }
+      return requested;
+    }
     if (config.facts_visibility === 'private') return 'private';
-    if (config.facts_visibility === 'world') return config.federated === true ? 'world' : 'private';
+    if (policy === 'world') return federated ? 'world' : 'private';
     return resolveDefaultVisibility(engine);
   } catch {
+    if (requested) warnVisibilityClamp(sourceId, requested, 'resolution_failed');
     return 'private';
   }
+}
+
+/** Test seam for the once-per-process warning contract. */
+export function __resetVisibilityClampWarnings(): void {
+  clampWarnedOnce.clear();
 }

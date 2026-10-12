@@ -865,6 +865,7 @@ export class PostgresEngine implements BrainEngine {
     timeline: string,
     contentHash: string,
   ): Promise<void> {
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug, content: compiledTruth });
     return pagesImpl.refreshPageBody(this.engineSql, slug, sourceId, compiledTruth, timeline, contentHash);
   }
 
@@ -1792,6 +1793,8 @@ export class PostgresEngine implements BrainEngine {
     entry: TimelineInput,
     opts?: { skipExistenceCheck?: boolean; sourceId?: string },
   ): Promise<boolean> {
+    const sourceId = opts?.sourceId ?? 'default';
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
     return timelineImpl.addTimelineEntry(this.engineSql, slug, entry, opts);
   }
 
@@ -1827,11 +1830,17 @@ export class PostgresEngine implements BrainEngine {
   async mergeOntologyFact(obs: OntologyObservationInput): Promise<OntologyMergeResult> {
     const sql = this.sql;
     const sourceId = obs.sourceId ?? 'default';
+    await enforcePrivateFactWrite(this, {
+      sourceId,
+      pageSlug: obs.entitySlug,
+      entitySlug: obs.entitySlug,
+      visibility: obs.visibility ?? 'private',
+    });
     const dimension = normalizeDimension(obs.dimension);
     const vh = valueHash(obs.value);
     const conf = obs.confidence ?? 0.7;
     const status = obs.status ?? (isNovelDimension(dimension) ? 'quarantined' : 'active');
-    const visibility = obs.visibility ?? 'private';
+    const visibility = await resolveSourceVisibility(this, sourceId, obs.visibility);
     const validFrom = obs.validFrom ?? null;
     const validUntil = obs.validTo ?? null;
     const factText = `${dimension}: ${obs.value}`;
@@ -1849,6 +1858,12 @@ export class PostgresEngine implements BrainEngine {
     const current = cur[0];
 
     if (current && current.value_hash === vh && !isBackdatedObservation(validFrom, current.valid_from)) {
+      await enforcePrivateFactWrite(this, {
+        sourceId,
+        pageSlug: obs.entitySlug,
+        entitySlug: obs.entitySlug,
+        visibility,
+      });
       // Same value → corroboration, or noop when this provenance already
       // observed the value during the current stint.
       const seen = await sql`
@@ -1884,6 +1899,12 @@ export class PostgresEngine implements BrainEngine {
 
     let supersededId: number | null = null;
     if (current && status === 'active') {
+      await enforcePrivateFactWrite(this, {
+        sourceId,
+        pageSlug: obs.entitySlug,
+        entitySlug: obs.entitySlug,
+        visibility,
+      });
       const forward = validFrom == null || current.valid_from == null
         || new Date(validFrom).getTime() >= new Date(current.valid_from).getTime();
       if (forward) {
@@ -2418,7 +2439,9 @@ export class PostgresEngine implements BrainEngine {
 
   // Versions
   async createVersion(slug: string, opts?: { sourceId?: string; preimage?: PageSnapshot }): Promise<PageVersion> {
-    return createPageVersion(this, slug, opts?.sourceId ?? 'default', opts?.preimage);
+    const sourceId = opts?.sourceId ?? 'default';
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
+    return createPageVersion(this, slug, sourceId, opts?.preimage);
   }
 
   async getVersions<B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>): Promise<PageVersionRows<B>> {

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   enforcePrivatePageWrite,
+  assertPrivateRoutingArmed,
   parseExcludedPeople,
   parseUnresolvedIdentity,
   resolvePrivateWriteSource,
@@ -115,5 +116,51 @@ describe('fork private-source routing guarantees on v0.60.174', () => {
     );
     const privateRows = await realEngine.executeRaw<{ visibility: string }>('SELECT visibility FROM facts WHERE id = $1', [privateInserted.id]);
     expect(privateRows[0]?.visibility).toBe('private');
+  });
+});
+
+describe('private policy disk/DB consistency', () => {
+  function mismatchedEngine(dir: string) {
+    return {
+      async listAllSources() {
+        return [
+          { id: 'default', name: 'Default', local_path: null, config: { federated: true, facts_visibility: 'world' } },
+          { id: 'lg-private', name: 'Private', local_path: dir, config: {
+            private_routing: {
+              excluded_people_markdown: '## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `database-only` | Database Only |\n',
+              filing_rules_markdown: filing,
+            },
+          } },
+        ];
+      },
+      async getConfig() { return null; },
+      async getPage() { return null; },
+    } as any;
+  }
+
+  test('refuses to arm when database and on-disk policy documents differ', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-private-routing-mismatch-'));
+    writeFileSync(join(dir, '_excluded-people.md'), excluded);
+    writeFileSync(join(dir, '_brain-filing-rules.md'), filing);
+    await expect(assertPrivateRoutingArmed(mismatchedEngine(dir))).rejects.toThrow(/mismatch|on-disk/i);
+  });
+
+  test('warns and disables private routing when policy content mismatches', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-private-routing-mismatch-warning-'));
+    writeFileSync(join(dir, '_excluded-people.md'), excluded);
+    writeFileSync(join(dir, '_brain-filing-rules.md'), filing);
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
+    try {
+      const route = await resolvePrivateWriteSource(mismatchedEngine(dir), {
+        requestedSourceId: 'default', slug: 'people/mismatch-warning', entityType: 'person',
+      });
+      expect(route.sourceId).toBe('default');
+      expect(route.routed).toBe(false);
+    } finally {
+      console.warn = originalWarn;
+    }
+    expect(warnings.join('\n')).toMatch(/policy content mismatch.*lg-private/i);
   });
 });

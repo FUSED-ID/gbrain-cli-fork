@@ -17,6 +17,7 @@ import type { Operation, OperationContext } from './contract.ts';
 import { enforceClientSlugFence, sourceScopeOpts } from './context.ts';
 import { VERSION } from '../../version.ts';
 import { resolveActiveEmbeddingColumnFromEngine } from '../search/embedding-column.ts';
+import { enforcePrivatePageWrite } from '../private-source-routing.ts';
 import { memoizedHealth } from '../health-memo.ts';
 
 // --- Admin ---
@@ -234,7 +235,9 @@ const revert_version: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     const { pageMutationSource, submitPageMutation } = await import('../persistence/page-mutations.ts');
-    pageMutationSource(ctx, p, 'revert_version');
+    const sourceId = pageMutationSource(ctx, p, 'revert_version');
+    const route = await enforcePrivatePageWrite(ctx.engine, { requestedSourceId: sourceId, slug: p.slug as string });
+    if (ctx.remote && route.routed) throw new Error(`private-write routing refused remote revert for '${p.slug}'`);
     enforceClientSlugFence(ctx, p.slug as string, 'revert_version');
     if (ctx.dryRun) return { dry_run: true, action: 'revert_version', slug: p.slug, version_id: p.version_id };
     return submitPageMutation(ctx, { operation: 'revert_version', params: p });
