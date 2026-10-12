@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { formatResult } from '../src/cli.ts';
+import { formatResult } from '../src/cli/main.ts';
 
 /**
  * `gbrain timeline <slug> --json` accepted `--json` and still printed the

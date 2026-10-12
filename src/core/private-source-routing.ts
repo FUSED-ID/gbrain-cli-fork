@@ -8,6 +8,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from './engine.ts';
+import { gbrainPath } from './config.ts';
 import { parseSourceConfig } from './sources-load.ts';
 import { isPersonSlug } from './slug-namespace.ts';
 
@@ -113,18 +114,36 @@ function matchesEntries(entries: PolicyEntry[], input: PrivateWriteRouteInput): 
 
 function collisionAllowlistPath(): string {
   return process.env[ALLOWLIST_ENV]?.trim()
-    || join(process.env.GBRAIN_HOME?.trim() || join(process.env.HOME || '', '.gbrain'), 'privacy-allowlist.tsv');
+    || gbrainPath('privacy-allowlist.tsv');
 }
 
-function isAllowlistedCollision(requestedSourceId: string, slug: string): boolean {
+export function isAllowlistedCollision(requestedSourceId: string, slug: string): boolean {
   if (requestedSourceId !== DEFAULT_SOURCE_ID) return false;
   try {
     if (!existsSync(collisionAllowlistPath())) return false;
     return readFileSync(collisionAllowlistPath(), 'utf8').split(/\r?\n/).some(line => {
       const trimmed = line.trim();
-      return trimmed.startsWith('collision|') && trimmed.slice('collision|'.length).trim() === slug;
+      return trimmed.startsWith('collision|') && trimmed.slice('collision|'.length).trim() !== ''
+        && trimmed.slice('collision|'.length).trim() === slug;
     });
   } catch { return false; }
+}
+
+/**
+ * Return whether a live page with this exact slug exists in one source.
+ * The default getPage contract excludes soft-deleted rows, so a tombstone
+ * does not count as existing and cannot re-admit a purged leak.
+ */
+export async function hasLivePageInSource(
+  engine: BrainEngine,
+  slug: string,
+  sourceId: string,
+): Promise<boolean> {
+  try {
+    return (await engine.getPage(slug, { sourceId })) !== null;
+  } catch {
+    return false;
+  }
 }
 
 function databasePolicyFromSource(source: { config: unknown }): PolicyDocuments | null {
@@ -161,7 +180,7 @@ function policyFromSource(
       const message = `[private-routing] policy content mismatch for private source '${source.id ?? PRIVATE_SOURCE_ID}'; `
         + 'database-held and on-disk policy documents differ, so private routing is disabled.';
       if (opts.onMismatch === 'throw') {
-        throw new Error(`${message} Refusing to arm until both copies are identical.`);
+        throw new Error(`${message} Database-held and on-disk policy documents mismatches detected. Refusing to arm until both copies are identical.`);
       }
       const key = `${source.id ?? PRIVATE_SOURCE_ID}:${source.local_path}`;
       if (!mismatchWarnings.has(key)) {
@@ -229,7 +248,10 @@ export async function assertPrivateRoutingArmed(engine: BrainEngine): Promise<{ 
   }
   const excluded = policy ? parseExcludedPeople(policy.excludedPeople) : [];
   if (!source || !policy || excluded.length === 0) {
-    throw new Error(`private-write routing is NOT ARMED: ${PRIVATE_SOURCE_ID} must carry ${EXCLUDED_FILE} with a non-empty Family deny-list and ${FILING_FILE}.`);
+    if (source && policy && excluded.length === 0) {
+      throw new Error(`private-write routing is NOT ARMED: ZERO deny-list entries in ${EXCLUDED_FILE}; Refusing to import until the Family deny-list is restored.`);
+    }
+    throw new Error(`private-write routing is NOT ARMED: ${PRIVATE_SOURCE_ID} must carry ${EXCLUDED_FILE} with a non-empty Family deny-list and ${FILING_FILE}. Refusing to import.`);
   }
   return {
     privateSourceId: source.id,
@@ -324,4 +346,5 @@ function matchesExcludedPeople(source: { config?: unknown; local_path: string | 
 
 export const __privateSourceRoutingTest = {
   candidates, policyFromSource, findPrivateSource, matchesEntries, matchesExcludedPeople, isAllowlistedCollision,
+  parseExcludedPeople, collisionAllowlistPath,
 };

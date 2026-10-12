@@ -1,6 +1,9 @@
 import type { BrainEngine } from './engine.ts';
 import { LATEST_SCHEMA_VERSION } from './schema-migrations/latest.generated.ts';
 
+const FORK_VERSION_KEY = 'fork_version';
+const LATEST_FORK_VERSION = 1;
+
 /**
  * Cheap probe: does this engine have schema migrations pending?
  *
@@ -23,7 +26,9 @@ export async function hasPendingMigrations(engine: BrainEngine): Promise<boolean
   try {
     const currentStr = await engine.getConfig('version');
     const current = parseInt(currentStr || '1', 10);
-    return current < LATEST_SCHEMA_VERSION;
+    if (current < LATEST_SCHEMA_VERSION) return true;
+    const fork = parseInt((await engine.getConfig(FORK_VERSION_KEY)) || '0', 10);
+    return fork < LATEST_FORK_VERSION;
   } catch {
     return true;
   }

@@ -296,7 +296,7 @@ export async function writeSingleFact(
  * written; a partial supersede is an audit gap, not data loss — but a
  * failure is logged with both ids, never swallowed.
  */
-async function expireSuperseded(engine: BrainEngine, oldId: number, newId: number): Promise<void> {
+export async function expireSuperseded(engine: BrainEngine, oldId: number, newId: number): Promise<void> {
   const report = (step: string, err: unknown) => console.warn(
     `[facts.supersede] FACTS_SUPERSEDE_BOOKKEEPING_FAILED: ${step} for fact ${oldId} -> ${newId}: ${err instanceof Error ? err.message : String(err)}`,
   );

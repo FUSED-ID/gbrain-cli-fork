@@ -31,7 +31,8 @@ import { OperationError, opError, type Operation, type OperationContext } from '
 import { invalidParam, readFix } from './op-fix.ts';
 import { isDatetimeInputError } from '../utils.ts';
 import { rethrowNamingRevisionSource } from './put-page-revision-source.ts';
-import { enforcePrivatePageWrite } from '../private-source-routing.ts';
+import { enforcePrivatePageWrite, resolvePrivateWriteSource } from '../private-source-routing.ts';
+import { assertPageWriteThroughReady } from '../write-through.ts';
 import {
   assertExplicitSourceLive,
   enforceSubagentSlugFence,
@@ -335,6 +336,16 @@ const put_page: Operation = {
     }
     if (typeof p.slug === 'string' && typeof p.content === 'string') {
       const parsed = parseMarkdown(p.content, p.slug);
+      const route = await resolvePrivateWriteSource(ctx.engine, {
+        requestedSourceId: sourceId,
+        slug: p.slug,
+        content: p.content,
+        entityType: parsed.type,
+        entityName: parsed.title,
+      });
+      if (route.routed && route.sourceId !== sourceId && ctx.remote === false) {
+        await assertPageWriteThroughReady(ctx.engine, p.slug, route.sourceId);
+      }
       await enforcePrivatePageWrite(ctx.engine, {
         requestedSourceId: sourceId,
         slug: p.slug,
