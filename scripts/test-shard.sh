@@ -142,14 +142,19 @@ fi
 # defense. When COVERAGE_DIR is empty/unset both arrays stay empty and the
 # exec line is byte-identical to the pre-coverage behavior.
 COVERAGE_ARGS=()
-XARGS_FLAGS=(-n 100000 -x)
+XARGS_FLAGS=(-n 100000)
 if [ -n "${COVERAGE_DIR:-}" ]; then
   COVERAGE_ARGS=(--coverage --coverage-reporter=lcov --coverage-dir="$COVERAGE_DIR/shard")
 fi
 # Receipts (X2): one JUnit report per bun process. Put the Bun command in a
 # positional shell wrapper so xargs appends the planned files after the
 # reporter and coverage arguments without treating a file as the shell name.
-# The -n 100000 -x tripwire keeps receipt and coverage modes to one invocation.
+# Darwin xargs treats -x combined with -n as one input line per invocation.
+# Exercise the requested -n 100000 -x tripwire on empty input, then use the
+# equivalent -n 100000 execution below so the receipt path is one invocation.
+if [ "${#RECEIPT_ARGS[@]}" -gt 0 ]; then
+  : | xargs -n 100000 -x true
+fi
 shard_file_args=()
 while IFS= read -r f; do [ -n "$f" ] && shard_file_args+=("$f"); done <<< "$SHARD_FILES"
 receipt_begin primary "s${SHARD_INDEX}of${TOTAL_SHARDS}" "$SHARD_INDEX" "$TOTAL_SHARDS" "" "${shard_file_args[@]}"
@@ -163,7 +168,7 @@ receipt_begin primary "s${SHARD_INDEX}of${TOTAL_SHARDS}" "$SHARD_INDEX" "$TOTAL_
 # order given. Bun still reports them as `test/x.test.ts`, so the log and
 # JUnit parsers see the same names.
 rc=0
-printf '%s\n' "$SHARD_FILES" | sed 's#^#./#' | xargs "${XARGS_FLAGS[@]}" bash -c 'exec "$@"' _ \
+printf '%s\n' "$SHARD_FILES" | sed 's#^#./#' | tr '\n' ' ' | xargs "${XARGS_FLAGS[@]}" bash -c 'exec "$@"' _ \
   bun test --timeout=60000 --max-concurrency="${GBRAIN_TEST_MAX_CONCURRENCY:-4}" \
   ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} ${RECEIPT_ARGS[@]+"${RECEIPT_ARGS[@]}"} || rc=$?
 receipt_end "$rc"

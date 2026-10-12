@@ -2,6 +2,7 @@
 # class: R1 (process.env mutation) | R2 (mock.module) | global-state (other process-wide state) | exclusive (EXCLUSIVE_FILES in scripts/run-serial-tests.sh).
 # Before adding a row, run: bash scripts/check-test-isolation.sh --as-parallel <file>  (docs/TESTING.md#when-to-quarantine-instead-of-fix)
 path	class	reason
+test/cli-help-without-brain.serial.test.ts	global-state	global-state: serial CLI subprocesses each use a fresh GBRAIN_HOME and isolated no-brain environment
 test/embed-retry-no-network.serial.test.ts	R2	R2: mock.module replaces the embedding transport process-wide
 test/minion-queue-narrowing-invariants.serial.test.ts	global-state	global-state: one shared PGLite engine and queue retain live schema state
 test/pglite-restore-fork-stamp.serial.test.ts	global-state	global-state: shared PGLite restore fixtures and backup files require isolation
