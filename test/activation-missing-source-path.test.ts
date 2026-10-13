@@ -5,7 +5,7 @@
  * remove`), in --dry-run too, instead of a bare ENOENT from lstat.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -74,7 +74,7 @@ test('a claimed source whose recorded local_path vanished names its claimed chec
     const error = await activatePersistence(engine, { confirmQuiesced: true, dryRun }).catch(e => e);
     expect(error).toMatchObject({ code: 'source_changed', detail: 'source_path_missing' });
     expect(error.message).toContain(`Source 'default-example' records the local path ${gone}`);
-    expect(error.suggestion).toContain(`gbrain sources set-path default-example ${JSON.stringify(claimed)}`);
+    expect(error.suggestion).toContain(`gbrain sources set-path default-example ${JSON.stringify(realpathSync(claimed))}`);
     expectRunnableFix(error.suggestion);
   }
   const log = console.log; console.log = () => {};
