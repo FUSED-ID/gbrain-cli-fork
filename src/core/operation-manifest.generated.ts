@@ -3948,7 +3948,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "sources_remove",
     "idempotent": false,
     "outputRedaction": "no_stored_text",
-    "description": "Hard-remove a source (cascades pages/chunks/embeddings). Refuses to delete the auto-managed clone dir unless its resolved path is confined under $GBRAIN_HOME/clones/ (realpath+lstat — symlink-safe). For most workflows prefer the soft-delete path (`gbrain sources archive`). Confined to the caller's WRITE authority, not its read scope: an untrusted caller may remove only its own write source (a federated read grant naming a source does not make it removable); any other id answers not_found, indistinguishable from a nonexistent source. Only the trusted local CLI (`gbrain sources remove`) can remove any source.",
+    "description": "Hard-remove a source (cascades pages/facts/chunks/embeddings). Refuses to delete the auto-managed clone dir unless its resolved path is confined under $GBRAIN_HOME/clones/ (realpath+lstat — symlink-safe). For most workflows prefer the soft-delete path (`gbrain sources archive`). Confined to the caller's WRITE authority, not its read scope: an untrusted caller may remove only its own write source (a federated read grant naming a source does not make it removable); any other id answers not_found, indistinguishable from a nonexistent source. Only the trusted local CLI (`gbrain sources remove`) can remove any source.",
     "params": {
       "id": {
         "type": "string",
@@ -3957,7 +3957,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "confirm_destructive": {
         "type": "boolean",
-        "description": "Required when the source has data (pages, chunks). Without it the op refuses."
+        "description": "Required when the source has data (pages, facts, or chunks). Without it the op refuses."
       },
       "dry_run": {
         "type": "boolean",

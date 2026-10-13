@@ -248,7 +248,7 @@ Every non-localOnly operation on the MCP surface: 149 tools across 25 areas. **S
 |---|---|---|---|---|
 | `sources_add` | Register a new source. | sources_admin |  |  |
 | `sources_list` | List registered sources with page counts and remote_url. | read |  |  |
-| `sources_remove` | Hard-remove a source (cascades pages/chunks/embeddings). | sources_admin |  |  |
+| `sources_remove` | Hard-remove a source (cascades pages/facts/chunks/embeddings). | sources_admin |  |  |
 | `sources_status` | Per-source diagnostic. | read |  |  |
 
 ## tags
