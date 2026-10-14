@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * Lane H1a (Tier 1): the deterministic keyless agent journey, end to end.
  *
@@ -30,7 +31,7 @@
  * Serial: real subprocesses and PGLite datastores in temp homes.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -99,7 +100,7 @@ for (const stdin of ['devnull', 'silent'] as StdinMode[]) {
     let home = '';
     const cli = (args: string[], timeoutMs = 120_000) => gb(home, args, { stdin, timeoutMs });
 
-    beforeAll(() => { home = mkdtempSync(join(tmpdir(), `gbrain-journey-${stdin}-`)); });
+    beforeAll(() => { home = mkdtempReal(`gbrain-journey-${stdin}-`); });
     afterAll(() => { rmSync(home, { recursive: true, force: true }); });
 
     test('init --pglite --no-embedding --json: one document with the first-run decision bundle', async () => {
@@ -213,7 +214,7 @@ describe('H1a keyless MCP journey (stdio)', () => {
   const open: McpSession[] = [];
 
   beforeAll(async () => {
-    home = mkdtempSync(join(tmpdir(), 'gbrain-journey-mcp-'));
+    home = mkdtempReal('gbrain-journey-mcp-');
     expect((await gb(home, ['init', '--pglite', '--no-embedding', '--json'], { timeoutMs: 120_000 })).exitCode).toBe(0);
     expect((await gb(home, ['import', writeNotes(home), '--no-embed', '--json'], { timeoutMs: 120_000 })).exitCode).toBe(0);
   }, 300_000);
@@ -328,7 +329,7 @@ describe('H1a keyless MCP journey (stdio)', () => {
 
 describe('H2 missing_brain: the configured brain is on a drive that is not mounted', () => {
   let home = '';
-  beforeAll(() => { home = mkdtempSync(join(tmpdir(), 'gbrain-journey-missing-')); });
+  beforeAll(() => { home = mkdtempReal('gbrain-journey-missing-'); });
   afterAll(() => { rmSync(home, { recursive: true, force: true }); });
 
   test('serve completes the handshake in status-only mode naming the path; nothing is created there; mounting it recovers in place', async () => {

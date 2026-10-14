@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * Agent contract v1 (D2), the remaining command migrations: under `--json`
  * stdout carries exactly one document (or, for NDJSON commands, lines that
@@ -9,7 +10,7 @@
  * test/e2e/cli-json-commands-postgres.test.ts.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli, type CliResult } from './helpers/cli-spawn.ts';
@@ -41,7 +42,7 @@ const cli = (args: string[], home = brain, env?: Record<string, string | undefin
   runCli(args, { home, cwd: home, timeoutMs: 120_000, ...(env ? { env } : {}) });
 
 function freshHome(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  return mkdtempReal(prefix);
 }
 
 beforeAll(async () => {

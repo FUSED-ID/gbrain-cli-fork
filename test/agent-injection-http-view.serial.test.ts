@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * Lane H3 (agent operator wave) journeys on one real keyless PGLite brain:
  * prompt-injection inertness, the HTTP view, and notice dedupe over HTTP.
@@ -27,7 +28,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -93,7 +94,7 @@ async function registerClient(name: string, scopes: string): Promise<{ id: strin
 }
 
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), 'gbrain-h3-inject-'));
+  home = mkdtempReal('gbrain-h3-inject-');
   const init = await gbrain(['init', '--pglite', '--no-embedding', '--json']);
   if (init.exitCode !== 0) throw new Error(`init failed:\n${init.stdout}\n${init.stderr}`);
   const notes = join(home, 'notes');

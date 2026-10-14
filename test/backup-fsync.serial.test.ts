@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { expect, spyOn, test } from 'bun:test';
 import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
@@ -9,7 +10,7 @@ import * as privacy from '../src/core/backup/private-path.ts';
 
 for (const platform of ['linux', 'win32'] as const) {
   test(`backup file durability preserves fsync while directory opens follow the ${platform} guard`, async () => {
-    const tmp = fs.mkdtempSync(join(tmpdir(), 'gbrain-fsync-'));
+    const tmp = mkdtempReal('gbrain-fsync-');
     const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
     const open = fs.openSync;
     const fsync = fs.fsyncSync;
@@ -51,7 +52,7 @@ for (const platform of ['linux', 'win32'] as const) {
 }
 
 test('regular file fsync failures remain fatal on the Windows guard path', () => {
-  const tmp = fs.mkdtempSync(join(tmpdir(), 'gbrain-fsync-failure-'));
+  const tmp = mkdtempReal('gbrain-fsync-failure-');
   const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
   const sync = spyOn(fs, 'fsyncSync').mockImplementation(() => { throw new Error('file fsync failed'); });
   try {
@@ -65,7 +66,7 @@ test('regular file fsync failures remain fatal on the Windows guard path', () =>
 });
 
 test('unexpected directory I/O errors remain fatal even on Windows', () => {
-  const tmp = fs.mkdtempSync(join(tmpdir(), 'gbrain-directory-failure-'));
+  const tmp = mkdtempReal('gbrain-directory-failure-');
   const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
   const open = fs.openSync;
   const opened = spyOn(fs, 'openSync').mockImplementation((path, flags, mode) => {
@@ -83,7 +84,7 @@ test('unexpected directory I/O errors remain fatal even on Windows', () => {
 });
 
 for (const outcome of ['protected', 'refused'] as const) test(`archive waits for asynchronous privacy ${outcome} before writing or publishing`, async () => {
-  const tmp = fs.mkdtempSync(join(tmpdir(), 'gbrain-backup-await-'));
+  const tmp = mkdtempReal('gbrain-backup-await-');
   const input = join(tmp, 'input');
   const output = join(tmp, 'archive');
   fs.writeFileSync(input, 'original payload');
@@ -128,7 +129,7 @@ for (const outcome of ['protected', 'refused'] as const) test(`archive waits for
 
 for (const mode of ['success', 'nonzero', 'unexpected-output', 'stdout-limit', 'stderr-limit', 'timeout', 'input-error', 'input-throw', 'changed-content', 'replaced-path'] as const) {
   test(`Windows privacy async subprocess ${mode} preserves its bounded fail-closed contract`, async () => {
-    const tmp = fs.mkdtempSync(join(tmpdir(), 'gbrain-privacy-process-'));
+    const tmp = mkdtempReal('gbrain-privacy-process-');
     const path = join(tmp, 'empty');
     fs.writeFileSync(path, '');
     const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;

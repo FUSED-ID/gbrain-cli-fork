@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * Ambient-writeback hermetic lifecycle (the brief's 5-step fixture) — ZERO
  * LLM, temp-everything, never touches a real brain (bunfig preload guards +
@@ -24,7 +25,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -124,8 +125,8 @@ class StdioSession {
 }
 
 beforeAll(() => {
-  parent = mkdtempSync(join(tmpdir(), 'gb-wb-e2e-'));
-  homeDir = mkdtempSync(join(tmpdir(), 'gb-wb-home-'));
+  parent = mkdtempReal('gb-wb-e2e-');
+  homeDir = mkdtempReal('gb-wb-home-');
 }, 20_000);
 
 afterAll(() => {

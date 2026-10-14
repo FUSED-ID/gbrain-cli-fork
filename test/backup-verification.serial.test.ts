@@ -1,7 +1,8 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import * as childProcess from 'node:child_process';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -19,7 +20,7 @@ const now = new Date('2026-09-22T12:00:00Z');
 const verified = { localGitProbes: true, verifyRemoteRefs: true, now };
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'gbrain-backup-evidence-'));
+  tmp = mkdtempReal('gbrain-backup-evidence-');
   oldHome = process.env.GBRAIN_HOME;
   process.env.GBRAIN_HOME = tmp;
   __setBackupStatusPathForTests(join(tmp, 'status.json'));

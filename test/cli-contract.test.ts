@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * Agent contract v1 D5: the CLI contract over src/cli/command-table.ts.
  *
@@ -21,7 +22,7 @@
  * Serial: spawns the CLI and writes temporary GBRAIN_HOMEs.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CLI_COMMANDS } from '../src/cli/command-table.ts';
@@ -31,8 +32,8 @@ import { runCli, runCliBatch, type CliResult } from './helpers/cli-spawn.ts';
 const BASELINE = join(import.meta.dir, 'fixtures', 'cli-contract', 'help-baseline.json');
 const STUB = 'run gbrain --help for the full command list';
 
-const emptyHome = mkdtempSync(join(tmpdir(), 'gbrain-cli-contract-empty-'));
-const brainHome = mkdtempSync(join(tmpdir(), 'gbrain-cli-contract-brain-'));
+const emptyHome = mkdtempReal('gbrain-cli-contract-empty-');
+const brainHome = mkdtempReal('gbrain-cli-contract-brain-');
 afterAll(() => {
   rmSync(emptyHome, { recursive: true, force: true });
   rmSync(brainHome, { recursive: true, force: true });
@@ -172,7 +173,7 @@ describe('D5 json contract: one success and one failure per json-declared comman
     test(`${record.name} --json: success shape and failure envelope`, async () => {
       const row = JSON_ROWS[record.name];
       if (!row) throw new Error(`no D5 row for json-declared command ${record.name}`);
-      const fresh = mkdtempSync(join(tmpdir(), 'gbrain-cli-contract-ok-'));
+      const fresh = mkdtempReal('gbrain-cli-contract-ok-');
       try {
         const okHome = row.okOnEmpty ? fresh : brainHome;
         if (row.okE2E) {

@@ -1,5 +1,6 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setupInAgent, type AgentSetupResult } from '../src/core/agent-install/setup.ts';
@@ -11,7 +12,7 @@ let installed: AgentSetupResult;
 const sourceRef = 'a'.repeat(40), repo = resolve(import.meta.dir, '..');
 
 beforeAll(async () => {
-  temporary = mkdtempSync(join(tmpdir(), 'gbrain-follow-setup-'));
+  temporary = mkdtempReal('gbrain-follow-setup-');
   bundle = join(temporary, 'bundle'); fresh = join(temporary, 'fresh');
   const pkg = join(bundle, 'app', 'node_modules', 'gbrain');
   mkdirSync(join(pkg, 'src', 'core', 'agent-install'), { recursive: true }); mkdirSync(join(pkg, 'scripts'));
