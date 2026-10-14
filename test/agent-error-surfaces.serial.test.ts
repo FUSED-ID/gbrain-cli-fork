@@ -62,9 +62,8 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -85,6 +84,7 @@ import {
   callTool, envelopeOf, legacyToken, ownerCookie, registerOAuthClient, startServeHttp, thinClientConfig, withOpHandler,
   type LiveServeHttp, type ToolResultWire,
 } from './helpers/live-mcp-servers.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 const REPO = join(import.meta.dir, '..');
 const CLI = join(REPO, 'src', 'cli.ts');
@@ -152,8 +152,8 @@ let oauth: { clientId: string; clientSecret: string };
 const savedHome = process.env.GBRAIN_HOME;
 
 beforeAll(async () => {
-  homeA = mkdtempSync(join(tmpdir(), 'gbrain-h3-surfaces-a-'));
-  homeB = mkdtempSync(join(tmpdir(), 'gbrain-h3-surfaces-b-'));
+  homeA = mkdtempReal('gbrain-h3-surfaces-a-');
+  homeB = mkdtempReal('gbrain-h3-surfaces-b-');
   process.env.GBRAIN_HOME = homeB;
   const init = await gbrain(homeA, ['init', '--pglite', '--no-embedding', '--json']);
   if (init.exitCode !== 0) throw new Error(`init failed: ${init.stdout}\n${init.stderr}`);
@@ -324,7 +324,7 @@ describe('OperationError (REAL: a missing page) on every surface', () => {
       { cwd: homeA, env: childEnv(homeA), stdio: ['ignore', 'pipe', 'pipe'] });
     let serr = '';
     server.stderr?.on('data', (d: Buffer) => { serr += d.toString(); });
-    const homeC = mkdtempSync(join(tmpdir(), 'gbrain-h3-thin-'));
+    const homeC = mkdtempReal('gbrain-h3-thin-');
     try {
       let ready = false;
       for (let i = 0; i < 120 && !ready; i++) {
@@ -394,7 +394,7 @@ describe('REAL CLI triggers for the other families', () => {
   }, 90_000);
 
   test('RemoteMcpError: a thin client whose host is down names the remote doctor (human and --json)', async () => {
-    const homeC = mkdtempSync(join(tmpdir(), 'gbrain-h3-thin-down-'));
+    const homeC = mkdtempReal('gbrain-h3-thin-down-');
     try {
       mkdirSync(join(homeC, '.gbrain'), { recursive: true });
       writeFileSync(join(homeC, '.gbrain', 'config.json'), JSON.stringify({ engine: 'postgres',

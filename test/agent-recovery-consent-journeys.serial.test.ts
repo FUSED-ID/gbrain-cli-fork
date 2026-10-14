@@ -29,8 +29,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { opError, type Operation, type OperationError } from '../src/core/ops/contract.ts';
@@ -42,6 +41,7 @@ import {
   callTool, clientCredentialsToken, envelopeOf, opNamed, ownerCookie, registerOAuthClient, startServeHttp, withOpHandler,
   type LiveServeHttp, type ToolResultWire,
 } from './helpers/live-mcp-servers.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 const REPO = join(import.meta.dir, '..');
 const CLI = join(REPO, 'src', 'cli.ts');
@@ -57,7 +57,7 @@ let home: string;
 const savedHome = process.env.GBRAIN_HOME;
 
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), 'gbrain-h3-recovery-'));
+  home = mkdtempReal('gbrain-h3-recovery-');
   process.env.GBRAIN_HOME = join(home, 'server-home');
   engine = new PGLiteEngine();
   await engine.connect({});
@@ -209,7 +209,7 @@ async function sql(statement: string): Promise<void> {
 
 describe('real CLI: interactivity and approval binding', () => {
   beforeAll(async () => {
-    brain = mkdtempSync(join(tmpdir(), 'gbrain-h3-consent-'));
+    brain = mkdtempReal('gbrain-h3-consent-');
     const init = await gbrain(['init', '--pglite', '--no-embedding', '--json']);
     if (init.exitCode !== 0) throw new Error(`init failed:\n${init.stdout}\n${init.stderr}`);
     const notes = join(brain, 'notes');

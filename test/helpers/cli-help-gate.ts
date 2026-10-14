@@ -9,13 +9,14 @@
  * The cases are partitioned across several serial files (the serial runner
  * kills one file after 300 s), each running GATE_PARTS-th of the list.
  */
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { CLI_COMMANDS } from '../../src/cli/command-table.ts';
 import { ROUTERS } from '../../src/cli/subcommands.ts';
 import { STRICT_SUBCOMMANDS } from '../../src/cli/strict-args.ts';
+import { mkdtempReal } from './real-temp.ts';
 
 export const GATE_PARTS = 4;
 const REPO = new URL('../..', import.meta.url).pathname.replace(/\/$/, '');
@@ -163,7 +164,7 @@ export interface GateFixture {
 
 /** Build the seeded template brain once per file. */
 export async function buildFixture(): Promise<GateFixture> {
-  const template = mkdtempSync(join(tmpdir(), 'gbrain-help-gate-'));
+  const template = mkdtempReal('gbrain-help-gate-');
   mkdirSync(join(template, 'work'));
   const init = await runCli(template, ['init', '--pglite', '--no-embedding']);
   if (init.exitCode !== 0) throw new Error(`fixture init failed: ${init.stderr}`);
@@ -215,7 +216,7 @@ export async function runGate(fx: GateFixture, cases: GateCase[], workers = 4): 
   const queue = [...cases];
   const verbose = process.env.HELP_GATE_LOG;
   await Promise.all(Array.from({ length: workers }, async (_, w) => {
-    const root = join(fx.template, '..', `${relative(tmpdir(), fx.template)}-w${w}`);
+    const root = join(dirname(fx.template), `${basename(fx.template)}-w${w}`);
     copyFixture(fx, root);
     for (let c = queue.shift(); c; c = queue.shift()) {
       const r = await runCli(root, c.argv, c.unsuppressed);

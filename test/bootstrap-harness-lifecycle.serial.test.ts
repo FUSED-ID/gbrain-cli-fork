@@ -21,8 +21,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { spawn, execFileSync, type ChildProcess } from 'child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { tmpdir } from 'os';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 import { runBootstrap } from '../src/commands/bootstrap.ts';
@@ -30,6 +29,7 @@ import type { ExecRunner } from '../src/core/bootstrap/repo.ts';
 import { readHarnessReceiptState, writeHarnessReceipt } from '../src/core/bootstrap/format.ts';
 import { CODEX_TOML_BLOCK_BEGIN } from '../src/core/bootstrap/host-specs.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 const PORT = 19741; // unique to this suite (19735 = connect-bearer, 19131 = oauth)
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -126,14 +126,14 @@ describe('bootstrap harness lifecycle E2E (PGLite + real serve --http)', () => {
   });
 
   beforeAll(async () => {
-    parent = mkdtempSync(join(tmpdir(), 'gb-harness-e2e-'));
-    sandboxHome = mkdtempSync(join(tmpdir(), 'gb-harness-home-'));
-    codexHome = mkdtempSync(join(tmpdir(), 'gb-harness-codex-'));
+    parent = mkdtempReal('gb-harness-e2e-');
+    sandboxHome = mkdtempReal('gb-harness-home-');
+    codexHome = mkdtempReal('gb-harness-codex-');
     // codex "installed" for detection purposes: the config file exists.
     writeFileSync(codexConfig(), '# preexisting codex config\nmodel = "o5"\n');
     // #4325: claude "installed" for detection purposes — executable no-op
     // stub on a sandbox PATH entry (see envFor). Never actually executed.
-    stubBin = mkdtempSync(join(tmpdir(), 'gb-harness-bin-'));
+    stubBin = mkdtempReal('gb-harness-bin-');
     writeFileSync(join(stubBin, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
 
     const env: Record<string, string | undefined> = { ...process.env, GBRAIN_HOME: parent };

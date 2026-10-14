@@ -16,11 +16,11 @@
  */
 
 import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'fs';
-import { tmpdir } from 'os';
+import { rmSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { withManagedFixtureWrite } from './helpers/managed-e2e-fixture-write.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 import {
   configureGateway,
   resetGateway,
@@ -57,7 +57,7 @@ describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end'
   const savedKeys: Record<string, string | undefined> = {};
 
   beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-e2e-fresh-'));
+    tmpHome = mkdtempReal('gbrain-e2e-fresh-');
     origHome = process.env.GBRAIN_HOME;
     for (const k of SCRUB_KEYS) {
       savedKeys[k] = process.env[k];
@@ -203,6 +203,10 @@ describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end'
     resetGateway();
     delete process.env.VOYAGE_API_KEY;
     process.env.OPENAI_API_KEY = 'sk-test-openai';
+    const synthVec = Array.from({ length: 1536 }, () => 0.01);
+    __setEmbedTransportForTests(async (args: any) => ({
+      embeddings: args.values.map(() => synthVec),
+    }) as any);
     const origLog = console.log;
     const origError = console.error;
     console.log = () => {};
@@ -275,6 +279,10 @@ describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end'
     console.log = () => {};
     console.warn = () => {};
     console.error = () => {};
+    const synthVec = Array.from({ length: NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS }, () => 0.01);
+    __setEmbedTransportForTests(async (args: any) => ({
+      embeddings: args.values.map(() => synthVec),
+    }) as any);
     try {
       const { runInit } = await import('../src/commands/init.ts');
       // Step 1: keyless install → deferred-setup sentinel persisted.

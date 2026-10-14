@@ -8,12 +8,12 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runDoctor, type DoctorReport } from '../src/commands/doctor.ts';
 import { setCliOptions } from '../src/core/cli-options.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 const REPO = join(import.meta.dir, '..');
 let home: string;
@@ -68,7 +68,7 @@ async function doctorHintCommand(): Promise<string> {
 }
 
 beforeAll(() => {
-  home = mkdtempSync(join(tmpdir(), 'gbrain-fresh-db-extract-'));
+  home = mkdtempReal('gbrain-fresh-db-extract-');
   const init = cli(['init', '--pglite', '--no-embedding', '--non-interactive']);
   if (init.status !== 0) throw new Error(`init failed: ${init.stderr}`);
   const put = cli(['put', 'people/alice-example'],

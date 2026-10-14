@@ -1,9 +1,9 @@
 import { expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { SHARED_CONTENT_MIGRATION_VERSION } from '../src/commands/migrations/shared-content.ts';
 
 async function cli(home: string, args: string[]) {
@@ -17,7 +17,7 @@ async function cli(home: string, args: string[]) {
 
 for (const publishing of [true, false]) {
   test(`released migration CLI exports real DB content and converges preserving publication=${publishing}`, async () => {
-    const home = mkdtempSync(join(tmpdir(), 'gbrain-migration-cli-')), root = join(home, 'canonical');
+    const home = mkdtempReal('gbrain-migration-cli-'), root = join(home, 'canonical');
     await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
       const engine = new PGLiteEngine();
       const database = { engine: 'pglite' as const, database_path: join(home, '.gbrain', 'brain.pglite') };

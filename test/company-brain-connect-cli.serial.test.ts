@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { COMPANY_BRAIN_SAMPLE } from '../src/core/company-brain/sample.ts';
 import { parseCompanyBrainConnectArgs } from '../src/commands/company-brain-connect.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 const cli = resolve(import.meta.dir, '../src/cli.ts');
 const roots: string[] = [];
@@ -17,7 +17,7 @@ const childBase = Object.fromEntries(Object.entries(process.env).filter(([key]) 
   !['DATABASE_URL', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'VOYAGE_API_KEY', 'PGLITE_DATA_DIR'].includes(key)));
 
 async function fixture() {
-  const root = mkdtempSync(join(tmpdir(), 'company-connect-cli-'));
+  const root = mkdtempReal('company-connect-cli-');
   roots.push(root);
   const home = join(root, 'home');
   const repo = join(root, 'repo');
