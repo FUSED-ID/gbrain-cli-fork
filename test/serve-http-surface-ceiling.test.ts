@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * G6 (surface-verbs) — E2E: `gbrain serve --http --surface verbs` is a hard
  * tool-surface CEILING over a real HTTP boot. Hermetic PGLite (no Postgres /
@@ -33,7 +34,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { spawn, spawnSync, type ChildProcess } from 'child_process';
-import { mkdtempSync, rmSync } from 'fs';
+import { rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { keylessBrainEnv } from './helpers/provider-env.ts';
 import { cliDiagnostic, fixtureDiagnostic, toolDiagnostic } from './helpers/fixture-diagnostics.ts';
@@ -93,8 +94,8 @@ describe('serve --http --surface verbs ceiling E2E (hermetic PGLite)', () => {
   }
 
   beforeAll(async () => {
-    homeA = mkdtempSync(join(tmpdir(), 'gbrain-surface-a-'));
-    homeB = mkdtempSync(join(tmpdir(), 'gbrain-surface-b-'));
+    homeA = mkdtempReal('gbrain-surface-a-');
+    homeB = mkdtempReal('gbrain-surface-b-');
     const envA = brainEnv(homeA);
     const envB = brainEnv(homeB);
 

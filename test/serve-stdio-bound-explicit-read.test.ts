@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * #5081 over the real stdio transport: `gbrain serve` started with
  * GBRAIN_SOURCE=work (the harness `.mcp.json` shape from the report) may name
@@ -13,7 +14,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { spawnSync } from 'child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -47,7 +48,7 @@ describe('#5081 — GBRAIN_SOURCE-bound stdio serve, explicit source_id reads', 
   let transport: StdioClientTransport | null = null;
 
   beforeAll(async () => {
-    home = mkdtempSync(join(tmpdir(), 'gbrain-stdio-5081-'));
+    home = mkdtempReal('gbrain-stdio-5081-');
     const env = keylessBrainEnv(process.env, home, {
       DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_REMOTE_CLIENT_SECRET: undefined,
     });

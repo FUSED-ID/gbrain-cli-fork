@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * #4768 (stdio half): `gbrain serve --access read-only` over a real MCP stdio
  * session on a hermetic PGLite brain, on every surface tier.
@@ -12,7 +13,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -44,7 +45,7 @@ const errorOf = (result: unknown): string | undefined => {
 };
 
 beforeAll(() => {
-  home = mkdtempSync(join(tmpdir(), 'gbrain-stdio-read-only-'));
+  home = mkdtempReal('gbrain-stdio-read-only-');
   env = keylessBrainEnv(process.env, home, { DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_REMOTE_CLIENT_SECRET: undefined });
   delete env.GBRAIN_SOURCE;
   expect(cli(['init', '--pglite', '--no-embedding', '--non-interactive']).status).toBe(0);

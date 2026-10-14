@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /** Real MCP transport journeys over isolated, persistent PGLite brains.
  * Data seeding uses the engine before serve starts (PGLite is single-writer).
  * No provider keys, model calls, ambient brain, or external database is used.
@@ -8,7 +9,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -204,7 +205,7 @@ for (const kind of ['stdio', 'http'] as const) {
     }
 
     beforeAll(async () => {
-      home = mkdtempSync(join(tmpdir(), `gbrain-privacy-${kind}-`));
+      home = mkdtempReal(`gbrain-privacy-${kind}-`);
       env = keylessBrainEnv(process.env, home, {
         DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_REMOTE_CLIENT_SECRET: undefined,
         GBRAIN_REMOTE_PRIVATE_PAGES: undefined, GBRAIN_MCP_FORCE_SURFACE: undefined,

@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * The A7 embedding-enablement E2E matrix (named in the agent operator wave
  * spec): default path, custom path, mounted brain, legacy dimensions and
@@ -16,7 +17,7 @@
  * are fake, and the init-time embed check is skipped.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { embeddingEnablement } from '../src/core/readiness.ts';
@@ -36,7 +37,7 @@ const roots: string[] = [];
 afterAll(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
 
 function scratch(label: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `gbrain-a7-${label}-`));
+  const dir = mkdtempReal(`gbrain-a7-${label}-`);
   roots.push(dir);
   return dir;
 }

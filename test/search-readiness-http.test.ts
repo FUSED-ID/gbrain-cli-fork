@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * Real legacy-bearer HTTP MCP regression for projection-readiness response
  * metadata. The fixture is disk-backed because the CLI HTTP server owns the
@@ -9,7 +10,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -70,7 +71,7 @@ describe('search projection readiness over legacy bearer HTTP MCP', () => {
   let client: Client | undefined;
 
   beforeAll(async () => {
-    home = mkdtempSync(join(tmpdir(), 'gbrain-search-readiness-http-'));
+    home = mkdtempReal('gbrain-search-readiness-http-');
     const env = brainEnv(home);
     cli(env, ['init', '--pglite', '--no-embedding', '--non-interactive']);
     const auth = cli(env, ['auth', 'create', 'e2e-search-readiness']);

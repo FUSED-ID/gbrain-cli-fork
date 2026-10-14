@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * E2E for the qm-harness integration recipe (docs/integrations/qm-harness.md):
  * roster-driven provisioning + over-the-wire write fencing.
@@ -22,7 +23,7 @@
  */
 
 import { describe, test as testRaw, expect, beforeAll, afterAll } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'fs';
+import { rmSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { keylessBrainEnv } from './helpers/provider-env.ts';
@@ -80,10 +81,10 @@ describe('qm-harness provisioning + write fence (e2e, PGLite)', () => {
   }
 
   beforeAll(async () => {
-    hostHome = mkdtempSync(join(tmpdir(), 'gbrain-qm-host-'));
-    workDir = mkdtempSync(join(tmpdir(), 'gbrain-qm-work-'));
-    aliceHome = mkdtempSync(join(tmpdir(), 'gbrain-qm-alice-'));
-    bobHome = mkdtempSync(join(tmpdir(), 'gbrain-qm-bob-'));
+    hostHome = mkdtempReal('gbrain-qm-host-');
+    workDir = mkdtempReal('gbrain-qm-work-');
+    aliceHome = mkdtempReal('gbrain-qm-alice-');
+    bobHome = mkdtempReal('gbrain-qm-bob-');
 
     // 1. Host brain on PGLite, embedding deferred (FTS is enough here).
     const init = await gbrain(['init', '--pglite', '--no-embedding'], hostHome);

@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * Runtime widening on the owner's stdio pipe, and GBRAIN_SURFACE on stdio
  * `serve`, over real MCP stdio sessions on a hermetic PGLite brain.
@@ -15,7 +16,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -52,7 +53,7 @@ const parsed = (r: unknown) => JSON.parse(((r as { content: Array<{ text: string
 const isError = (r: unknown) => (r as { isError?: boolean }).isError === true;
 
 beforeAll(() => {
-  home = mkdtempSync(join(tmpdir(), 'gbrain-request-tools-stdio-'));
+  home = mkdtempReal('gbrain-request-tools-stdio-');
   env = keylessBrainEnv(process.env, home, { DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_REMOTE_CLIENT_SECRET: undefined, GBRAIN_SURFACE: undefined, GBRAIN_MCP_FORCE_SURFACE: undefined, GBRAIN_NO_ONBOARD_NUDGE: '1' });
   delete env.GBRAIN_SOURCE;
   expect(cli(['init', '--pglite', '--no-embedding', '--non-interactive']).status).toBe(0);

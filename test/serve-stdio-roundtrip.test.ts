@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * E2E for the "standalone from nothing" funnel: `gbrain init --pglite` →
  * `gbrain serve` (stdio) wired into a coding agent as an MCP subprocess.
@@ -34,7 +35,7 @@ import { spawnSync } from 'child_process';
 import { keylessBrainEnv } from './helpers/provider-env.ts';
 import { cliDiagnostic, toolDiagnostic } from './helpers/fixture-diagnostics.ts';
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -72,7 +73,7 @@ describe('serve stdio round-trip E2E (local PGLite → real MCP tool calls)', ()
   let connected = false;
 
   beforeAll(async () => {
-    home = mkdtempSync(join(tmpdir(), 'gbrain-stdio-e2e-'));
+    home = mkdtempReal('gbrain-stdio-e2e-');
     // Hermetic PGLite: strip any ambient Postgres URL so `init --pglite` and the
     // served brain actually use PGLite even when the shell/CI has DATABASE_URL
     // set (otherwise the subprocess comes up on Postgres → `engine: pglite`
@@ -198,7 +199,7 @@ describe('serve --surface verbs stdio E2E (the 7 frozen memory verbs over a real
   let connected = false;
 
   beforeAll(async () => {
-    home = mkdtempSync(join(tmpdir(), 'gbrain-stdio-verbs-e2e-'));
+    home = mkdtempReal('gbrain-stdio-verbs-e2e-');
     // Same hermetic-PGLite env dance as the full-surface session above.
     const env = keylessBrainEnv(process.env, home, {
       DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_REMOTE_CLIENT_SECRET: undefined,
