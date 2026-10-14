@@ -1,5 +1,6 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -14,7 +15,7 @@ import { inventorySkillpack } from '../src/core/shared-skills/setup-files.ts';
 import { checkSharedSkillsSources } from '../src/commands/doctor/checks/shared-skills.ts';
 import { runSourcesSharedSkills } from '../src/commands/sources-shared-skills.ts';
 
-const home = mkdtempSync(join(tmpdir(), 'gbrain-shared-optout-'));
+const home = mkdtempReal('gbrain-shared-optout-');
 const engines: Array<{ name: string; engine: BrainEngine }> = [];
 let closePg: (() => Promise<void>) | undefined;
 

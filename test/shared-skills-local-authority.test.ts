@@ -1,5 +1,6 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OperationContext } from '../src/core/ops/contract.ts';
@@ -12,7 +13,7 @@ import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 test('resident stdio reads honor verified identity, original ceilings, and live revocation without CLI authority', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'gbrain-shared-local-authority-'));
+  const home = mkdtempReal('gbrain-shared-local-authority-');
   try {
     await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
       const { engine, close } = await isolatedSharedSkillsEngine();

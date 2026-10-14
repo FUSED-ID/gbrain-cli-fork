@@ -1,5 +1,6 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -10,7 +11,7 @@ import type { OperationContext } from '../src/core/ops/contract.ts';
 import { caught, envelopeFor, expectFunnelSuggestions } from './helpers/agent-envelope.ts';
 
 const roots: string[] = [];
-const temp = () => { const root = mkdtempSync(join(tmpdir(), 'gbrain-shared-refusals-')); roots.push(root); return root; };
+const temp = () => { const root = mkdtempReal('gbrain-shared-refusals-'); roots.push(root); return root; };
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const unreachable = async () => { throw new Error('no server call expected'); };
 

@@ -1,12 +1,13 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sha256 } from '../src/core/persistence/digest.ts';
 
 test('generic local CLI imports reviewed human skill edits through durable publication', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'gbrain-proposal-cli-'));
+  const home = mkdtempReal('gbrain-proposal-cli-');
   const env = { ...process.env, GBRAIN_HOME: home, GBRAIN_SKIP_STARTUP_HOOKS: '1' };
   for (const key of ['DATABASE_URL', 'GBRAIN_DATABASE_URL', 'GBRAIN_SOURCE', 'GBRAIN_BRAIN_ID', 'GBRAIN_IN_AGENT_SETUP']) delete env[key as keyof typeof env];
   const run = async (args: string[]) => {

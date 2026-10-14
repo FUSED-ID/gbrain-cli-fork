@@ -1,6 +1,7 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -8,7 +9,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { runCli } from './helpers/cli-spawn.ts';
 
 test('local skill commands use the resident PGLite owner without lending CLI authority to stdio', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'gbrain-shared-live-cli-'));
+  const home = mkdtempReal('gbrain-shared-live-cli-');
   const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, GBRAIN_HOME: home,
     GBRAIN_SKIP_STARTUP_HOOKS: '1', GBRAIN_UPDATE_CHECK: '0', GBRAIN_SWEEP: '0', NODE_ENV: 'test' };
   const client = new Client({ name: 'shared-live-cli-fixture', version: '1' }, { capabilities: {} });

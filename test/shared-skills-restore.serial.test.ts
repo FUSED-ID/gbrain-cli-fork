@@ -1,6 +1,7 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -59,7 +60,7 @@ async function authorityRows(engine: PGLiteEngine) {
 }
 
 beforeAll(async () => {
-  temporary = mkdtempSync(join(tmpdir(), 'gbrain-shared-restore-'));
+  temporary = mkdtempReal('gbrain-shared-restore-');
   root = join(temporary, 'original'); restored = join(temporary, 'restored'); archive = join(temporary, 'original.gbrain-backup');
   mkdirSync(join(root, '.gbrain'), { recursive: true });
   mkdirSync(join(root, 'memory'));

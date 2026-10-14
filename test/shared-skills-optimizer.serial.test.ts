@@ -1,7 +1,8 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { expect, spyOn, test } from 'bun:test';
 import * as fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { __setChatTransportForTests, type ChatOpts, type ChatResult } from '../src/core/ai/gateway.ts';
@@ -40,7 +41,7 @@ interface Fixture {
   mode: (value: 'normal' | 'provider_error' | 'budget_error' | 'invalid') => void;
 }
 async function fixture(run: (f: Fixture) => Promise<void>) {
-  const dir = mkdtempSync(join(tmpdir(), 'gbrain-shared-optimizer-'));
+  const dir = mkdtempReal('gbrain-shared-optimizer-');
   try {
     await withEnv({ GBRAIN_HOME: join(dir, 'home'), DATABASE_URL: undefined }, async () => {
       const isolated = await isolatedSharedSkillsEngine(), engine = isolated.engine;

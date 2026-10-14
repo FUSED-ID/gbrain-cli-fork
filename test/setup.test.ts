@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * `gbrain setup claude-code` (D8): the CLI-only command row's behavior test,
  * spawning `bun src/cli.ts setup` against a temp HOME / GBRAIN_HOME.
@@ -19,7 +20,7 @@
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { createServer, type Server } from 'node:net';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runCli, type CliResult } from './helpers/cli-spawn.ts';
@@ -33,7 +34,7 @@ afterAll(() => { for (const r of roots) rmSync(r, { recursive: true, force: true
 interface Box { root: string; home: string; gbrainHome: string; bin: string }
 
 function box(): Box {
-  const root = mkdtempSync(join(tmpdir(), 'gbrain-setup-'));
+  const root = mkdtempReal('gbrain-setup-');
   roots.push(root);
   const home = join(root, 'home');
   mkdirSync(home, { recursive: true });
@@ -345,7 +346,7 @@ describe('gbrain setup: consent and refusals', () => {
 describe('hooks.ts ownership: hash-keyed for setup, marker-keyed for bootstrap (unchanged)', () => {
   const env = { GBRAIN_SOURCE: 'default' };
   function editedFile(): string {
-    const dir = mkdtempSync(join(tmpdir(), 'gbrain-hooks-own-'));
+    const dir = mkdtempReal('gbrain-hooks-own-');
     roots.push(dir);
     const path = join(dir, 'settings.json');
     writeClaudeHooksAt(path, { gbrainBin: '/usr/local/bin/gbrain', env, events: ['SessionStart'] });

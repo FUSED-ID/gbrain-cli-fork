@@ -1,7 +1,8 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
@@ -34,7 +35,7 @@ function inventory(root: string): Record<string, string> {
 }
 
 test('a real approved company source remains byte-identical across shared-skill migration and setup', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'gbrain-shared-company-')), root = join(home, 'company');
+  const home = mkdtempReal('gbrain-shared-company-')), root = join(home, 'company');
   const databaseUrl = process.env.SHARED_SKILLS_EXPORT_DATABASE_URL;
   await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
     const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
@@ -89,7 +90,7 @@ test('a real approved company source remains byte-identical across shared-skill 
 }, 180_000);
 
 test('a source with config.shared_skills=false opts out of adoption without touching its files', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'gbrain-shared-optout-'));
+  const home = mkdtempReal('gbrain-shared-optout-');
   await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
     const { engine, close } = await isolatedSharedSkillsEngine();
     try {
@@ -113,7 +114,7 @@ test('a source with config.shared_skills=false opts out of adoption without touc
 }, 60_000);
 
 test('connector and unapproved external sources cannot receive packaged content or DB-export scaffolding', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'gbrain-shared-connectors-'));
+  const home = mkdtempReal('gbrain-shared-connectors-');
   await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
     const { engine, close } = await isolatedSharedSkillsEngine();
     try {

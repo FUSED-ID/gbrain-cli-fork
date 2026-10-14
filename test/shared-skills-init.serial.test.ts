@@ -1,5 +1,6 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { packagedSharedSkills } from '../src/core/shared-skills/setup-bundle.ts';
@@ -11,7 +12,7 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 
 const directories: string[] = [];
 afterEach(() => { for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true }); });
-function temp() { const path = mkdtempSync(join(tmpdir(), 'gbrain-shared-init-')); directories.push(path); return path; }
+function temp() { const path = mkdtempReal('gbrain-shared-init-'); directories.push(path); return path; }
 
 async function init(home: string, args: string[] = [], binary?: string) {
   const command = binary ? [binary] : [process.execPath, join(import.meta.dir, '../src/cli.ts')];
