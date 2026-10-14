@@ -1,14 +1,14 @@
 import { expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { credentialAccessToken, readCredentials, validateCredentials, writeCredentials, type HarnessCredentials } from '../src/core/harness/credentials.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 const credential: HarnessCredentials = { version: 1, mcp_url: 'https://brain.example/mcp', issuer_url: 'https://brain.example',
   client_id: 'client:example+/%', client_secret: 'secret:example+/%' };
 
 test('Basic machine authentication survives private handoff and uses form-encoded credentials only in its header', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'gbrain-credential-method-'));
+  const root = mkdtempReal('gbrain-credential-method-');
   try {
     const path = join(root, 'credentials.json');
     writeCredentials(path, { ...credential, token_endpoint_auth_method: 'client_secret_basic' });

@@ -1,6 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { withEnv } from './helpers/with-env.ts';
@@ -11,9 +10,10 @@ import type { HarnessCredentials } from '../src/core/harness/credentials.ts';
 import type { SharedSkillsToolCaller } from '../src/core/shared-skills/adapter.ts';
 import { readHarnessConnectionStatus } from '../src/core/harness/status.ts';
 import { runCli } from './helpers/cli-spawn.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 const roots: string[] = [];
-const temp = () => { const root = mkdtempSync(join(tmpdir(), 'gbrain-native-router-')); roots.push(root); return root; };
+const temp = () => { const root = mkdtempReal('gbrain-native-router-'); roots.push(root); return root; };
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const body = '---\nname: gbrain-shared-router\ndescription: Discover relevant authorized shared-brain skills.\n---\nUse only the named connection. Native use remains unverified.\n';
 

@@ -1,13 +1,13 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { installLocalSharedSkills } from '../src/core/agent-install/shared-skills.ts';
 import { registerLocalWriter, revokeLocalWriter } from '../src/core/persistence/identity.ts';
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 import { setSharedSkillPolicy } from '../src/core/shared-skills/policy.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
@@ -29,7 +29,7 @@ beforeAll(async () => {
 afterAll(async () => { await engine?.disconnect(); for (const root of roots) rmSync(root, { recursive: true, force: true }); });
 
 async function fixture() {
-  const root = mkdtempSync(join(tmpdir(), 'gbrain-local-enrollment-')); roots.push(root);
+  const root = mkdtempReal('gbrain-local-enrollment-'); roots.push(root);
   const registration = await withEnv({ GBRAIN_HOME: root, DATABASE_URL: undefined }, () => registerLocalWriter(engine, 'cli', {
     sourceIds: ['default'], operations: null, scopes: ['read', 'write'], slugPrefixes: null,
   }));

@@ -8,9 +8,9 @@
  * PGLite in-memory ($0).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
@@ -26,7 +26,7 @@ let engine: PGLiteEngine;
 let provider: GBrainOAuthProvider;
 let home: string;
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), 'gbrain-profile-surface-'));
+  home = mkdtempReal('gbrain-profile-surface-');
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();

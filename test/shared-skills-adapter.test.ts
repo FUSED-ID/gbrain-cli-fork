@@ -1,6 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -10,9 +9,10 @@ import { sha256 } from '../src/core/agent-install/state.ts';
 import { installHarnessConnection } from '../src/core/harness/install.ts';
 import type { HarnessCredentials } from '../src/core/harness/credentials.ts';
 import { operations } from '../src/core/operations.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 const roots: string[] = [];
-const temp = () => { const root = mkdtempSync(join(tmpdir(), 'gbrain-shared-adapter-')); roots.push(root); return root; };
+const temp = () => { const root = mkdtempReal('gbrain-shared-adapter-'); roots.push(root); return root; };
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 function fixture() {

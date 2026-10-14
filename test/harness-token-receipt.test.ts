@@ -1,15 +1,15 @@
 /** #5775: an inline-token install names where the token lives and how to replace it, never the token. */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { installHarnessConnection } from '../src/core/harness/install.ts';
 import { writeCredentials, type HarnessCredentials } from '../src/core/harness/credentials.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 const roots: string[] = [];
-const temp = () => { const p = mkdtempSync(join(tmpdir(), 'gbrain-token-receipt-')); roots.push(p); return p; };
+const temp = () => { const p = mkdtempReal('gbrain-token-receipt-'); roots.push(p); return p; };
 afterEach(() => { for (const p of roots.splice(0)) rmSync(p, { recursive: true, force: true }); });
 const TOKEN = 'fixture-access-private-value';
 const creds = (): HarnessCredentials => ({ version: 1, mcp_url: 'https://brain.example.com/mcp', issuer_url: 'https://brain.example.com', client_id: 'gbrain_cl_fixture',

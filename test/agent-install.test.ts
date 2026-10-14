@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkedManagedPaths, checkedRoot, confinedPath, isolatedAgentEnv, readFileConfigState } from '../src/core/agent-install/state.ts';
 import { renderAgentLauncher } from '../src/core/agent-install/launcher.ts';
 import { extractPgliteDump, readBackupArchive, writeBackupArchive } from '../src/core/backup/archive.ts';
 import { AGENT_ENV_SHELL_PATTERN, shouldDropAgentEnv } from '../src/core/agent-install/environment.ts';
 import { listRecipes } from '../src/core/ai/recipes/index.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 let temporary: string;
-beforeEach(() => { temporary = mkdtempSync(join(tmpdir(), 'gbrain-agent-files-')); });
+beforeEach(() => { temporary = mkdtempReal('gbrain-agent-files-'); });
 afterEach(() => { rmSync(temporary, { recursive: true, force: true }); });
 
 test('absolute root and archive paths refuse traversal and intermediate symlinks', () => {
