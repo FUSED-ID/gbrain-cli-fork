@@ -1,6 +1,5 @@
 import { expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -11,6 +10,7 @@ import { parseMarkdown, serializePageToMarkdown } from '../src/core/markdown.ts'
 import { renderTakesFence } from '../src/core/takes-fence.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 const body = [
   renderTakesFence([{ rowNum: 1, claim: 'Synthetic prediction', kind: 'bet', holder: 'brain', weight: 0.9, active: true,
@@ -23,7 +23,7 @@ const body = [
 ].join('\n\n').trim();
 
 async function fixture(run: (ctx: OperationContext, root: string) => Promise<void>) {
-  const home = mkdtempSync(join(tmpdir(), 'gbrain-export-projection-'));
+  const home = mkdtempReal('gbrain-export-projection-');
   const databaseUrl = process.env.SHARED_SKILLS_EXPORT_DATABASE_URL;
   await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
     const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);

@@ -1,6 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { withEnv } from './helpers/with-env.ts';
@@ -16,9 +15,10 @@ import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts'
 import { installHarnessConnection } from '../src/core/harness/install.ts';
 import { readHarnessConnectionStatus } from '../src/core/harness/status.ts';
 import { existsSync } from 'node:fs';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 for (const profile of ['memory-reader', 'coding-agent'] as const) test(`fresh packaged catalog delivers usable skills to the actual ${profile} profile`, async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'gbrain-profile-delivery-'));
+  const dir = mkdtempReal('gbrain-profile-delivery-');
   try {
     await withEnv({ GBRAIN_HOME: join(dir, 'home'), DATABASE_URL: undefined }, async () => {
       const isolated = await isolatedSharedSkillsEngine(); const engine = isolated.engine;

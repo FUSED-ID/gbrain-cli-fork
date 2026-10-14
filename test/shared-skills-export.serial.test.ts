@@ -1,7 +1,6 @@
 import { expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { exportDatabaseContent } from '../src/core/shared-skills/migration-export.ts';
@@ -10,9 +9,10 @@ import { withEnv } from './helpers/with-env.ts';
 import { runSharedSkillsMigration } from '../src/core/shared-skills/migration.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 async function fixture(run: (ctx: OperationContext, home: string) => Promise<void>) {
-  const home = mkdtempSync(join(tmpdir(), 'gbrain-content-export-'));
+  const home = mkdtempReal('gbrain-content-export-');
   await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
     const engine = new PGLiteEngine();
     try {

@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
@@ -10,10 +9,11 @@ import { packagedSharedSkills } from '../src/core/shared-skills/setup-bundle.ts'
 import { inventorySkillpack, setupHash } from '../src/core/shared-skills/setup-files.ts';
 import { legacyPublication, migrationCheckpointKey, runSharedSkillsMigration } from '../src/core/shared-skills/migration.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
-function temp(): string { const root = mkdtempSync(join(tmpdir(), 'gbrain-shared-setup-')); directories.push(root); return root; }
+function temp(): string { const root = mkdtempReal('gbrain-shared-setup-'); directories.push(root); return root; }
 function fixture(root: string | null = null) {
   const config = new Map<string, string>();
   const brainId = randomUUID(), incarnation = randomUUID();

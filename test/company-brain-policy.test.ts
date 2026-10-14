@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -22,8 +21,9 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { removeSource } from '../src/core/sources-ops.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
-const home = mkdtempSync(join(tmpdir(), 'company-policy-'));
+const home = mkdtempReal('company-policy-');
 const engines: BrainEngine[] = [];
 let closePg: (() => Promise<void>) | undefined;
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', '-C', root, ...args], { encoding: 'utf8' }).trim();
