@@ -1,6 +1,7 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -8,7 +9,7 @@ import { refreshManagedFilesystemRoots, assertManagedFilesystemWrite } from '../
 import { fixtures, initializeFixtures, selectFixtureHost, type HarnessConfig } from '../scripts/persistence/harness.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-const home = mkdtempSync(join(tmpdir(), 'gbrain-root-refresh-'));
+const home = mkdtempReal('gbrain-root-refresh-');
 const config: HarnessConfig = {
   kind: 'pglite', root: home, dataDir: join(home, 'data'), hostId: randomUUID(),
   seed: 5105, schedules: 0, operations: 0,

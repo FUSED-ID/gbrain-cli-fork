@@ -1,8 +1,9 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -22,7 +23,7 @@ import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 let memoryEngine: PGLiteEngine;
 let diskEngine: PGLiteEngine;
 let schemaVersion: string;
-const diskHome = mkdtempSync(join(tmpdir(), 'gbrain-activation-disk-'));
+const diskHome = mkdtempReal('gbrain-activation-disk-');
 beforeAll(async () => {
   memoryEngine = new PGLiteEngine();
   await memoryEngine.connect({}); await memoryEngine.initSchema();
@@ -38,7 +39,7 @@ afterAll(async () => {
   rmSync(diskHome, { recursive: true, force: true });
 });
 async function fixture(run: (engine: PGLiteEngine, root: string, home: string, sourceId: string) => Promise<void>, disk = false) {
-  const home = disk ? diskHome : mkdtempSync(join(tmpdir(), 'gbrain-activation-'));
+  const home = disk ? diskHome : mkdtempReal('gbrain-activation-');
   const root = join(home, 'canonical'); mkdirSync(root);
   const engine = disk ? diskEngine : memoryEngine;
   try {

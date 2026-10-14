@@ -1,7 +1,8 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { isPhysicalRootMetadata } from '../src/core/persistence/physical-root.ts';
 import { tmpdir } from 'node:os';
@@ -35,7 +36,7 @@ beforeAll(async()=>{
 },120_000);
 afterAll(async()=>{if(!engine)return;await disposePersistenceConsumer(engine);if(closePostgres)await closePostgres();else await engine.disconnect();});
 async function fixture(run:(home:string,source:string,root:string)=>Promise<void>){
-  const home=mkdtempSync(join(tmpdir(),'gbrain-topology-'));
+  const home=mkdtempReal('gbrain-topology-');
   try{await withEnv({GBRAIN_HOME:home,DATABASE_URL:undefined,GBRAIN_DATABASE_URL:undefined},async()=>{
     await resetPgliteState(engine as PGLiteEngine);await registerLocalWriter(engine,'cli');
     const source='lifecycle-source',root=join(home,'canonical');mkdirSync(root);

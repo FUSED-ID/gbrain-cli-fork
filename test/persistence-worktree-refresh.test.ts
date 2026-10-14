@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * F0 `gbrain sources refresh` (spec section 1.8; tests 1 and 3-13, test 2 is
  * persistence-worktree-refresh-restart.test.ts).
@@ -18,7 +19,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -123,7 +124,7 @@ test('3. a fetch killed by its bound leaves no refresh row and HEAD unchanged', 
 
 /** Runs `fn` with a PATH git that fails (stderr line, then `code`) whenever an argument equals `token`; every other command is the real git. */
 async function withFailingGit<T>(token: string, code: number, fn: () => Promise<T>): Promise<T> {
-  const bin = mkdtempSync(join(tmpdir(), 'gbrain-failing-git-'));
+  const bin = mkdtempReal('gbrain-failing-git-');
   const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
   writeFileSync(join(bin, 'git'), `#!/bin/sh
 for a in "$@"; do if [ "$a" = "${token}" ]; then echo "fatal: injected failure of ${token}" >&2; exit ${code}; fi; done

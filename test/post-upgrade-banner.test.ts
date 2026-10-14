@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * `gbrain post-upgrade` recovery banner (fix wave 3, Lane D): one [AGENT]
  * block on a brain with wave findings, naming the brain, each finding's count
@@ -5,7 +6,7 @@
  * command. The banner runs the full wave checks, not doctor --fast.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { postUpgradeRecoveryBanner } from '../src/commands/doctor/upgrade-banner.ts';
@@ -21,7 +22,7 @@ import { WAVE_CHECKS } from '../src/commands/doctor/wave-checks.ts';
 
 /** A CLAUDE_CONFIG_DIR holding one gbrain claude-cli scratch-project transcript (session `sess-self`). */
 function selfCaptureHost(): string {
-  const claude = mkdtempSync(join(tmpdir(), 'gbrain-banner-claude-'));
+  const claude = mkdtempReal('gbrain-banner-claude-');
   const scratch = join(claude, 'projects', '-tmp-gbrain-claude-cli-cwd-4242');
   mkdirSync(scratch, { recursive: true });
   writeFileSync(join(scratch, 'sess-self.jsonl'), '{}\n');
@@ -111,7 +112,7 @@ describe('fence findings in the banner (#6188, D7)', () => {
 });
 
 describe('gbrain post-upgrade', () => {
-  const home = mkdtempSync(join(tmpdir(), 'gbrain-banner-cli-'));
+  const home = mkdtempReal('gbrain-banner-cli-');
   const claude = selfCaptureHost();
   const cli = async (...args: string[]) => {
     const child = Bun.spawn([process.execPath, join(import.meta.dir, '..', 'src', 'cli.ts'), ...args], {

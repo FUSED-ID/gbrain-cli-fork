@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * #5914 (W14 P1.3c [R9b]): the recorded canonical path now traverses a
  * symlink (the checkout was moved and a link left at the old path). Every
@@ -11,7 +12,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -28,7 +29,7 @@ import { testBackends } from './helpers/test-backends.ts';
 
 const backends = testBackends();
 for (const kind of backends) describe(`canonical path through a symlink (${kind})`, () => {
-  const directory = mkdtempSync(join(tmpdir(), 'gbrain-symlink-root-'));
+  const directory = mkdtempReal('gbrain-symlink-root-');
   let engine: BrainEngine, close: (() => Promise<void>) | undefined;
   beforeAll(async () => {
     if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));

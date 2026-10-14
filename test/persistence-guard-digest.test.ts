@@ -1,5 +1,6 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -20,7 +21,7 @@ const sourceId = 'guard-digest';
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({}); await engine.initSchema();
-  home = mkdtempSync(join(tmpdir(), 'gbrain-guard-digest-'));
+  home = mkdtempReal('gbrain-guard-digest-');
   root = join(home, 'source'); mkdirSync(root);
   await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
   worktreeId = (await claimWorktree(engine, sourceId, root)).worktree_id;

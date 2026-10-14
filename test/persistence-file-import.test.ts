@@ -1,6 +1,7 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -23,7 +24,7 @@ import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 import { recordFactWithdrawal } from '../src/core/facts/withdrawal.ts';
 
-const home = mkdtempSync(join(tmpdir(), 'gbrain-file-import-'));
+const home = mkdtempReal('gbrain-file-import-');
 const engines: BrainEngine[] = [];
 let closePostgres: (() => Promise<void>) | undefined;
 const env = { GBRAIN_HOME: home, OPENAI_API_KEY: undefined, VOYAGE_API_KEY: undefined, ANTHROPIC_API_KEY: undefined };

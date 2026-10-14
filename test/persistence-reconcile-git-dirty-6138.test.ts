@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * #6138: a managed canonical file whose content agrees with the database but whose bytes differ from its last
  * commit (only YAML quoting changed) was previewed as `no_drift` with "Retry the original write with a new
@@ -7,7 +8,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -21,7 +22,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
-const home = mkdtempSync(join(tmpdir(), 'gbrain-reconcile-git-dirty-'));
+const home = mkdtempReal('gbrain-reconcile-git-dirty-');
 const engines: BrainEngine[] = [];
 let closePostgres: (() => Promise<void>) | undefined;
 beforeAll(async () => {
