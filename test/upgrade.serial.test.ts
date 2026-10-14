@@ -1,5 +1,6 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { describe, test, expect, spyOn } from 'bun:test';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { tmpdir } from 'os';
 import * as upgradeModule from '../src/commands/upgrade.ts';
@@ -47,7 +48,7 @@ describe('detectInstallMethod — package-install classification (in-process)', 
   const originalExecPath = process.execPath;
 
   function detectFrom(pkg: Record<string, unknown>, entry: string, execPath?: string) {
-    const root = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-detect-'));
+    const root = mkdtempReal('gbrain-upgrade-detect-');
     const pkgDir = join(root, 'node_modules', 'gbrain');
     const argv1 = join(pkgDir, entry);
     mkdirSync(dirname(argv1), { recursive: true });
@@ -120,7 +121,7 @@ describe('resolveBunGlobalRoot', () => {
   });
 
   test('uses canonical ~/.bun/install/global when present', () => {
-    const home = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-home-'));
+    const home = mkdtempReal('gbrain-upgrade-home-');
     try {
       delete process.env.BUN_INSTALL;
       process.env.HOME = home;
@@ -136,8 +137,8 @@ describe('resolveBunGlobalRoot', () => {
   });
 
   test('falls back to the package root above node_modules/gbrain', () => {
-    const home = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-home-'));
-    const globalRoot = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-global-'));
+    const home = mkdtempReal('gbrain-upgrade-home-');
+    const globalRoot = mkdtempReal('gbrain-upgrade-global-');
     try {
       delete process.env.BUN_INSTALL;
       process.env.HOME = home;
@@ -235,7 +236,7 @@ describe('runUpgrade target verification (#4366)', () => {
     /** Lay out extra install-shape files under HOME before the spawn. */
     setup?: (home: string) => void;
   }): Promise<{ home: string; exitCode: number; stdout: string; stderr: string }> {
-    const home = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-target-'));
+    const home = mkdtempReal('gbrain-upgrade-target-');
     const bin = join(home, 'bin');
     mkdirSync(bin);
     writeFileSync(join(bin, 'clawhub'), `#!/bin/sh\n${opts.clawhub ?? 'exit 0'}\n`);
