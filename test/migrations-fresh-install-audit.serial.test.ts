@@ -35,8 +35,10 @@ const SETUP = ['0.11.0', '0.14.0', '0.22.4', '0.28.0', '0.53.0'];
 
 let home = '';
 let tools = '';
+let bunCache = '';
 let databasePath = '';
 const keyless = Object.fromEntries([...PROVIDER_ENV_KEYS, 'GBRAIN_PGLITE_SNAPSHOT'].map(key => [key, undefined]));
+const freshInstallEnv = () => ({ ...keyless, BUN_RUNTIME_TRANSPILER_CACHE_PATH: bunCache });
 
 function ledger(): CompletedMigrationEntry[] {
   return readFileSync(join(home, '.gbrain', 'migrations', 'completed.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
@@ -45,10 +47,11 @@ function ledger(): CompletedMigrationEntry[] {
 beforeAll(async () => {
   home = mkdtempReal('gbrain-e8-home-');
   tools = mkdtempReal('gbrain-e8-tools-');
+  bunCache = mkdtempReal('gbrain-e8-bun-cache-');
   const child = join(tools, 'gbrain');
   writeFileSync(child, `#!/bin/sh\nexec "${process.execPath}" --no-env-file --preload "${join(REPO, 'test/helpers/no-network-preload.ts')}" "${join(REPO, 'src/cli.ts')}" "$@"\n`);
   chmodSync(child, 0o755);
-  const init = await runCli(['init', '--pglite', '--no-embedding'], { home, cwd: home, env: keyless, timeoutMs: 120_000 });
+  const init = await runCli(['init', '--pglite', '--no-embedding'], { home, cwd: home, env: freshInstallEnv(), timeoutMs: 120_000 });
   expect(init.exitCode).toBe(0);
   databasePath = JSON.parse(readFileSync(join(home, '.gbrain', 'config.json'), 'utf8')).database_path;
 }, 180_000);
@@ -56,6 +59,7 @@ beforeAll(async () => {
 afterAll(() => {
   rmSync(home, { recursive: true, force: true });
   rmSync(tools, { recursive: true, force: true });
+  rmSync(bunCache, { recursive: true, force: true });
 });
 
 describe('E8 — gbrain init stamps only fresh_install_noop migrations', () => {
@@ -74,7 +78,7 @@ describe('E8 — gbrain init stamps only fresh_install_noop migrations', () => {
   });
 
   test('apply-migrations --list --json reports the rest as pending_fresh_install with the finishing command', async () => {
-    const list = await runCli(['apply-migrations', '--list', '--json'], { home, cwd: home, env: keyless });
+    const list = await runCli(['apply-migrations', '--list', '--json'], { home, cwd: home, env: freshInstallEnv() });
     expect(list.exitCode).toBe(0);
     const body = JSON.parse(list.stdout.trim().split('\n').at(-1)!);
     const byStatus = (status: string) => body.migrations.filter((m: { status: string }) => m.status === status).map((m: { version: string }) => m.version);
@@ -100,7 +104,7 @@ describe('E8 audit — each fresh_install_noop orchestrator changes nothing on a
       }) as unknown as typeof fetch;
       try {
         await withEnv({
-          ...keyless, HOME: home, GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined,
+          ...freshInstallEnv(), HOME: home, GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined,
           GBRAIN_JOB_CHILD_CLI: join(tools, 'gbrain'), GBRAIN_SKIP_STARTUP_HOOKS: '1', GBRAIN_NO_AUTOPILOT_INSTALL: '1',
         }, async () => {
           const before = await snapshotBrain(home, databasePath);
@@ -119,13 +123,13 @@ describe('E8 audit — each fresh_install_noop orchestrator changes nothing on a
 
 describe('E8 — finishing setup', () => {
   test('apply-migrations --yes completes pending_fresh_install; shared-skills names its command; max_stalled keeps its default', async () => {
-    const run = await runCli(['apply-migrations', '--yes', '--no-autopilot-install'], { home, cwd: home, env: keyless, timeoutMs: 120_000 });
+    const run = await runCli(['apply-migrations', '--yes', '--no-autopilot-install'], { home, cwd: home, env: freshInstallEnv(), timeoutMs: 120_000 });
     expect(run.exitCode).toBe(0);
     expect(run.stdout).toContain(`next step: ${SHARED_CONTENT_INSPECT_ARGV.join(' ')}`);
     const shared = ledger().filter(e => e.version === '0.53.0').at(-1)!;
     expect(shared.phases?.[0]).toMatchObject({ name: 'content-checkpoints', argv: SHARED_CONTENT_INSPECT_ARGV });
 
-    const list = await runCli(['apply-migrations', '--list', '--json'], { home, cwd: home, env: keyless });
+    const list = await runCli(['apply-migrations', '--list', '--json'], { home, cwd: home, env: freshInstallEnv() });
     const body = JSON.parse(list.stdout.trim().split('\n').at(-1)!);
     expect(body.migrations.every((m: { status: string }) => m.status === 'applied')).toBe(true);
     expect(body.next).toBeUndefined();

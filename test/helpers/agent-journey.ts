@@ -15,7 +15,8 @@
  */
 import { expect } from 'bun:test';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { keylessBrainEnv } from './provider-env.ts';
@@ -43,6 +44,7 @@ export function journeyEnv(home: string, extra: Record<string, string | undefine
   env.HOME = home;
   env.GBRAIN_HOME = home;
   env.GBRAIN_SKIP_STARTUP_HOOKS = '1';
+  env.BUN_RUNTIME_TRANSPILER_CACHE_PATH = join(tmpdir(), `${basename(home)}-bun-runtime-cache`);
   for (const [k, v] of Object.entries(extra)) {
     if (v === undefined) delete env[k];
     else env[k] = v;
