@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -19,6 +18,7 @@ import { admitWrite, claimNextWrite } from '../src/core/persistence/journal.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { preparePageMutation } from '../src/core/persistence/page-prepare.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 interface Fixture { engine: BrainEngine; sourceId: string; path: string; original: string; pageId: number;
   binding: Awaited<ReturnType<typeof claimWorktree>>; }
@@ -38,7 +38,7 @@ beforeAll(async () => {
   }
   for (const engine of engines) {
     const sourceId = `withdrawal-file-race-${engine.kind}`;
-    const root = mkdtempSync(join(tmpdir(), 'gbrain-withdrawal-file-')); roots.push(root);
+    const root = mkdtempReal('gbrain-withdrawal-file-'); roots.push(root);
     await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
     const binding = await claimWorktree(engine, sourceId, root, hostId);
     const page = await engine.putPage(slug, { type: 'note', title: 'Withdrawal file race', compiled_truth: 'Original body.' }, { sourceId });

@@ -1,5 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
@@ -8,13 +7,14 @@ import { activateSharedSkillPersistence } from '../../src/core/persistence/skill
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { isolatedSharedSkillsEngine } from './shared-skills-engine.ts';
 import { withEnv } from './with-env.ts';
+import { mkdtempReal } from './real-temp.ts';
 
 export interface ManagedBrain { engine: BrainEngine; ctx: OperationContext; root: string }
 
 /** An activated managed brain whose default source is a claimed worktree; PGLite unless a database URL is given. */
 export async function managedBrain(run: (brain: ManagedBrain) => Promise<void>,
   opts: { databaseUrl?: string; setup?: (brain: { engine: BrainEngine; root: string }) => Promise<void> | void } = {}): Promise<void> {
-  const home = mkdtempSync(join(tmpdir(), 'gbrain-managed-brain-'));
+  const home = mkdtempReal('gbrain-managed-brain-');
   try {
     await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
       const { engine, close } = await isolatedSharedSkillsEngine(opts.databaseUrl);

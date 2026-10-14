@@ -6,8 +6,7 @@
  * carried probe table. Custody, schema, fence, manifest, marker, tombstone,
  * lock and routing code under test is the production code.
  */
-import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { cpSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import postgres from '#postgres';
@@ -18,6 +17,7 @@ import type { InventoryEntry, TableReceipt, VerifyResult } from '../../src/core/
 import { withGraduationRun } from '../../src/core/persistence/graduation-schema.ts';
 import { withEnv } from './with-env.ts';
 import { assertSafeE2eDatabaseUrl } from './db-guard.ts';
+import { mkdtempReal } from './real-temp.ts';
 
 export const PROBE: InventoryEntry = {
   relation: 'grad_probe', kind: 'table', class: 'carry', engines: { pglite: true, postgres: true },
@@ -133,7 +133,7 @@ let sourceTemplate: Promise<string> | undefined;
  */
 function seededSourceTemplate(): Promise<string> {
   sourceTemplate ??= (async () => {
-    const dir = join(mkdtempSync(join(tmpdir(), 'gbrain-graduation-template-')), 'brain.pglite');
+    const dir = join(mkdtempReal('gbrain-graduation-template-'), 'brain.pglite');
     const source = await openPglite(dir);
     try {
       await source.initSchema();
@@ -154,7 +154,7 @@ function seededSourceTemplate(): Promise<string> {
  * harnesses share a brain id or shared-skill secret.
  */
 export async function makeHarness(opts: HarnessOptions = {}): Promise<Harness> {
-  const root = mkdtempSync(join(tmpdir(), 'gbrain-graduation-'));
+  const root = mkdtempReal('gbrain-graduation-');
   const home = join(root, 'home');
   const gbrainDir = join(home, '.gbrain');
   mkdirSync(gbrainDir, { recursive: true });

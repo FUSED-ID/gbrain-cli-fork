@@ -21,10 +21,11 @@
  * iteration is re-sorted). stderr lines are kept (normalized) because the
  * early-stop paths announce themselves there.
  */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, existsSync } from 'node:fs';
-import { hostname, tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync, existsSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { defineNormalizer, mapStrings, scrubKeys, scrubPaths, scrubTimestamps } from './golden.ts';
+import { mkdtempReal } from './real-temp.ts';
 import { PROVIDER_ENV_KEYS } from './provider-env.ts';
 import { MIGRATIONS } from '../../src/core/schema-migrations/registry.generated.ts';
 
@@ -48,7 +49,7 @@ export interface DoctorHome {
 
 /** `opts.clock`: an ISO instant; the home's CLI processes share one clock that reads it now and moves forward from it. */
 export function makeDoctorHome(prefix: string, opts: { clock?: string } = {}): DoctorHome {
-  const home = mkdtempSync(join(tmpdir(), `gbrain-${prefix}-`));
+  const home = mkdtempReal(`gbrain-${prefix}-`);
   const work = join(home, 'work');
   const skillsDir = join(home, 'skills');
   mkdirSync(work, { recursive: true });

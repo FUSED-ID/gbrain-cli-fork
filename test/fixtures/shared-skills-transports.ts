@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -18,6 +17,7 @@ import { isolatedSharedSkillsEngine } from '../helpers/shared-skills-engine.ts';
 import { PROVIDER_ENV_KEYS } from '../helpers/provider-env.ts';
 import { fixtureDiagnostic } from '../helpers/fixture-diagnostics.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { mkdtempReal } from '../helpers/real-temp.ts';
 
 export const READ_OPERATIONS = ['list_skills', 'get_skill', 'get_skill_asset', 'list_brain_skillpack'];
 export const MEMBER_OPERATIONS = ['join_brain', 'sync_brain_skills', 'leave_brain'];
@@ -67,7 +67,7 @@ export async function blobResource(client: Client, uri: string): Promise<string>
 }
 
 export async function withTransportFixture(run: (fixture: TransportFixture) => Promise<void>, databaseUrl?: string) {
-  const dir = mkdtempSync(join(tmpdir(), 'gbrain-shared-transports-'));
+  const dir = mkdtempReal('gbrain-shared-transports-');
   try {
     await withEnv({ ...Object.fromEntries(PROVIDER_ENV_KEYS.map(key => [key, undefined])), HOME: join(dir, 'home'),
       GBRAIN_HOME: join(dir, 'home'), DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined,

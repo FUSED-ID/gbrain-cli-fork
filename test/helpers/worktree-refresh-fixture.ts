@@ -6,8 +6,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
@@ -17,6 +16,7 @@ import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { performManagedSync } from '../../src/core/persistence/sync-run.ts';
 import { withEnv } from './with-env.ts';
+import { mkdtempReal } from './real-temp.ts';
 
 export const page = (title: string, body: string) => `---\ntitle: ${title}\ntype: note\n---\n${body}\n`;
 export const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid',
@@ -77,7 +77,7 @@ export async function setupRefreshFixture(engine: BrainEngine, dir: string): Pro
 
 /** Runs `fn` with GBRAIN_HOME pointed at the fixture, then removes the fixture and parks the brain. */
 export async function withRefreshFixture(engine: BrainEngine, fn: (f: RefreshFixture) => Promise<void>): Promise<void> {
-  const dir = mkdtempSync(join(tmpdir(), 'gbrain-refresh-'));
+  const dir = mkdtempReal('gbrain-refresh-');
   try {
     await withEnv({ GBRAIN_HOME: join(dir, 'home') }, async () => {
       try { await fn(await setupRefreshFixture(engine, dir)); }

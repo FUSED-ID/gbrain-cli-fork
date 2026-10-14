@@ -20,6 +20,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 import { runSources } from '../src/commands/sources.ts';
 import { acquirePushLock, resolveWorkspaceRoot } from '../src/core/workspace-push.ts';
@@ -62,7 +63,7 @@ function makePair(): void {
 }
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'spc-'));
+  root = mkdtempReal('spc-');
   saved = {
     HOME: process.env.HOME,
     GBRAIN_HOME: process.env.GBRAIN_HOME,

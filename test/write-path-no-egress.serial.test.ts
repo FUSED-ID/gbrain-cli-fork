@@ -9,11 +9,11 @@
  * in-process tripwire cannot see. The first case proves the recorder is live.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
-import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { makeGitFixture } from './helpers/git-fixture.ts';
+import { mkdtempReal } from './helpers/real-temp.ts';
 
 const REPO = resolve(import.meta.dir, '..');
 const CLI = join(REPO, 'src', 'cli.ts');
@@ -43,7 +43,7 @@ async function run(cmd: string[], input?: string): Promise<{ code: number; out: 
 const gbrain = (args: string[], input?: string) => run(['bun', CLI, ...args], input);
 
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), 'gbrain-no-egress-'));
+  home = mkdtempReal('gbrain-no-egress-');
   proxy = createServer(socket => {
     socket.once('data', chunk => {
       connections.push(chunk.toString('latin1').split('\r\n')[0] ?? '');
