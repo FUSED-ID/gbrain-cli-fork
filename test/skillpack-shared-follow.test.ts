@@ -1,5 +1,6 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -13,7 +14,7 @@ import type { GBrainConfig } from '../src/core/config.ts';
 let root: string, engine: PGLiteEngine, config: GBrainConfig;
 const env = () => ({ GBRAIN_HOME: root, GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: 'default', DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined });
 beforeAll(async () => {
-  root = mkdtempSync(join(tmpdir(), 'gbrain-bridge-follow-'));
+  root = mkdtempReal('gbrain-bridge-follow-');
   config = { engine: 'pglite', database_path: join(root, '.gbrain', 'brain.pglite'), mcp: { publish_skills: true } };
   privateWrite(join(root, '.gbrain', 'config.json'), JSON.stringify(config));
   engine = new PGLiteEngine(); await engine.connect(config); await engine.initSchema();

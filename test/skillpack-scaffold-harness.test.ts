@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * The harness-lane CLI surface (spawned through src/cli.ts — exercises the
  * peeled arg parsers, the flag registry, per-harness defaults, the stub
@@ -9,7 +10,7 @@
  */
 
 import { describe, expect, test, afterEach } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 import { spawnSync } from 'child_process';
@@ -24,8 +25,8 @@ afterEach(() => {
 });
 
 function homes(): { home: string; gbrainHome: string } {
-  const home = mkdtempSync(join(tmpdir(), 'gb-harness-cli-home-'));
-  const gbrainHome = mkdtempSync(join(tmpdir(), 'gb-harness-cli-gb-'));
+  const home = mkdtempReal('gb-harness-cli-home-');
+  const gbrainHome = mkdtempReal('gb-harness-cli-gb-');
   cleanups.push(home, gbrainHome);
   return { home, gbrainHome };
 }
@@ -96,7 +97,7 @@ describe('refusals (typed, actionable)', () => {
 
   test('unknown persona exits 2 listing the valid choices', () => {
     const { home, gbrainHome } = homes();
-    const dest = mkdtempSync(join(tmpdir(), 'gb-harness-dest-'));
+    const dest = mkdtempReal('gb-harness-dest-');
     cleanups.push(dest);
     const r = run(['scaffold', '--harness', 'claude-code', '--persona', 'nope', '--dest', dest], {
       HOME: home,
@@ -108,7 +109,7 @@ describe('refusals (typed, actionable)', () => {
 
   test('--skill testing is refused with the recorded lane-exclusion reason [OV5]', () => {
     const { home, gbrainHome } = homes();
-    const dest = mkdtempSync(join(tmpdir(), 'gb-harness-dest-'));
+    const dest = mkdtempReal('gb-harness-dest-');
     cleanups.push(dest);
     const r = run(['scaffold', '--harness', 'claude-code', '--skill', 'testing', '--dest', dest], {
       HOME: home,
@@ -120,7 +121,7 @@ describe('refusals (typed, actionable)', () => {
 
   test('--stub with the publish gate off exits 2 with the exact enable command [D3B preflight]', () => {
     const { home, gbrainHome } = homes();
-    const dest = mkdtempSync(join(tmpdir(), 'gb-harness-dest-'));
+    const dest = mkdtempReal('gb-harness-dest-');
     cleanups.push(dest);
     const r = run(['scaffold', '--harness', 'claude-code', '--stub', '--skill', 'query', '--dest', dest], {
       HOME: home,
@@ -143,7 +144,7 @@ describe('refusals (typed, actionable)', () => {
 describe('remove --harness', () => {
   test('removes only ledger-owned files and updates state', () => {
     const { home, gbrainHome } = homes();
-    const dest = mkdtempSync(join(tmpdir(), 'gb-harness-dest-'));
+    const dest = mkdtempReal('gb-harness-dest-');
     cleanups.push(dest);
     const env = { HOME: home, GBRAIN_HOME: gbrainHome };
     const r1 = run(['scaffold', '--harness', 'claude-code', '--skill', 'query', '--skill', 'ingest', '--dest', dest, '--json'], env);
@@ -199,7 +200,7 @@ describe('post-peel dispatch smoke [ENG-E5]', () => {
 describe('scaffold --harness openclaw (workspace delegation)', () => {
   test('--skill picks filter the workspace scaffold; plugin-lane additions are reported skipped, not thrown', () => {
     const { home, gbrainHome } = homes();
-    const ws = mkdtempSync(join(tmpdir(), 'gb-harness-ws-'));
+    const ws = mkdtempReal('gb-harness-ws-');
     cleanups.push(ws);
     const env = { HOME: home, GBRAIN_HOME: gbrainHome };
     // gbrain-upgrade is a plugin-lane ADDITION (absent from the openclaw
@@ -218,7 +219,7 @@ describe('scaffold --harness openclaw (workspace delegation)', () => {
 
   test('all-additions selection refuses with a clear error; --stub and --dest are refused', () => {
     const { home, gbrainHome } = homes();
-    const ws = mkdtempSync(join(tmpdir(), 'gb-harness-ws-'));
+    const ws = mkdtempReal('gb-harness-ws-');
     cleanups.push(ws);
     const env = { HOME: home, GBRAIN_HOME: gbrainHome };
     const none = run(['scaffold', '--harness', 'openclaw', '--workspace', ws, '--skill', 'gbrain-upgrade'], env);
@@ -236,7 +237,7 @@ describe('scaffold --harness openclaw (workspace delegation)', () => {
 describe('remaining CLI gaps (coverage audit)', () => {
   test('--scope project lands under <workspace>/.claude/skills', () => {
     const { home, gbrainHome } = homes();
-    const ws = mkdtempSync(join(tmpdir(), 'gb-harness-proj-'));
+    const ws = mkdtempReal('gb-harness-proj-');
     cleanups.push(ws);
     const r = run(
       ['scaffold', '--harness', 'claude-code', '--scope', 'project', '--workspace', ws, '--skill', 'query', '--json'],
@@ -249,7 +250,7 @@ describe('remaining CLI gaps (coverage audit)', () => {
 
   test('remove --harness without --skill removes every owned slug', () => {
     const { home, gbrainHome } = homes();
-    const dest = mkdtempSync(join(tmpdir(), 'gb-harness-dest-'));
+    const dest = mkdtempReal('gb-harness-dest-');
     cleanups.push(dest);
     const env = { HOME: home, GBRAIN_HOME: gbrainHome };
     expect(run(['scaffold', '--harness', 'claude-code', '--skill', 'query', '--skill', 'ingest', '--dest', dest], env).code).toBe(0);
@@ -266,8 +267,8 @@ describe('remaining CLI gaps (coverage audit)', () => {
 
   test('skillpack status renders the installed-bridges section', () => {
     const { home, gbrainHome } = homes();
-    const dest = mkdtempSync(join(tmpdir(), 'gb-harness-dest-'));
-    const ws = mkdtempSync(join(tmpdir(), 'gb-harness-ws-'));
+    const dest = mkdtempReal('gb-harness-dest-');
+    const ws = mkdtempReal('gb-harness-ws-');
     cleanups.push(dest, ws);
     const env = { HOME: home, GBRAIN_HOME: gbrainHome };
     expect(run(['scaffold', '--harness', 'claude-code', '--skill', 'query', '--dest', dest], env).code).toBe(0);
@@ -282,8 +283,8 @@ describe('remaining CLI gaps (coverage audit)', () => {
 
   test('stub preflight gate 2: an unservable slug is refused with the skills_dir hint', () => {
     const { home, gbrainHome } = homes();
-    const dest = mkdtempSync(join(tmpdir(), 'gb-harness-dest-'));
-    const emptyDir = mkdtempSync(join(tmpdir(), 'gb-harness-empty-'));
+    const dest = mkdtempReal('gb-harness-dest-');
+    const emptyDir = mkdtempReal('gb-harness-empty-');
     cleanups.push(dest, emptyDir);
     // Publish gate ON via the file plane; skills dir pointed at an EMPTY dir
     // so every slug is unservable from the server's perspective.
@@ -304,7 +305,7 @@ describe('remaining CLI gaps (coverage audit)', () => {
 
   test('reference --harness: positional slug lens + apply guard requires a single skill', () => {
     const { home, gbrainHome } = homes();
-    const dest = mkdtempSync(join(tmpdir(), 'gb-harness-dest-'));
+    const dest = mkdtempReal('gb-harness-dest-');
     cleanups.push(dest);
     const env = { HOME: home, GBRAIN_HOME: gbrainHome };
     expect(run(['scaffold', '--harness', 'claude-code', '--skill', 'query', '--dest', dest], env).code).toBe(0);
@@ -323,7 +324,7 @@ describe('remaining CLI gaps (coverage audit)', () => {
 describe('review-driven CLI hardening', () => {
   test('active shared brain installs a live source-bound router only after follow approval and cleanly opts out', () => {
     const { home, gbrainHome } = homes();
-    const dest = mkdtempSync(join(tmpdir(), 'gb-shared-harness-dest-')); cleanups.push(dest);
+    const dest = mkdtempReal('gb-shared-harness-dest-'); cleanups.push(dest);
     const env = { HOME: home, GBRAIN_HOME: gbrainHome, GBRAIN_SOURCE: 'default', GBRAIN_BRAIN_ID: 'host' };
     const init = spawnSync('bun', [CLI, 'init', '--pglite', '--no-embedding', '--non-interactive'], {
       encoding: 'utf8', cwd: REPO_ROOT, env: { ...process.env, ...env }, timeout: 120_000,
@@ -379,7 +380,7 @@ describe('review-driven CLI hardening', () => {
 
   test('openclaw --persona path: lane additions inside the persona are skipped-and-reported', () => {
     const { home, gbrainHome } = homes();
-    const ws = mkdtempSync(join(tmpdir(), 'gb-harness-ws-'));
+    const ws = mkdtempReal('gb-harness-ws-');
     cleanups.push(ws);
     // daily-driver contains gbrain-advisor — verify whether it's an addition;
     // the receipt's openclaw_skipped must exactly equal the persona's
@@ -410,7 +411,7 @@ describe('review-driven CLI hardening', () => {
 
   test('stub preflight honors the DB config plane (gbrain config set, no config.json key)', () => {
     const { home, gbrainHome } = homes();
-    const dest = mkdtempSync(join(tmpdir(), 'gb-harness-dest-'));
+    const dest = mkdtempReal('gb-harness-dest-');
     cleanups.push(dest);
     const env = { HOME: home, GBRAIN_HOME: gbrainHome };
     // Initialize a PGLite brain and set the gate on the DB plane only.

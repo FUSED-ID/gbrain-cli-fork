@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * E2E — the bun-link (from-source) upgrade arc, fully shimmed (test-gap plan G6).
  *
@@ -57,7 +58,7 @@
 
 import { describe, test, expect, afterEach, afterAll } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -75,7 +76,7 @@ const SHIM_NEW_VERSION = '9.9.9.9';
 const cleanupDirs: string[] = [];
 
 // Isolated HOME for fixture git invocations (no user/system gitconfig).
-const GIT_HOME = mkdtempSync(join(tmpdir(), 'gbrain-bunlink-githome-'));
+const GIT_HOME = mkdtempReal('gbrain-bunlink-githome-');
 cleanupDirs.push(GIT_HOME);
 const GIT_IDENTITY = ['-c', 'user.name=gbrain-e2e', '-c', 'user.email=e2e@example.invalid', '-c', 'commit.gpgsign=false'];
 
@@ -115,7 +116,7 @@ function writeShim(dir: string, name: string, body: string): void {
 }
 
 function makeBase(label: string): BaseFixture {
-  const root = mkdtempSync(join(tmpdir(), `gbrain-bunlink-${label}-`));
+  const root = mkdtempReal(`gbrain-bunlink-${label}-`);
   cleanupDirs.push(root);
   const home = join(root, 'home');
   mkdirSync(join(home, '.gbrain'), { recursive: true });
@@ -308,7 +309,7 @@ describe('detectInstallMethod — bun-link marker', () => {
   }, 60_000);
 
   test('a source checkout of some OTHER repo is NOT bun-link', () => {
-    const root = mkdtempSync(join(tmpdir(), 'gbrain-bunlink-ctrl-'));
+    const root = mkdtempReal('gbrain-bunlink-ctrl-');
     cleanupDirs.push(root);
     const ctrl = join(root, 'other');
     mkdirSync(join(ctrl, 'src'), { recursive: true });

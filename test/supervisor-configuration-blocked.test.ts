@@ -1,5 +1,6 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { describe, expect, test, spyOn } from 'bun:test';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,7 +16,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 async function isolated(fn: (root: string) => Promise<void>): Promise<void> {
-  const root = mkdtempSync(join(tmpdir(), 'gbrain-blocked-owner-'));
+  const root = mkdtempReal('gbrain-blocked-owner-');
   try { await withEnv({ GBRAIN_HOME: root, HOME: root }, () => fn(root)); }
   finally { rmSync(root, { recursive: true, force: true }); }
 }

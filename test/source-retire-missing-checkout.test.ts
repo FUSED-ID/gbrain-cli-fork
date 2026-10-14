@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * #5219: on a managed brain, archive/remove/purge of a source whose canonical
  * checkout was deleted out of band succeeds for a zero-page source that is its
@@ -7,7 +8,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -42,7 +43,7 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
 
   /** Claims each source at its own directory (or a shared Git root), seeds while classic, activates, then deletes the checkout. */
   async function fixture(sources: string[], opts: { shared?: boolean; seed?: (source: string) => Promise<void> }, run: (home: string, gone: string) => Promise<void>) {
-    const home = mkdtempSync(join(tmpdir(), 'gbrain-retire-missing-'));
+    const home = mkdtempReal('gbrain-retire-missing-');
     try {
       await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
         if (flavor === 'pglite') await resetPgliteState(engine as PGLiteEngine);
