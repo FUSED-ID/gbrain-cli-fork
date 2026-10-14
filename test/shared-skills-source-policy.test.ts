@@ -35,7 +35,7 @@ function inventory(root: string): Record<string, string> {
 }
 
 test('a real approved company source remains byte-identical across shared-skill migration and setup', async () => {
-  const home = mkdtempReal('gbrain-shared-company-')), root = join(home, 'company');
+  const home = mkdtempReal('gbrain-shared-company-'), root = join(home, 'company');
   const databaseUrl = process.env.SHARED_SKILLS_EXPORT_DATABASE_URL;
   await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
     const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);

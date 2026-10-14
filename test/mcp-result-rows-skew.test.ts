@@ -156,7 +156,7 @@ describe('OAuth HTTP host', () => {
 
 describe('legacy bearer HTTP transport', () => {
   test('header -> full rows, no header -> lean rows, host config -> full rows', async () => {
-    const legacy = await withEnv({ GBRAIN_HOME: mkdtempReal('gbrain-skew-legacy-')) }, () => startHttpTransport({ port: 0, engine }));
+    const legacy = await withEnv({ GBRAIN_HOME: mkdtempReal('gbrain-skew-legacy-') }, () => startHttpTransport({ port: 0, engine }));
     const { token: bearer } = await mintLegacyToken(engine, { name: 'skew-legacy', takesHolders: ['world'], scopes: ['read'] });
     const call = async (headers: Record<string, string> = {}) => {
       const res = await fetch(`http://127.0.0.1:${(legacy as { port: number }).port}/mcp`, {
