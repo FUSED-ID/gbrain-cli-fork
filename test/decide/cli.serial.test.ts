@@ -1,3 +1,4 @@
+import { mkdtempReal } from '../helpers/real-temp.ts';
 /**
  * `gbrain decide` end to end through the real CLI on a fresh PGLite brain:
  * engine-free help, status --json golden (keyless, all off), catalogued
@@ -7,7 +8,7 @@
  * subprocess brain across it() boundaries and seed its database directly.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from '../helpers/cli-spawn.ts';
@@ -19,7 +20,7 @@ const KEYLESS = { TYPESAFE_API_KEY: undefined, JEV_TYPESAFE_API_KEY: undefined, 
 const cli = (args: string[]) => runCli(args, { home, env: KEYLESS, timeoutMs: 120_000 });
 
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), 'gbrain-decide-cli-'));
+  home = mkdtempReal('gbrain-decide-cli-');
   const init = await cli(['init', '--pglite', '--no-embedding']);
   expect(init.exitCode).toBe(0);
 }, 180_000);
@@ -30,7 +31,7 @@ afterAll(() => {
 
 describe('gbrain decide CLI', () => {
   test('--help answers without a brain', async () => {
-    const empty = mkdtempSync(join(tmpdir(), 'gbrain-decide-nobrain-'));
+    const empty = mkdtempReal('gbrain-decide-nobrain-');
     try {
       const r = await runCli(['decide', '--help'], { home: empty, env: KEYLESS });
       expect(r.exitCode).toBe(0);

@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * v0.32.3 — eval-compare report tests.
  * Pins the markdown + JSON shape, the metric-glossary integration, and the
@@ -5,7 +6,7 @@
  * say so and compute nothing).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs';
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { pathWithinRoot, runEvalCompare } from '../src/commands/eval-compare.ts';
@@ -13,7 +14,7 @@ import { pathWithinRoot, runEvalCompare } from '../src/commands/eval-compare.ts'
 let tmp: string;
 
 beforeAll(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'gbrain-eval-compare-'));
+  tmp = mkdtempReal('gbrain-eval-compare-');
 });
 
 afterAll(() => {
@@ -229,8 +230,8 @@ describe('runEvalCompare — paired statistics from per-query rows', () => {
 
 describe('per-query paths stay inside the repository root', () => {
   test('pathWithinRoot refuses .., outside absolute paths and escaping symlinks', () => {
-    const root = mkdtempSync(join(tmpdir(), 'gbrain-eval-root-'));
-    const outside = mkdtempSync(join(tmpdir(), 'gbrain-eval-outside-'));
+    const root = mkdtempReal('gbrain-eval-root-');
+    const outside = mkdtempReal('gbrain-eval-outside-');
     try {
       mkdirSync(join(root, 'runs'));
       writeFileSync(join(root, 'runs', 'a.jsonl'), '{}\n');
@@ -251,7 +252,7 @@ describe('per-query paths stay inside the repository root', () => {
   });
 
   test('a ledger record pointing outside the root is refused with a clear reason and never read', async () => {
-    const outside = mkdtempSync(join(tmpdir(), 'gbrain-eval-outside-'));
+    const outside = mkdtempReal('gbrain-eval-outside-');
     const cwd = process.cwd();
     process.chdir(tmp);
     try {

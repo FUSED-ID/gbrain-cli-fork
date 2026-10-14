@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * Public CLI admission for embed-backfill on PGLite.
  *
@@ -6,7 +7,7 @@
  * immediately starts an inline worker and waits for the terminal result.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -41,7 +42,7 @@ function run(args: string[]) {
 }
 
 beforeEach(() => {
-  isolatedHome = mkdtempSync(join(tmpdir(), 'gbrain-embed-admission-'));
+  isolatedHome = mkdtempReal('gbrain-embed-admission-');
   const init = run(['init', '--pglite', '--no-embedding', '--non-interactive']);
   expect(init.status, init.stderr).toBe(0);
 });

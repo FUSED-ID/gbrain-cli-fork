@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * Retrieval feedback through the real CLI on a keyless PGLite brain: off by
  * default (no answer id); once enabled, search prints an answer id, `gbrain rate` records the rating, and the next
@@ -6,7 +7,7 @@
  * Spawns the CLI against a temporary GBRAIN_HOME; no process-wide state.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
@@ -19,7 +20,7 @@ let home: string;
 const cli = (args: string[]) => runCli(args, { home, cwd: home, env, timeoutMs: 120_000 });
 
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), 'gbrain-feedback-cli-'));
+  home = mkdtempReal('gbrain-feedback-cli-');
   const notes = join(home, 'notes');
   mkdirSync(join(notes, 'people'), { recursive: true });
   writeFileSync(join(notes, 'people', 'alice-example.md'), '---\ntitle: Alice Example\ntype: person\n---\nAlice Example leads the widget project at Acme.\n');

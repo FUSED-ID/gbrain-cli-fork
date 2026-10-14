@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * #5186 (W14 P1.5a): `tracked_ownership_marker` warns when a source checkout
  * has an ownership marker in its Git index. An ignore rule never un-tracks a
@@ -7,7 +8,7 @@
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -16,7 +17,7 @@ import { DOCTOR_CHECK_REGISTRY } from '../src/commands/doctor/registry.ts';
 import { categorizeCheck } from '../src/core/doctor-categories.ts';
 
 let engine: PGLiteEngine;
-const dir = mkdtempSync(join(tmpdir(), 'gbrain-tracked-marker-'));
+const dir = mkdtempReal('gbrain-tracked-marker-');
 
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: process.env }).toString().trim();

@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * Doc test for docs/guides/repair.md "Held files" (#5988). It builds the
  * walkthrough's fixture with the real CLI on a throwaway PGLite brain: a Git
@@ -23,7 +24,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -40,7 +41,7 @@ import { retryHeld } from '../src/commands/sources-retry-held.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const REPO = join(import.meta.dir, '..');
-const work = mkdtempSync(join(tmpdir(), 'gbrain-held-walkthrough-'));
+const work = mkdtempReal('gbrain-held-walkthrough-');
 const checkout = join(work, 'notes');
 const env: Record<string, string> = Object.fromEntries(Object.entries(process.env)
   .filter(([key, value]) => value !== undefined && !['DATABASE_URL', 'GBRAIN_DATABASE_URL', 'GBRAIN_SOURCE', 'GBRAIN_BRAIN_ID'].includes(key))) as Record<string, string>;

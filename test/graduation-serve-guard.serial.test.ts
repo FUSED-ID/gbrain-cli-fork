@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * Engine graduation and long-lived clients (plan §6.4): a serve relaunched
  * during a run exits 75 with graduation_in_progress (a real `gbrain serve`
@@ -10,7 +11,7 @@
  * follow the plan's marker and tombstone formats.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
@@ -56,7 +57,7 @@ function writeTombstone(): void {
 const inHome = <T>(fn: () => T | Promise<T>) => withEnv({ GBRAIN_HOME: home, GBRAIN_GRADUATION_RUN: undefined, GBRAIN_DATABASE_URL: undefined, DATABASE_URL: undefined }, fn);
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'gbrain-grad-serve-'));
+  home = mkdtempReal('gbrain-grad-serve-');
   mkdirSync(join(home, '.gbrain'));
   dataDir = join(home, '.gbrain', 'brain.pglite');
   mkdirSync(dataDir);

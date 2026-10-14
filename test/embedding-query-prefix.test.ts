@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * #5691 / #3783: `embedding_query_prefix` is an opt-in, per-brain query
  * instruction for instruction-style embedding models. Search reads it once per
@@ -10,7 +11,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -121,7 +122,7 @@ describe('query-cache key', () => {
 describe('gbrain config set round-trip', () => {
   test('the printed command stores trailing whitespace and a newline exactly, and unset clears it', async () => {
     expect(KNOWN_CONFIG_KEYS).toContain('embedding_query_prefix');
-    const home = mkdtempSync(join(tmpdir(), 'gbrain-query-prefix-'));
+    const home = mkdtempReal('gbrain-query-prefix-');
     const cli = join(import.meta.dir, '..', 'src', 'cli.ts');
     const env: Record<string, string | undefined> = { ...process.env, GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined };
     try {

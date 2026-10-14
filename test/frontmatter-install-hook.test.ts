@@ -1,5 +1,6 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from 'fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { execFileSync } from 'child_process';
@@ -29,7 +30,7 @@ const install = (path: string, force = false) =>
  * commit, so exit 0 proves a file was never reached and exit 1 proves it was.
  */
 function runHookWithFailingGbrain(repo: string): number {
-  const bin = mkdtempSync(join(tmpdir(), 'fm-hook-bin-'));
+  const bin = mkdtempReal('fm-hook-bin-');
   writeFileSync(join(bin, 'gbrain'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   try {
     execFileSync('sh', [join(repo, '.githooks', 'pre-commit')], {
@@ -50,7 +51,7 @@ function runHookWithFailingGbrain(repo: string): number {
  * argv (one line per call, NUL-separated args) and exits `exit`.
  */
 function runHookRecordingGbrain(repo: string, exit = 0): { status: number; calls: string[][] } {
-  const bin = mkdtempSync(join(tmpdir(), 'fm-hook-bin-'));
+  const bin = mkdtempReal('fm-hook-bin-');
   const log = join(bin, 'calls');
   writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\nfor a in "$@"; do printf '%s\\0' "$a" >> '${log}'; done\necho >> '${log}'\nexit ${exit}\n`, { mode: 0o755 });
   try {
@@ -80,7 +81,7 @@ describe('frontmatter install-hook (B13)', () => {
   let tmp: string;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'fm-hook-'));
+    tmp = mkdtempReal('fm-hook-');
     gitInit(tmp);
   });
 
@@ -308,7 +309,7 @@ describe('frontmatter install-hook (B13)', () => {
     // git resolves core.hooksPath from every scope; a global one (husky,
     // secret-scanner templates, dotfiles) means git never looks at .githooks.
     // "installed" would be a lie — the hook is on disk but inert.
-    const other = mkdtempSync(join(tmpdir(), 'fm-hook-elsewhere-'));
+    const other = mkdtempReal('fm-hook-elsewhere-');
     try {
       writeFileSync(join(other, 'gitconfig'), `[core]\n\thooksPath = ${join(other, 'hooks')}\n`);
       // installHook directly: install() would mask the very global config
@@ -334,7 +335,7 @@ describe('frontmatter install-hook (B13)', () => {
     await install(tmp);
     execFileSync('git', ['-C', tmp, 'add', '.githooks']);
     execFileSync('git', ['-C', tmp, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'add hook']);
-    const clone = mkdtempSync(join(tmpdir(), 'fm-hook-clone-'));
+    const clone = mkdtempReal('fm-hook-clone-');
     try {
       execFileSync('git', ['clone', '-q', tmp, clone]);
       expect(localHooksPath(clone)).toBe('');
@@ -360,7 +361,7 @@ describe('frontmatter install-hook (B13)', () => {
   test('a symlinked .githooks/ or pre-commit is refused — nothing is written or removed through the link', async () => {
     // A committed symlink in a host repo would otherwise redirect our
     // writeFileSync/chmodSync (and uninstall's rmSync) to wherever it points.
-    const elsewhere = mkdtempSync(join(tmpdir(), 'fm-hook-linktarget-'));
+    const elsewhere = mkdtempReal('fm-hook-linktarget-');
     try {
       symlinkSync(elsewhere, join(tmp, '.githooks'));
       await expect(install(tmp)).rejects.toThrow(/symlink/);
@@ -406,7 +407,7 @@ describe('frontmatter install-hook (B13)', () => {
   });
 
   test('#4600 a path outside any git repo is refused with the shared sync message, nothing written', async () => {
-    const plain = mkdtempSync(join(tmpdir(), 'fm-hook-nogit-'));
+    const plain = mkdtempReal('fm-hook-nogit-');
     try {
       await expect(install(plain)).rejects.toThrow(/Not inside a git repository/);
       expect(existsSync(join(plain, '.githooks'))).toBe(false);
@@ -458,7 +459,7 @@ describe('frontmatter install-hook (B13)', () => {
 
   test('#5988 with the real CLI: a broken staged blob blocks the commit even though the working copy is fixed', async () => {
     await install(tmp);
-    const bin = mkdtempSync(join(tmpdir(), 'fm-hook-real-'));
+    const bin = mkdtempReal('fm-hook-real-');
     writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\nexec '${process.execPath}' '${join(import.meta.dir, '..', 'src', 'cli.ts')}' "$@"\n`, { mode: 0o755 });
     const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, GBRAIN_HOME: join(bin, 'home'), DATABASE_URL: '', GBRAIN_DATABASE_URL: '', GBRAIN_SKIP_STARTUP_HOOKS: '1' };
     const hook = () => {

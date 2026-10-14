@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * Doc test for docs/guides/repair.md "Fences" (#6188, D22, D33). It builds the
  * walkthrough's fixture with the real CLI on a throwaway PGLite brain: a Git
@@ -20,12 +21,12 @@
  * Seams: none (a local provider stand-in behind the documented base-URL env).
  */
 import { afterAll, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const REPO = join(import.meta.dir, '..');
-const work = mkdtempSync(join(tmpdir(), 'gbrain-fence-walkthrough-'));
+const work = mkdtempReal('gbrain-fence-walkthrough-');
 const checkout = join(work, 'notes');
 const FB = '<!--- gbrain:facts:begin -->', FBE = '<!--- gbrain:facts:end -->';
 const FH = '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|---|---|---|---|---|---|---|---|---|';
