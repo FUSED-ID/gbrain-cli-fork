@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * `mcp.advertised_surface` narrows what tools/list shows without narrowing
  * what can be called. On stdio: a tool outside the listed set is still
@@ -6,7 +7,7 @@
  * Initialize instructions name request_tools when tools are left unlisted.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -43,7 +44,7 @@ async function session<T>(serveArgs: string[], fn: (client: Client, changed: () 
 }
 
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), 'gbrain-advertised-'));
+  home = mkdtempReal('gbrain-advertised-');
   const init = await gbrain(['init', '--pglite', '--no-embedding']);
   if (init.code !== 0) throw new Error(`init failed: ${init.out}`);
   const set = await gbrain(['config', 'set', 'mcp.advertised_surface', 'verbs']);

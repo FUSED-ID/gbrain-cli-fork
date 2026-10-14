@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * D-N5 (fix wave 9) — the v0.28.0 migration queues a re-chunk TODO in
  * pending-host-work.jsonl. Its `command` must be a real gbrain invocation
@@ -9,7 +10,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
@@ -26,7 +27,7 @@ function runCli(home: string, args: string[]): { out: string; status: number } {
 
 describe('D-N5 — v0.28.0 re-chunk TODO names a command that runs', () => {
   test('the queued command executes on a fresh brain', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'gbrain-dn5-'));
+    const home = mkdtempReal('gbrain-dn5-');
     try {
       const command = await withEnv({ GBRAIN_HOME: home, HOME: home }, async () => {
         const result = __testing.phaseCRechunkTodo({ dryRun: false } as never);

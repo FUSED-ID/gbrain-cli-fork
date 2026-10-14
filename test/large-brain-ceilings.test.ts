@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * Large-brain ceilings (Foundations 1, F4d), at the CLI boundary where a
  * 52,028-document brain hit them.
@@ -18,7 +19,7 @@
  * waiting an hour.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
@@ -33,7 +34,7 @@ function commitWorktree(root: string, files: number): void {
 }
 
 let dir: string;
-beforeAll(() => { dir = mkdtempSync(join(tmpdir(), 'gbrain-large-ceilings-')); });
+beforeAll(() => { dir = mkdtempReal('gbrain-large-ceilings-'); });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 async function freshBrain(name: string): Promise<string> {

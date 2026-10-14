@@ -1,5 +1,6 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -16,7 +17,7 @@ import type { OperationContext } from '../src/core/ops/contract.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { caught, envelopeFor, expectFunnelSuggestions } from './helpers/agent-envelope.ts';
 
-const sandbox = mkdtempSync(join(tmpdir(), 'gbrain-job-authority-'));
+const sandbox = mkdtempReal('gbrain-job-authority-');
 const root = join(sandbox, 'repo');
 const brainHome = join(sandbox, 'home');
 const legacyId = '11111111-1111-4111-8111-111111111111';

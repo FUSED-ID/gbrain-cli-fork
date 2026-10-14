@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * #5892: `gbrain think --json` stdout is JSON only; the AI SDK warning that a
  * claude-cli model triggers lands on stderr.
@@ -13,7 +14,7 @@
  * provider it takes the keyword-only path and never reaches the gateway.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
@@ -23,7 +24,7 @@ let home: string;
 let env: Record<string, string | undefined>;
 
 beforeAll(async () => {
-  root = mkdtempSync(join(tmpdir(), 'gbrain-json-stdout-'));
+  root = mkdtempReal('gbrain-json-stdout-');
   home = join(root, 'home');
   mkdirSync(home, { recursive: true });
   const claude = join(root, 'claude');

@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * C1 version skew (DX-1, DX-2, DX-16): who gets lean and who gets full
  * `search`/`query` rows, across client and host versions and transports.
@@ -21,7 +22,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { Server } from 'node:http';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
@@ -155,7 +156,7 @@ describe('OAuth HTTP host', () => {
 
 describe('legacy bearer HTTP transport', () => {
   test('header -> full rows, no header -> lean rows, host config -> full rows', async () => {
-    const legacy = await withEnv({ GBRAIN_HOME: mkdtempSync(join(tmpdir(), 'gbrain-skew-legacy-')) }, () => startHttpTransport({ port: 0, engine }));
+    const legacy = await withEnv({ GBRAIN_HOME: mkdtempReal('gbrain-skew-legacy-')) }, () => startHttpTransport({ port: 0, engine }));
     const { token: bearer } = await mintLegacyToken(engine, { name: 'skew-legacy', takesHolders: ['world'], scopes: ['read'] });
     const call = async (headers: Record<string, string> = {}) => {
       const res = await fetch(`http://127.0.0.1:${(legacy as { port: number }).port}/mcp`, {
@@ -201,7 +202,7 @@ describe('stdio host (third-party MCP client)', () => {
 
   let env: Record<string, string>;
   beforeAll(() => {
-    home = mkdtempSync(join(tmpdir(), 'gbrain-skew-stdio-'));
+    home = mkdtempReal('gbrain-skew-stdio-');
     env = keylessBrainEnv(process.env, home, { DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_REMOTE_CLIENT_SECRET: undefined }) as Record<string, string>;
     delete env.GBRAIN_SOURCE;
     run(env, 'init', '--pglite', '--no-embedding', '--non-interactive');

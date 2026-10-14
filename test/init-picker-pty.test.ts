@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * Real-PTY test for the interactive `gbrain init` pickers — the one flow that
  * needs a true TTY. Both pickers branch on stdin TTY-ness: the embedding
@@ -30,7 +31,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync } from 'fs';
+import { mkdirSync, rmSync, existsSync, readFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -66,7 +67,7 @@ describePty('gbrain init interactive pickers under a real PTY (keyless)', () => 
   let workDir: string;
 
   beforeAll(() => {
-    tmpRoot = mkdtempSync(join(tmpdir(), 'gbrain-pty-init-'));
+    tmpRoot = mkdtempReal('gbrain-pty-init-');
     homeDir = join(tmpRoot, 'home');
     workDir = join(tmpRoot, 'work');
     mkdirSync(homeDir, { recursive: true });

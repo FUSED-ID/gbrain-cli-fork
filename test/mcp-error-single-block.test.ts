@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * Agent operator contract v1 (A6 "MCP error", A1 thin client): every MCP
  * `isError` result is exactly ONE content block on every server path, the
@@ -40,7 +41,7 @@
  * hours in a second fresh home to pin the upgraded-brain shape.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -63,8 +64,8 @@ let legacy: LiveLegacyHttp;
 let readToken: string;
 let writeToken: string;
 let oauth: { clientId: string; clientSecret: string };
-const home = mkdtempSync(join(tmpdir(), 'gbrain-error-single-block-'));
-const agedHome = mkdtempSync(join(tmpdir(), 'gbrain-error-single-block-aged-'));
+const home = mkdtempReal('gbrain-error-single-block-');
+const agedHome = mkdtempReal('gbrain-error-single-block-aged-');
 /** Run a test body in this file's own GBRAIN_HOME (behavior_changes baseline and markers live there). */
 const inHome = (fn: () => Promise<void>) => () => withEnv({ GBRAIN_HOME: home }, fn);
 

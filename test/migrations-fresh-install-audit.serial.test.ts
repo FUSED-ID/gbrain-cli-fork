@@ -1,3 +1,4 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 /**
  * E8 fresh-install audit (agent-first operator wave, Lane E).
  *
@@ -16,7 +17,7 @@
  * of the audited orchestrators installs a service.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
@@ -42,8 +43,8 @@ function ledger(): CompletedMigrationEntry[] {
 }
 
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), 'gbrain-e8-home-'));
-  tools = mkdtempSync(join(tmpdir(), 'gbrain-e8-tools-'));
+  home = mkdtempReal('gbrain-e8-home-');
+  tools = mkdtempReal('gbrain-e8-tools-');
   const child = join(tools, 'gbrain');
   writeFileSync(child, `#!/bin/sh\nexec "${process.execPath}" --no-env-file --preload "${join(REPO, 'test/helpers/no-network-preload.ts')}" "${join(REPO, 'src/cli.ts')}" "$@"\n`);
   chmodSync(child, 0o755);

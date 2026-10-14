@@ -1,6 +1,7 @@
+import { mkdtempReal } from './helpers/real-temp.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { VERSION } from '../src/version.ts';
@@ -26,7 +27,7 @@ describe('isolated Bun-linked keyless installation lifecycle', () => {
   }
 
   beforeAll(() => {
-    home = mkdtempSync(join(tmpdir(), 'gbrain-install-lifecycle-'));
+    home = mkdtempReal('gbrain-install-lifecycle-');
     const bin = join(home, 'bin');
     mkdirSync(bin);
     for (const service of ['systemctl', 'launchctl', 'crontab', 'service']) {
