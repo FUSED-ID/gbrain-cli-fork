@@ -104,6 +104,7 @@ test/persistence-sync-fence-holds.test.ts
 test/persistence-sync-holds.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
+test/postgres-engine-private-routing.test.ts
 test/purge-fact.test.ts
 test/purge-global-marker.test.ts
 test/remediation-manual-only.test.ts
@@ -132,6 +133,7 @@ test/sync-staged-catchup.test.ts
 test/sync-waiver-budget.test.ts
 test/sync-waiver-run-imports.test.ts
 test/takes-vector-lifecycle-5885.serial.test.ts
+test/tombstone-race-guard-revival-loop.test.ts
 test/trust-channel-writes.test.ts
 test/trust-guarded-supersession.test.ts
 test/trust-owner-actions.test.ts
