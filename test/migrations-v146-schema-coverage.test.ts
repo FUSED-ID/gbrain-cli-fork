@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { FORK_MIGRATIONS, LATEST_VERSION, MIGRATIONS, runMigrations } from '../src/core/migrate.ts';
-import { repairOauthV127Artifacts } from '../src/core/oauth-v127-selfheal.ts';
+import { repairOauthV127Artifacts } from './helpers/oauth-v127-selfheal.ts';
 
 describe('fork v127 collision repair with permissions on the fork ledger', () => {
   let engine: PGLiteEngine;

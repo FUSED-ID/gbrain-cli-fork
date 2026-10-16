@@ -1,4 +1,4 @@
-import type { BrainEngine } from './engine.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
 
 export interface OauthV127SelfhealResult {
   repaired: boolean;
