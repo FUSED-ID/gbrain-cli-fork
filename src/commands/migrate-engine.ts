@@ -888,6 +888,79 @@ export async function assertWindowsGraduationPlatform(sourceEngine: BrainEngine,
   }
 }
 
+async function settleMigrationTarget(
+  opts: { force: boolean },
+  args: string[],
+  targetEngine: BrainEngine,
+  resumeAutopilot: () => void,
+  resumingMatchingManifest: boolean,
+  manifest: MigrateManifest | null,
+): Promise<{ stop: true } | { stop: false; manifest: MigrateManifest | null }> {
+  // Check if target has data
+  const targetStats = await targetEngine.getStats();
+  if (opts.force && targetStats.page_count > 0) {
+    const auth = await consentGate({
+      command: 'migrate --force',
+      effects: ['destructive'],
+      actor: 'agent',
+      what: `Wipe ${targetStats.page_count} existing page(s) from the migration target`,
+      why: 'The forced engine migration replaces the target brain from the source copy.',
+      risk: 'Deletes every target page before the migration copy starts; the target must be rebuilt from the source.',
+      user_message: `Wipe ${targetStats.page_count} existing target page(s) before migrating?`,
+      argv: ['gbrain', 'migrate', ...args.filter(arg => arg !== '--yes')],
+      args,
+    }, { json: args.includes('--json') });
+    if (!auth) {
+      await targetEngine.disconnect();
+      resumeAutopilot();
+      return { stop: true };
+    }
+  }
+  if (opts.force) {
+    if (targetStats.page_count > 0) {
+      console.log('--force: wiping target brain...');
+      // v0.18.0+ multi-source: deletePage(slug) is now source-scoped (defaults
+      // to 'default'), so per-page iteration would skip non-default-source
+      // rows. migrate-engine --force is a destructive wipe across the entire
+      // brain — all sources, all pages — so we issue a raw DELETE that matches
+      // the original semantic. Cascades through content_chunks / page_links /
+      // tags / timeline_entries / page_versions via existing FKs.
+      await targetEngine.executeRaw('DELETE FROM pages');
+    }
+    // --force always starts this exact migration fresh against this target:
+    // a manifest tracking a previous attempt must not be trusted to skip
+    // pages, regardless of whether the target LOOKED non-empty just now
+    // (e.g. the target DB file was recreated out-of-band but
+    // ~/.gbrain/migrate-manifest.json survived) — round 2 of #3194.
+    manifest = null;
+  } else if (targetStats.page_count > 0 && !resumingMatchingManifest) {
+    console.error(`Target brain is not empty (${targetStats.page_count} pages).`);
+    console.error('Run with --force to overwrite, or migrate to an empty brain.');
+    await targetEngine.disconnect();
+    // Not process.exit: the resume must run (see the quiesce block above).
+    setCliExitVerdict(1);
+    resumeAutopilot();
+    return { stop: true };
+  } else if (targetStats.page_count > 0 && resumingMatchingManifest) {
+    console.log(`Resuming previous migration: ${manifest!.completed_slugs.length} page(s) already copied.`);
+  } else if (!resumingMatchingManifest && await targetHasFactRows(targetEngine)) {
+    // Facts leg of the non-empty guard: a facts-only foreign target (zero
+    // pages, so the page_count check above passed) would lose its hot memory
+    // to copyMigrationFacts's DELETE FROM facts. A matching manifest means
+    // those rows came from OUR OWN in-progress run (delete-and-recopy
+    // converges them), so only a manifest-less target refuses. Same refusal
+    // shape as the page guard.
+    console.error('Target brain is not empty (its facts table has rows, though no pages).');
+    console.error('Run with --force to overwrite, or migrate to an empty brain.');
+    await targetEngine.disconnect();
+    // Not process.exit: the resume must run (see the quiesce block above).
+    setCliExitVerdict(1);
+    resumeAutopilot();
+    return { stop: true };
+  }
+  return { stop: false, manifest };
+}
+
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
   const opts = parseArgs(args);
   await assertWindowsGraduationPlatform(sourceEngine, opts);
@@ -964,68 +1037,9 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   }
   const resumingMatchingManifest = manifest !== null;
 
-  // Check if target has data
-  const targetStats = await targetEngine.getStats();
-  if (opts.force && targetStats.page_count > 0) {
-    const auth = await consentGate({
-      command: 'migrate --force',
-      effects: ['destructive'],
-      actor: 'agent',
-      what: `Wipe ${targetStats.page_count} existing page(s) from the migration target`,
-      why: 'The forced engine migration replaces the target brain from the source copy.',
-      risk: 'Deletes every target page before the migration copy starts; the target must be rebuilt from the source.',
-      user_message: `Wipe ${targetStats.page_count} existing target page(s) before migrating?`,
-      argv: ['gbrain', 'migrate', ...args.filter(arg => arg !== '--yes')],
-      args,
-    }, { json: args.includes('--json') });
-    if (!auth) {
-      await targetEngine.disconnect();
-      resumeAutopilot();
-      return;
-    }
-  }
-  if (opts.force) {
-    if (targetStats.page_count > 0) {
-      console.log('--force: wiping target brain...');
-      // v0.18.0+ multi-source: deletePage(slug) is now source-scoped (defaults
-      // to 'default'), so per-page iteration would skip non-default-source
-      // rows. migrate-engine --force is a destructive wipe across the entire
-      // brain — all sources, all pages — so we issue a raw DELETE that matches
-      // the original semantic. Cascades through content_chunks / page_links /
-      // tags / timeline_entries / page_versions via existing FKs.
-      await targetEngine.executeRaw('DELETE FROM pages');
-    }
-    // --force always starts this exact migration fresh against this target:
-    // a manifest tracking a previous attempt must not be trusted to skip
-    // pages, regardless of whether the target LOOKED non-empty just now
-    // (e.g. the target DB file was recreated out-of-band but
-    // ~/.gbrain/migrate-manifest.json survived) — round 2 of #3194.
-    manifest = null;
-  } else if (targetStats.page_count > 0 && !resumingMatchingManifest) {
-    console.error(`Target brain is not empty (${targetStats.page_count} pages).`);
-    console.error('Run with --force to overwrite, or migrate to an empty brain.');
-    await targetEngine.disconnect();
-    // Not process.exit: the resume must run (see the quiesce block above).
-    setCliExitVerdict(1);
-    resumeAutopilot();
-    return;
-  } else if (targetStats.page_count > 0 && resumingMatchingManifest) {
-    console.log(`Resuming previous migration: ${manifest!.completed_slugs.length} page(s) already copied.`);
-  } else if (!resumingMatchingManifest && await targetHasFactRows(targetEngine)) {
-    // Facts leg of the non-empty guard: a facts-only foreign target (zero
-    // pages, so the page_count check above passed) would lose its hot memory
-    // to copyMigrationFacts's DELETE FROM facts. A matching manifest means
-    // those rows came from OUR OWN in-progress run (delete-and-recopy
-    // converges them), so only a manifest-less target refuses. Same refusal
-    // shape as the page guard.
-    console.error('Target brain is not empty (its facts table has rows, though no pages).');
-    console.error('Run with --force to overwrite, or migrate to an empty brain.');
-    await targetEngine.disconnect();
-    // Not process.exit: the resume must run (see the quiesce block above).
-    setCliExitVerdict(1);
-    resumeAutopilot();
-    return;
-  }
+  const settled = await settleMigrationTarget(opts, args, targetEngine, resumeAutopilot, resumingMatchingManifest, manifest);
+  if (settled.stop) return;
+  manifest = settled.manifest;
 
   // v0.32.8 F8: manifest keys are now `${source_id}::${slug}` so multi-source
   // migrations don't collide on same-slug-different-source pages. Pre-v0.32.8

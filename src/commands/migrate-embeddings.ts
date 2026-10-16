@@ -926,6 +926,95 @@ async function migrateConsent(engine: BrainEngine, args: string[], flags: Return
   return auth !== null;
 }
 
+async function reportEmbeddingMigrationStatus(
+  engine: BrainEngine,
+  flags: { json: boolean },
+  exit: (code: number) => never,
+): Promise<void> {
+  const report = await readMigrationStatus(engine);
+  const envPresence = detectEnvPresence();
+  // API-key PRESENCE only — never values (Section 3).
+  const keyPresence: Record<string, boolean> = {};
+  for (const k of ['VOYAGE_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY']) {
+    keyPresence[k] = Boolean(process.env[k]);
+  }
+  let filePlane: { model?: string | null; dims?: number | null } | null = null;
+  let identity = { engine: 'unknown', target: 'unknown' };
+  try {
+    const { loadConfigFileOnly, loadConfig } = await import('../core/config.ts');
+    const fileCfg = loadConfigFileOnly();
+    filePlane = fileCfg
+      ? { model: fileCfg.embedding_model ?? null, dims: fileCfg.embedding_dimensions ?? null }
+      : null;
+    const cfg = loadConfig();
+    if (cfg?.database_url) identity = { engine: 'postgres', target: redactPgUrl(cfg.database_url) };
+    else if (cfg?.database_path) identity = { engine: 'pglite', target: cfg.database_path };
+    else identity = { engine: cfg?.engine ?? 'pglite', target: 'default path' };
+  } catch { /* informational */ }
+
+  const resumeCmd = report.marker.kind === 'live'
+    ? renderResumeCommand(report.marker.state)
+    : null;
+
+  if (flags.json) {
+    console.log(JSON.stringify({
+      status: 'status',
+      identity,
+      env: { present: envPresence.present, model: envPresence.model, dims: envPresence.dims },
+      keys: keyPresence,
+      file_plane: filePlane,
+      ...report,
+      resume_command: resumeCmd,
+    }, null, 2));
+    exit(0);
+  }
+
+  console.log('Embedding migration status');
+  console.log(`  Brain: ${identity.engine} (${identity.target}); scope: brain-wide (all sources)`);
+  console.log(`  Env plane:  GBRAIN_EMBEDDING_MODEL=${envPresence.model ?? '(unset)'} GBRAIN_EMBEDDING_DIMENSIONS=${envPresence.dims ?? '(unset)'}`);
+  console.log(`  Keys:       ${Object.entries(keyPresence).map(([k, v]) => `${k}=${v ? 'set' : 'unset'}`).join(' ')}`);
+  console.log(`  File plane: ${filePlane ? `${filePlane.model ?? '(none)'} @ ${filePlane.dims ?? '?'}d` : '(no ~/.gbrain/config.json)'}`);
+  console.log(`  DB plane:   ${report.db_plane.model ?? '(none)'} @ ${report.db_plane.dims ?? '?'}d`);
+  console.log(`  Column:     content_chunks.embedding ${report.column_dims === null ? 'absent/unreadable' : `${report.column_dims}d`}${report.pinned_widths.map((p) => `; ${p.table} ${p.dims === null ? '?' : `${p.dims}d`}`).join('')}`);
+  console.log(`  Vectors:    ${report.missing_embeddings ?? '?'} chunk(s) missing; ${report.chunkless_pages ?? '?'} contentful page(s) without chunks; facts pending: ${report.facts_pending ?? 'n/a'}; takes pending: ${report.takes_pending ?? 'n/a'}`);
+  console.log(`  Projection: ${report.blocked_projection_pages ?? '?'} page(s) blocked; bounded canonical recovery runs before invalidation.`);
+  if (report.embed_skip_null_chunks !== null && report.embed_skip_null_chunks > 0) {
+    console.log(`  Embed-skip: ${report.embed_skip_null_chunks} chunk(s) on embed_skip pages have NULL vectors — excluded from re-embedding by design (remove the frontmatter marker to re-embed them)`);
+  }
+  if (report.signature_census.length > 0) {
+    console.log(`  Signatures: ${report.signature_census.map((c) => `${c.signature ?? '(none recorded)'}: ${c.pages}`).join(', ')}`);
+  }
+  if (report.synopsis_tier_pages !== null && report.synopsis_tier_pages > 0) {
+    console.log(`  Context tier: ${report.synopsis_tier_pages} page(s) at per_chunk_synopsis (a migration re-embeds them at title tier)`);
+  }
+  if (report.stale_vs_target.target) {
+    const fs = report.stale_vs_target.false_stamped;
+    console.log(`  Target:     ${report.stale_vs_target.target} — ${report.stale_vs_target.stale ?? '?'} chunk(s) not yet in that space${fs !== null && fs > 0 ? `; ${fs} chunk(s) falsely stamped with the target signature (chunk model disagrees — a run re-embeds them)` : ''}`);
+  }
+  switch (report.marker.kind) {
+    case 'live': {
+      const s = report.marker.state;
+      if (s.budget) console.log(`  Budget:     $${s.budget.debited_usd} conservatively debited of $${s.budget.max_cost_usd} authorized; ${s.budget.requests} dispatched/reserved request(s).`);
+      console.log(`  Migration:  IN FLIGHT to ${s.to_model} (${s.to_dims}d), started ${s.started_at}${s.retargeted_at ? `, retargeted ${s.retargeted_at}` : ''}`);
+      if (s.superseded && s.superseded.length > 0) {
+        console.log(`              abandoned targets: ${s.superseded.map((x) => `${x.to_model} (${x.to_dims}d, started ${x.started_at})`).join('; ')}`);
+      }
+      console.log(`  Resume:     ${resumeCmd}`);
+      break;
+    }
+    case 'corrupt':
+      console.log(`  Migration:  state marker is CORRUPT (raw: ${report.marker.raw_prefix}) — re-running a migration rewrites it`);
+      break;
+    default:
+      console.log('  Migration:  none in flight');
+  }
+  if (report.completed) {
+    const c = report.completed;
+    console.log(`  Last completed: to ${String(c.to_model)} (${String(c.to_dims)}d) at ${String(c.completed_at)}${c.verify_search ? `; smoke check: ${String((c.verify_search as { status?: unknown }).status)}` : ''}`);
+  }
+  exit(0);
+}
+
 export async function runMigrateEmbeddings(
   engine: BrainEngine,
   args: string[],
@@ -949,91 +1038,9 @@ export async function runMigrateEmbeddings(
   }
   const flags = parseMigrateEmbeddingsFlags(args);
 
-  // ── Read-only status surface (D6). No env refusal (it REPORTS env), no
-  // mutation, no spend — the mid-incident "where am I?" command.
   if (args.includes('--status')) {
-    const report = await readMigrationStatus(engine);
-    const envPresence = detectEnvPresence();
-    // API-key PRESENCE only — never values (Section 3).
-    const keyPresence: Record<string, boolean> = {};
-    for (const k of ['VOYAGE_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY']) {
-      keyPresence[k] = Boolean(process.env[k]);
-    }
-    let filePlane: { model?: string | null; dims?: number | null } | null = null;
-    let identity = { engine: 'unknown', target: 'unknown' };
-    try {
-      const { loadConfigFileOnly, loadConfig } = await import('../core/config.ts');
-      const fileCfg = loadConfigFileOnly();
-      filePlane = fileCfg
-        ? { model: fileCfg.embedding_model ?? null, dims: fileCfg.embedding_dimensions ?? null }
-        : null;
-      const cfg = loadConfig();
-      if (cfg?.database_url) identity = { engine: 'postgres', target: redactPgUrl(cfg.database_url) };
-      else if (cfg?.database_path) identity = { engine: 'pglite', target: cfg.database_path };
-      else identity = { engine: cfg?.engine ?? 'pglite', target: 'default path' };
-    } catch { /* informational */ }
-
-    const resumeCmd = report.marker.kind === 'live'
-      ? renderResumeCommand(report.marker.state)
-      : null;
-
-    if (flags.json) {
-      console.log(JSON.stringify({
-        status: 'status',
-        identity,
-        env: { present: envPresence.present, model: envPresence.model, dims: envPresence.dims },
-        keys: keyPresence,
-        file_plane: filePlane,
-        ...report,
-        resume_command: resumeCmd,
-      }, null, 2));
-      exit(0);
-    }
-
-    console.log('Embedding migration status');
-    console.log(`  Brain: ${identity.engine} (${identity.target}); scope: brain-wide (all sources)`);
-    console.log(`  Env plane:  GBRAIN_EMBEDDING_MODEL=${envPresence.model ?? '(unset)'} GBRAIN_EMBEDDING_DIMENSIONS=${envPresence.dims ?? '(unset)'}`);
-    console.log(`  Keys:       ${Object.entries(keyPresence).map(([k, v]) => `${k}=${v ? 'set' : 'unset'}`).join(' ')}`);
-    console.log(`  File plane: ${filePlane ? `${filePlane.model ?? '(none)'} @ ${filePlane.dims ?? '?'}d` : '(no ~/.gbrain/config.json)'}`);
-    console.log(`  DB plane:   ${report.db_plane.model ?? '(none)'} @ ${report.db_plane.dims ?? '?'}d`);
-    console.log(`  Column:     content_chunks.embedding ${report.column_dims === null ? 'absent/unreadable' : `${report.column_dims}d`}${report.pinned_widths.map((p) => `; ${p.table} ${p.dims === null ? '?' : `${p.dims}d`}`).join('')}`);
-    console.log(`  Vectors:    ${report.missing_embeddings ?? '?'} chunk(s) missing; ${report.chunkless_pages ?? '?'} contentful page(s) without chunks; facts pending: ${report.facts_pending ?? 'n/a'}; takes pending: ${report.takes_pending ?? 'n/a'}`);
-    console.log(`  Projection: ${report.blocked_projection_pages ?? '?'} page(s) blocked; bounded canonical recovery runs before invalidation.`);
-    if (report.embed_skip_null_chunks !== null && report.embed_skip_null_chunks > 0) {
-      console.log(`  Embed-skip: ${report.embed_skip_null_chunks} chunk(s) on embed_skip pages have NULL vectors — excluded from re-embedding by design (remove the frontmatter marker to re-embed them)`);
-    }
-    if (report.signature_census.length > 0) {
-      console.log(`  Signatures: ${report.signature_census.map((c) => `${c.signature ?? '(none recorded)'}: ${c.pages}`).join(', ')}`);
-    }
-    if (report.synopsis_tier_pages !== null && report.synopsis_tier_pages > 0) {
-      console.log(`  Context tier: ${report.synopsis_tier_pages} page(s) at per_chunk_synopsis (a migration re-embeds them at title tier)`);
-    }
-    if (report.stale_vs_target.target) {
-      const fs = report.stale_vs_target.false_stamped;
-      console.log(`  Target:     ${report.stale_vs_target.target} — ${report.stale_vs_target.stale ?? '?'} chunk(s) not yet in that space${fs !== null && fs > 0 ? `; ${fs} chunk(s) falsely stamped with the target signature (chunk model disagrees — a run re-embeds them)` : ''}`);
-    }
-    switch (report.marker.kind) {
-      case 'live': {
-        const s = report.marker.state;
-        if (s.budget) console.log(`  Budget:     $${s.budget.debited_usd} conservatively debited of $${s.budget.max_cost_usd} authorized; ${s.budget.requests} dispatched/reserved request(s).`);
-        console.log(`  Migration:  IN FLIGHT to ${s.to_model} (${s.to_dims}d), started ${s.started_at}${s.retargeted_at ? `, retargeted ${s.retargeted_at}` : ''}`);
-        if (s.superseded && s.superseded.length > 0) {
-          console.log(`              abandoned targets: ${s.superseded.map((x) => `${x.to_model} (${x.to_dims}d, started ${x.started_at})`).join('; ')}`);
-        }
-        console.log(`  Resume:     ${resumeCmd}`);
-        break;
-      }
-      case 'corrupt':
-        console.log(`  Migration:  state marker is CORRUPT (raw: ${report.marker.raw_prefix}) — re-running a migration rewrites it`);
-        break;
-      default:
-        console.log('  Migration:  none in flight');
-    }
-    if (report.completed) {
-      const c = report.completed;
-      console.log(`  Last completed: to ${String(c.to_model)} (${String(c.to_dims)}d) at ${String(c.completed_at)}${c.verify_search ? `; smoke check: ${String((c.verify_search as { status?: unknown }).status)}` : ''}`);
-    }
-    exit(0);
+    await reportEmbeddingMigrationStatus(engine, flags, exit);
+    return;
   }
 
   let consent;
