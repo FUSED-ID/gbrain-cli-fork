@@ -1,4 +1,5 @@
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
+import { routeMarkdownImport } from './import-private-route.ts';
 import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
 import { maintenanceTransaction, ownerSourceGateInput, suppliedTrustMarkerView, trustMarkerChanged, writeTrustOfGate } from './persistence/attribution.ts';
 import { assertImportBase, sameCanonicalImport, sameContentAnyKeyOrder } from './page-state/import-guard.ts';
@@ -56,8 +57,6 @@ import { decorateEmbeddingDimError } from './embedding-dim-check.ts';
 import { resolveImportContextualMode } from './import-contextual-mode.ts';
 import { runGuardrails } from './guardrails.ts';
 import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
-import { resolvePrivateWriteSource } from './private-source-routing.ts';
-import { assertPageWriteThroughReady } from './write-through.ts';
 
 /**
  * #2044 / #4548: row-level, visibility-aware fence merge for one page
@@ -344,30 +343,9 @@ export async function importFromContent(
     return { slug, status: screen.refusal.code === 'file_too_large' ? 'skipped' : 'error', chunks: 0, error: screen.refusal.message, refusal: screen.refusal, skip_reason: screen.refusal.code };
   }
   const parsed = (screen as { parsed: ParsedMarkdown }).parsed;
-  if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct content import');
-  // Canonicalize only free-prose fields before protected-fence parsing, hidden
-  // row merging, hashing and indexing. Frontmatter identities stay untouched.
-  parsed.title = sanitizeText(parsed.title);
-  parsed.compiled_truth = sanitizeText(parsed.compiled_truth);
-  parsed.timeline = sanitizeText(parsed.timeline);
-
-  // Route markdown imports through the same private-source policy as put_page.
-  // A routed destination must be writable before its canonical row is created.
-  const requestedSourceId = sourceId ?? 'default';
-  const route = await resolvePrivateWriteSource(engine, {
-    requestedSourceId,
-    slug,
-    content,
-    entityType: parsed.type,
-    entityName: parsed.title,
-  });
-  const routedFromSourceId = route.routed && route.sourceId !== requestedSourceId
-    ? requestedSourceId
-    : null;
-  if (route.routed) sourceId = route.sourceId;
-  if (routedFromSourceId && sourceId) {
-    await assertPageWriteThroughReady(engine, slug, sourceId);
-  }
+  const routedImport = await routeMarkdownImport(engine, opts.prepare, parsed, content, slug, sourceId);
+  sourceId = routedImport.sourceId;
+  const routedFromSourceId = routedImport.routedFromSourceId;
 
   // #1699/#6259 trust boundary: only the gate and owner-tier paths keep gate-owned markers (import-screen.ts).
   stripGateOwnedMarkers(parsed, opts);
@@ -888,9 +866,7 @@ export async function importFromContent(
     throw decorateEmbeddingDimError(err, slug, activeColName);
   });
 
-  if (routedFromSourceId) {
-    await engine.softDeletePage(slug, { sourceId: routedFromSourceId });
-  }
+  if (routedFromSourceId) await engine.softDeletePage(slug, { sourceId: routedFromSourceId });
 
 
   if (opts.onPostCommitEmbedding && !opts.noEmbed && chunks.length > 0) {

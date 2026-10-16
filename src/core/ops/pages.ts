@@ -15,11 +15,10 @@ import { clampSearchLimit, type BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
 import { decodeDeepResearchId, deepResearchPageUrl } from '../deep-research-id.ts';
 import { PageSnapshotAmbiguousError, type PageSnapshot } from '../page-state/types.ts';
-import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
+import { serializePageToMarkdown } from '../markdown.ts';
 import { pageTrustForRead, projectFetchText, projectGetPage, readQuarantined } from './get-page-projection.ts';
 import { MIN_TRUST_PARAM } from '../eligibility/policy.ts';
 import { stampRowTrust } from '../eligibility/stamp.ts';
-import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { fileHeldField, readHeldPages } from '../persistence/held-reads.ts';
@@ -31,8 +30,9 @@ import { OperationError, opError, type Operation, type OperationContext } from '
 import { invalidParam, readFix } from './op-fix.ts';
 import { isDatetimeInputError } from '../utils.ts';
 import { rethrowNamingRevisionSource } from './put-page-revision-source.ts';
-import { enforcePrivatePageWrite, resolvePrivateWriteSource } from '../private-source-routing.ts';
-import { assertPageWriteThroughReady } from '../write-through.ts';
+import { enforcePrivatePageWrite } from '../private-source-routing.ts';
+import { preflightPutPagePrivateWrite } from './pages-private-preflight.ts';
+export { autoLinkLockKey, autoLinkWrittenPage } from './pages-auto-link.ts';
 import {
   assertExplicitSourceLive,
   enforceSubagentSlugFence,
@@ -334,25 +334,7 @@ const put_page: Operation = {
       }
       return { dry_run: true, action: 'put_page', slug: p.slug };
     }
-    if (typeof p.slug === 'string' && typeof p.content === 'string') {
-      const parsed = parseMarkdown(p.content, p.slug);
-      const route = await resolvePrivateWriteSource(ctx.engine, {
-        requestedSourceId: sourceId,
-        slug: p.slug,
-        content: p.content,
-        entityType: parsed.type,
-        entityName: parsed.title,
-      });
-      if (route.routed && route.sourceId !== sourceId && ctx.remote === false) {
-        await assertPageWriteThroughReady(ctx.engine, p.slug, route.sourceId);
-      }
-      await enforcePrivatePageWrite(ctx.engine, {
-        requestedSourceId: sourceId,
-        slug: p.slug,
-        entityType: parsed.type,
-        entityName: parsed.title,
-      });
-    }
+    await preflightPutPagePrivateWrite(ctx, sourceId, p);
     return submitPageMutation(ctx, { operation: 'put_page', params: p }).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
@@ -362,43 +344,6 @@ const put_page: Operation = {
 // so sync.ts, file_upload, code_import, and runFactsBackstop all share one
 // predicate. Imported above.
 
-/** Legacy key export retained for callers; publication now uses canonical page guards. */
-export function autoLinkLockKey(sourceId: string | undefined, slug: string): string {
-  return `auto_link:${sourceId ?? ''}:${slug}`;
-}
-
-/** Revisit forward references after a oneshot batch, conditional on its current snapshot. */
-export async function autoLinkWrittenPage(
-  engine: BrainEngine,
-  slug: string,
-  opts?: { sourceId?: string },
-): Promise<void> {
-  try {
-    if (!(await isAutoLinkEnabled(engine))) return;
-    await runAutoLink(engine, slug, opts);
-  } catch (e) {
-    process.stderr.write(`[oneshot] post-batch auto-link for ${slug} failed (best-effort): ${e instanceof Error ? e.message : String(e)}\n`);
-  }
-}
-
-/** Reconcile derived links only if the prepared canonical snapshot is still current. */
-async function runAutoLink(
-  engine: BrainEngine,
-  slug: string,
-  opts?: { sourceId?: string },
-) {
-  const sourceId = opts?.sourceId ?? 'default';
-  const snapshot = await engine.readPageSnapshot(slug, { sourceId });
-  if (!snapshot) return;
-  const { prepareAutomaticLinks } = await import('../persistence/links-preparation.ts');
-  const prepared = await prepareAutomaticLinks(engine, slug, { ...snapshot.page, frontmatter: snapshot.page.frontmatter ?? {} }, sourceId);
-  return engine.transaction(async tx => {
-    await tx.lockPageKeys([{sourceId,slug}, ...prepared.pageKeys]);
-    const current = await tx.readPageSnapshot(slug, {sourceId});
-    if (!current || current.page.id !== snapshot.page.id || current.revision !== snapshot.revision) return;
-    return prepared.apply(tx);
-  });
-}
 
 const delete_page: Operation = {
   name: 'delete_page',

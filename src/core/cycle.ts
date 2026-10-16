@@ -51,6 +51,7 @@ import { createProgress, type ProgressReporter } from './progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
 import { tryAcquireDbLock, reapDeadHolderLocks, inspectLock, LockStolenError, type DbLockHandle } from './db-lock.ts';
 import { timeContainedPhase } from './cycle/phase-containment.ts';
+import { skipPurgeWithoutConsent } from './cycle/purge-consent.ts';
 import { isManagedBrain } from './cycle/phase-table.ts';
 import { packGateSkip, resolvePackPhaseGate } from './cycle/pack-phase-gate.ts';
 import { managedPullWarning, type UpstreamRefresh } from './sync-upstream.ts';
@@ -1735,22 +1736,7 @@ async function runPhasePurge(
         details: { dry_run: true, purged_sources_count: 0, purged_pages_count: 0, purged_orphan_clones_count: 0 },
       };
     }
-    if (
-      purgeConsent === undefined ||
-      !Number.isFinite(purgeConsent.olderThanHours) ||
-      purgeConsent.olderThanHours < 0
-    ) {
-      return {
-        phase: 'purge',
-        status: 'skipped',
-        duration_ms: 0,
-        summary: 'purge skipped: explicit --yes-i-mean-it is required',
-        details: {
-          reason: 'missing_purge_consent',
-          required_flag: '--yes-i-mean-it',
-        },
-      };
-    }
+    const skippedPurge = skipPurgeWithoutConsent(purgeConsent); if (skippedPurge) return skippedPurge;
     const [{ purgeExpiredSources }, { purgeDeletedPagesCoordinated }] = await Promise.all([import('./destructive-guard.ts'), import('./persistence/purge-deleted.ts')]);
     // gbrain#4115: {purged, blocked} — a RESTRICT-FK-held source (revoked
     // oauth_client, v64) is reported and skipped instead of aborting the sweep.

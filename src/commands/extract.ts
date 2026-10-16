@@ -55,13 +55,13 @@ import { pageSnapshotKey } from '../core/page-snapshot-batch.ts';
 import type { PageSnapshot } from '../core/page-state/types.ts';
 export { reconcileSourceLinks, type SourceLinkReconciliationResult } from '../core/link-reconciliation.ts';
 export { extractMarkdownLinks } from '../core/link-extraction.ts';
+import { bareFileLinkTargets } from '../core/bare-wikilink-forms.ts';
 import {
   extractPageLinks, parseTimelineEntries, deriveTimelineAnchor, inferLinkType, makeResolver,
   attendanceEvidenceRanges, hasAttendanceEvidence, resolvedLinkCandidate, orientCanonicalAttendance, extractMarkdownLinks,
   extractFrontmatterLinks, isGlobalBasenameEnabled, isCrossSourceLinksEnabled,
   WIKILINK_BASENAME_LINK_TYPE,
   buildBasenameIndex, queryBasenameIndex, stripCodeBlocks, normalizeBasename,
-  bareWikilinkForms,
   parseInlineCitationTimelineEntries,
   type UnresolvedFrontmatterRef, type LinkCandidate, type LinkExtractionPack,
 } from '../core/link-extraction.ts';
@@ -551,35 +551,13 @@ export async function extractLinksFromFile(
 
   for (const { name, relTarget, index, wikilink } of extractMarkdownLinks(scanContent, true)) {
     const resolvedSlugs = resolveSlugAll(fileDir, relTarget, allSlugs, { globalBasename });
-    // Bare wikilinks also take the DB-path forms (same-directory, then
-    // root-exact, then hyphen-split). Ancestor-walk hits stay as they are.
-    // These only add a target the walk missed, and only when that slug is
-    // already in allSlugs, so a dangling link is still dropped.
-    const bareExtras: string[] = [];
-    if (wikilink) {
-      const targetNoExt = relTarget.endsWith('.md') ? relTarget.slice(0, -3) : relTarget;
-      if (targetNoExt && !targetNoExt.includes('/')) {
-        const forms = bareWikilinkForms(slug, targetNoExt);
-        const seen = new Set(resolvedSlugs);
-        for (const target of [...forms.direct, ...forms.hyphenSplits]) {
-          if (seen.has(target) || !allSlugs.has(target)) continue;
-          seen.add(target);
-          bareExtras.push(target);
-        }
-      }
-    }
-    if (resolvedSlugs.length === 0 && bareExtras.length === 0) continue;
-    // Single hit on the ancestor path → emit one edge with the inferred
-    // verb type. Multiple hits (only possible when globalBasename is on
-    // AND ancestor walk missed) → emit one edge per match, all tagged
-    // `wikilink_basename` so users can audit via `gbrain graph-query
-    // <slug> --type wikilink_basename`. Extras from the DB bare forms are
-    // direct edges, not basename edges.
-    const isBasename = resolvedSlugs.length > 1
-      || (globalBasename && resolvedSlugs.length === 1
-          && resolveSlug(fileDir, relTarget, allSlugs) === null);
-    const extraSet = new Set(bareExtras);
-    const allTargets = [...resolvedSlugs, ...bareExtras];
+    const picked = bareFileLinkTargets({
+      wikilink, relTarget, slug, resolvedSlugs, allSlugs, globalBasename,
+      ancestorResolved: () => resolveSlug(fileDir, relTarget, allSlugs),
+    });
+    if (picked.allTargets.length === 0) continue;
+    const { allTargets, extraSet } = picked;
+    const isBasename = picked.isBasename;
     for (const resolved of allTargets) {
       const target = canonical(resolved);
       const asBasename = isBasename && !extraSet.has(resolved);

@@ -602,46 +602,6 @@ function resolveSameDirSlug(pageSlug: string, ref: EntityRef): string {
 }
 
 /**
- * Bare `[[name]]` targets used by the DB and filesystem extractors.
- * The same-directory forms precede root-exact forms, followed by the
- * historical hyphenated directory spelling when a matching slug exists.
- */
-export function bareWikilinkForms(sourceSlug: string, literal: string): {
-  direct: string[];
-  hyphenSplits: string[];
-} {
-  const forms = [...new Set([slugifyPath(literal), normalizeBasename(literal)])].filter(Boolean);
-  const dirCut = sourceSlug.lastIndexOf('/');
-  const dir = dirCut === -1 ? '' : sourceSlug.slice(0, dirCut);
-  const direct: string[] = [];
-  const seen = new Set<string>();
-  const pushDirect = (target: string) => {
-    if (!target || target === sourceSlug || seen.has(target)) return;
-    seen.add(target);
-    direct.push(target);
-  };
-  if (dir) for (const form of forms) pushDirect(`${dir}/${form}`);
-  for (const form of forms) pushDirect(form);
-
-  const hyphenSplits: string[] = [];
-  if (!literal.includes('/')) {
-    const lower = literal.toLowerCase();
-    const dirPrefix = /^[a-z0-9][a-z0-9_-]*$/;
-    for (let i = 0; i < lower.length; i++) {
-      if (lower[i] !== '-') continue;
-      const prefix = lower.slice(0, i);
-      const tail = lower.slice(i + 1);
-      if (!prefix || !tail || !dirPrefix.test(prefix)) continue;
-      const slashForm = `${prefix}/${tail}`;
-      if (slashForm === sourceSlug || seen.has(slashForm)) continue;
-      seen.add(slashForm);
-      hyphenSplits.push(slashForm);
-    }
-  }
-  return { direct, hyphenSplits };
-}
-
-/**
  * The page slug a markdown link `href` on page `pageSlug` points at, resolved
  * exactly as extractPageLinks resolves it (page-relative `./` and `../`,
  * root-relative dir paths, `.md` and `#anchor` stripped). Null when the
