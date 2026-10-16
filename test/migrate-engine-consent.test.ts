@@ -79,8 +79,8 @@ describe('runMigrateEngine --force consent', () => {
       });
     } finally {
       console.error = originalError;
-      if (source) await source.disconnect();
-      if (target) await target.disconnect();
+      await (source as PGLiteEngine | null)?.disconnect();
+      await (target as PGLiteEngine | null)?.disconnect();
       process.exitCode = previousExitCode;
       rmSync(gbrainHome, { recursive: true, force: true });
       rmSync(join(targetDbPath, '..'), { recursive: true, force: true });

@@ -42,7 +42,7 @@ export function bareWikilinkForms(sourceSlug: string, literal: string): {
 }
 
 export function bareFileLinkTargets(input: {
-  wikilink: boolean;
+  wikilink: boolean | undefined;
   relTarget: string;
   slug: string;
   resolvedSlugs: readonly string[];

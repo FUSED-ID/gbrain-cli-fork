@@ -1742,8 +1742,8 @@ async function runPhasePurge(
     // oauth_client, v64) is reported and skipped instead of aborting the sweep.
     const purgeResult = await purgeExpiredSources(engine);
     const purgedSources = purgeResult.purged;
-    const purgedPages = await purgeDeletedPagesCoordinated(engine, purgeConsent.olderThanHours); // #5405: coordinated on managed brains
-    const purgedClones = await purgeOrphanClones(purgeConsent.olderThanHours);
+    const purgedPages = await purgeDeletedPagesCoordinated(engine, purgeConsent!.olderThanHours); // #5405: coordinated on managed brains
+    const purgedClones = await purgeOrphanClones(purgeConsent!.olderThanHours);
     // v0.36+ folded scope item +C: GC stale op_checkpoints rows.
     // 7-day TTL is deliberately generous; any reasonable long-running op
     // finishes inside that window. Cheap (few KB per row).

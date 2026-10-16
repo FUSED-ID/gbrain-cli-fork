@@ -7,7 +7,7 @@ import { assertPageWriteThroughReady } from './write-through.ts';
 
 export async function routeMarkdownImport(
   engine: BrainEngine,
-  prepare: boolean | undefined,
+  prepare: unknown,
   parsed: ParsedMarkdown,
   content: string,
   slug: string,
