@@ -11,6 +11,7 @@ import {
   resolvePrivateWriteSource,
 } from '../src/core/private-source-routing.ts';
 import { resolveSourceVisibility } from '../src/core/facts/visibility.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const excluded = `# policy\n\n## Family deny-list\n| slug | name |\n|---|---|\n| \`people/alice*\` | Alice Example |\n`;
 const unresolved = `## Do not enrich, identity unresolved\n| slug | name |\n|---|---|\n| \`contacts/unknown*\` | Unknown Example |\n`;
@@ -75,18 +76,13 @@ describe('fork private-source routing guarantees on v0.60.174', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-private-routing-'));
     const path = join(dir, 'privacy-allowlist.tsv');
     writeFileSync(path, 'collision|people/collision-person\ncollision|people/alice-example\n');
-    const prior = process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH;
-    process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH = path;
-    try {
+    await withEnv({ GBRAIN_PRIVACY_ALLOWLIST_PATH: path }, async () => {
       const route = await resolvePrivateWriteSource(engine, { requestedSourceId: 'default', slug: 'people/collision-person', entityType: 'person' });
       expect(route.sourceId).toBe('default');
       expect(route.routed).toBe(false);
       const denied = await resolvePrivateWriteSource(engine, { requestedSourceId: 'default', slug: 'people/alice-example', entityType: 'person', entityName: 'Alice Example' });
       expect(denied.reason).toBe('excluded_people_policy');
-    } finally {
-      if (prior === undefined) delete process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH;
-      else process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH = prior;
-    }
+    });
   });
 
   test('normalizes facts so world visibility never lands in a non-federated source', async () => {

@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test as bunTest } from "bun:test";
+import { withEnv } from "./helpers/with-env.ts";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -20,7 +21,10 @@ const CASES = [
 let engine: PGLiteEngine;
 let policyDir: string;
 let allowlistPath: string;
-let previousAllowlistPath: string | undefined;
+
+function test(name: string, fn: () => unknown, timeout?: number) {
+  return bunTest(name, () => withEnv({ [ALLOWLIST_ENV]: allowlistPath }, () => fn()), timeout);
+}
 
 function context() {
   return {
@@ -57,8 +61,6 @@ async function seedScenario(slug: string, privateSlug: string): Promise<void> {
 beforeAll(async () => {
   policyDir = mkdtempSync(join(tmpdir(), "gbrain-d1-put-page-policy-"));
   allowlistPath = join(policyDir, "privacy-allowlist.tsv");
-  previousAllowlistPath = process.env[ALLOWLIST_ENV];
-  process.env[ALLOWLIST_ENV] = allowlistPath;
   writeFileSync(join(policyDir, "_excluded-people.md"), DENYLIST);
   writeFileSync(join(policyDir, "_brain-filing-rules.md"), "# filing rules\n");
   writeFileSync(allowlistPath, CASES.map(({ slug }) => `collision|${slug}`).join("\n") + "\n");
@@ -94,8 +96,6 @@ afterAll(async () => {
   await engine.disconnect();
   resetGateway();
   if (existsSync(policyDir)) rmSync(policyDir, { recursive: true, force: true });
-  if (previousAllowlistPath === undefined) delete process.env[ALLOWLIST_ENV];
-  else process.env[ALLOWLIST_ENV] = previousAllowlistPath;
 });
 
 describe("put_page collision allowlist routing", () => {

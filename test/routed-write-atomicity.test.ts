@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test as bunTest } from 'bun:test';
+import { withEnv } from './helpers/with-env.ts';
 import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -6,6 +7,16 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
+
+const CLEARED_PROVIDER_KEYS = {
+  OPENAI_API_KEY: undefined,
+  VOYAGE_API_KEY: undefined,
+  OPENROUTER_API_KEY: undefined,
+};
+
+function test(name: string, fn: () => unknown, timeout?: number) {
+  return bunTest(name, () => withEnv(CLEARED_PROVIDER_KEYS, () => fn()), timeout);
+}
 
 const putPage = operationsByName.put_page;
 const SLUG = 'people/routed-write-atomicity-8d0c34be';
@@ -94,9 +105,7 @@ async function pageCounts(slug: string): Promise<{ defaultRows: number; privateR
 }
 
 beforeAll(async () => {
-  delete process.env.OPENAI_API_KEY;
-  delete process.env.VOYAGE_API_KEY;
-  delete process.env.OPENROUTER_API_KEY;
+  await withEnv(CLEARED_PROVIDER_KEYS, async () => {
   resetGateway();
   brainDir = mkdtempSync(join(tmpdir(), 'gbrain-routed-write-atomicity-brain-'));
   missingPrivateDir = join(tmpdir(), 'gbrain-routed-write-atomicity-private-missing');
@@ -108,6 +117,7 @@ beforeAll(async () => {
     `UPDATE sources SET local_path = $1, config = jsonb_set(COALESCE(config, '{}'::jsonb), '{facts_visibility}', '"world"'::jsonb) WHERE id = 'default'`,
     [brainDir],
   );
+  });
 }, 120_000);
 
 beforeEach(async () => {

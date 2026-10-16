@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { assertSafeE2eDatabaseUrl } from './helpers/db-guard.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const describeIfDb = DATABASE_URL ? describe : describe.skip;
@@ -138,9 +139,7 @@ describeIfDb('PostgresEngine: D1 private-write policy guard', () => {
     await pointPrivateSource(policyDir);
     writePolicy('## Family deny-list\n| Slug pattern | Name |\n|---|---|\n| `pg-d1-denylisted*` | PG D1 Denylisted |\n');
     const allowlistPath = join(policyDir, 'privacy-allowlist.tsv');
-    const priorAllowlistPath = process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH;
-    process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH = allowlistPath;
-    try {
+    await withEnv({ GBRAIN_PRIVACY_ALLOWLIST_PATH: allowlistPath }, async () => {
       // Mirrors the live shape: the private profile lives at the BARE slug
       // in lg-private (see chris-hooper's real private person page,
       // 'chris-hooper', no /_author suffix); the public stub is written to
@@ -199,10 +198,7 @@ describeIfDb('PostgresEngine: D1 private-write policy guard', () => {
       }, { sourceId: 'default' })).rejects.toThrow(/excluded_people_policy/);
       const stillNotInDefault = await engine.getPage(deniedSlugWithPrivatePage, { sourceId: 'default' });
       expect(stillNotInDefault).toBeNull();
-    } finally {
-      if (priorAllowlistPath === undefined) delete process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH;
-      else process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH = priorAllowlistPath;
-    }
+    });
   });
 
   test('KNOWN GAP: a HARD delete in the write gap is not covered, the page is recreated', async () => {

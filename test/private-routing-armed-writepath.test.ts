@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test as bunTest } from 'bun:test';
+import { withEnv } from './helpers/with-env.ts';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -43,7 +44,6 @@ let policyDir: string;
 // reproduction that proves this at the gateway layer directly, run with
 // `bun test --preload`.
 const EMBEDDING_PROVIDER_KEYS = ['OPENAI_API_KEY', 'VOYAGE_API_KEY', 'OPENROUTER_API_KEY'] as const;
-const savedProviderKeys: Partial<Record<typeof EMBEDDING_PROVIDER_KEYS[number], string>> = {};
 
 // This file's 'lgv' scenarios exercise a person-namespace 'lgv' slug that the real
 // operator's live ~/.gbrain/privacy-allowlist.tsv (the T-LEAK-7 collision
@@ -53,7 +53,17 @@ const savedProviderKeys: Partial<Record<typeof EMBEDDING_PROVIDER_KEYS[number], 
 // isolation and do not depend on, or get broken by, whatever the operator's
 // real dotfile happens to contain.
 const ALLOWLIST_PATH_ENV = 'GBRAIN_PRIVACY_ALLOWLIST_PATH';
-let savedAllowlistPath: string | undefined;
+const MISSING_ALLOWLIST = join(tmpdir(), 'gbrain-arm-writepath-no-such-allowlist.tsv');
+
+function armedEnv<T>(fn: () => T | Promise<T>): Promise<T> {
+  const overrides: Record<string, string | undefined> = { [ALLOWLIST_PATH_ENV]: MISSING_ALLOWLIST };
+  for (const key of EMBEDDING_PROVIDER_KEYS) overrides[key] = undefined;
+  return withEnv(overrides, fn);
+}
+
+function test(name: string, fn: () => unknown, timeout?: number) {
+  return bunTest(name, () => armedEnv(() => fn()), timeout);
+}
 
 function writePolicy(excluded: string): void {
   writeFileSync(join(policyDir, '_brain-filing-rules.md'), '# filing rules\n');
@@ -100,17 +110,11 @@ async function executePutPage(slug: string): Promise<void> {
 }
 
 beforeAll(async () => {
-  for (const key of EMBEDDING_PROVIDER_KEYS) {
-    if (process.env[key] !== undefined) savedProviderKeys[key] = process.env[key];
-    delete process.env[key];
-  }
-  savedAllowlistPath = process.env[ALLOWLIST_PATH_ENV];
-  process.env[ALLOWLIST_PATH_ENV] = join(tmpdir(), 'gbrain-arm-writepath-no-such-allowlist.tsv');
+  await armedEnv(async () => {
   // Clear whatever the gateway's module-global config snapshot holds from an
   // earlier test file in this worker, and reconfigure from the now key-less
-  // process.env (via the registered test baseline, if any), so
-  // isAvailable('embedding') reflects the keys just deleted above rather
-  // than a stale snapshot.
+  // environment (via the registered test baseline, if any), so
+  // isAvailable('embedding') reflects the cleared keys rather than a stale snapshot.
   resetGateway();
   engine = new PGLiteEngine();
   await engine.connect({});
@@ -120,6 +124,7 @@ beforeAll(async () => {
      SET config = jsonb_set(COALESCE(config, '{}'::jsonb), '{facts_visibility}', '"world"'::jsonb)
      WHERE id = 'default'`,
   );
+  });
 }, 120_000);
 
 beforeEach(async () => {
@@ -137,14 +142,8 @@ beforeEach(async () => {
 afterAll(async () => {
   await engine.disconnect();
   if (policyDir && existsSync(policyDir)) rmSync(policyDir, { recursive: true, force: true });
-  for (const key of EMBEDDING_PROVIDER_KEYS) {
-    if (key in savedProviderKeys) process.env[key] = savedProviderKeys[key];
-    else delete process.env[key];
-  }
-  if (savedAllowlistPath === undefined) delete process.env[ALLOWLIST_PATH_ENV];
-  else process.env[ALLOWLIST_PATH_ENV] = savedAllowlistPath;
-  // Reconfigure the gateway from the restored env so the next test file in
-  // this worker does not inherit the keyless snapshot this file needed.
+  // Reconfigure the gateway after armedEnv has restored the provider keys,
+  // so the next test file in this worker does not inherit the keyless snapshot.
   resetGateway();
 });
 
@@ -312,9 +311,7 @@ describe('private routing armed guard at the put_page write path', () => {
     }, { sourceId: 'lg-private' });
 
     const allowlistPath = join(policyDir, 'privacy-allowlist.tsv');
-    const priorAllowlistPath = process.env[ALLOWLIST_PATH_ENV];
-    process.env[ALLOWLIST_PATH_ENV] = allowlistPath;
-    try {
+    await withEnv({ [ALLOWLIST_PATH_ENV]: allowlistPath }, async () => {
       // The collision row names the EXACT requested slug: before the order
       // fix this made resolvePrivateWriteSource return reason:
       // 'existing_private_page' (rule (b) found the live private copy
@@ -329,10 +326,7 @@ describe('private routing armed guard at the put_page write path', () => {
       expect(outcome.allowed).toBe(false);
       expect(outcome.message).toMatch(/excluded_people_policy/);
       await expect(engine.getPage(requestedSlug, { sourceId: 'default' })).resolves.toBeNull();
-    } finally {
-      if (priorAllowlistPath === undefined) delete process.env[ALLOWLIST_PATH_ENV];
-      else process.env[ALLOWLIST_PATH_ENV] = priorAllowlistPath;
-    }
+    });
   });
 
   // Decision (defect 2): a collision-allowlisted slug whose write TITLE
@@ -352,9 +346,7 @@ describe('private routing armed guard at the put_page write path', () => {
     const slug = 'people/arm-writepath-allowlisted-title-collision';
 
     const allowlistPath = join(policyDir, 'privacy-allowlist.tsv');
-    const priorAllowlistPath = process.env[ALLOWLIST_PATH_ENV];
-    process.env[ALLOWLIST_PATH_ENV] = allowlistPath;
-    try {
+    await withEnv({ [ALLOWLIST_PATH_ENV]: allowlistPath }, async () => {
       writeFileSync(allowlistPath, 'collision|' + slug + '\n');
       const page = {
         type: 'concept', title: 'Named Not By Slug', compiled_truth: 'body', timeline: '', frontmatter: {},
@@ -365,10 +357,7 @@ describe('private routing armed guard at the put_page write path', () => {
       expect(outcome.allowed).toBe(false);
       expect(outcome.message).toMatch(/excluded_people_policy/);
       await expect(engine.getPage(slug, { sourceId: 'default' })).resolves.toBeNull();
-    } finally {
-      if (priorAllowlistPath === undefined) delete process.env[ALLOWLIST_PATH_ENV];
-      else process.env[ALLOWLIST_PATH_ENV] = priorAllowlistPath;
-    }
+    });
   });
 
   test('regression: a brand new ordinary business-contact page is ALLOWED', async () => {

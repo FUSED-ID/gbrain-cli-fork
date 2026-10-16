@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test as bunTest } from 'bun:test';
+import { withEnv } from './helpers/with-env.ts';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -24,7 +25,10 @@ const PAGE = { type: 'note' as const, title: 'D1 bypass test', compiled_truth: '
 let engine: PGLiteEngine;
 let policyDir: string;
 let allowlistPath: string;
-let previousAllowlistPath: string | undefined;
+
+function test(name: string, fn: () => unknown, timeout?: number) {
+  return bunTest(name, () => withEnv({ [ALLOWLIST_ENV]: allowlistPath }, () => fn()), timeout);
+}
 
 function context(remote: boolean): OperationContext {
   return {
@@ -124,8 +128,6 @@ function failureMessage(result: { allowed: true; value: unknown } | { allowed: f
 beforeAll(async () => {
   policyDir = mkdtempSync(join(tmpdir(), 'gbrain-d1-bypass-policy-'));
   allowlistPath = join(policyDir, 'privacy-allowlist.tsv');
-  previousAllowlistPath = process.env[ALLOWLIST_ENV];
-  process.env[ALLOWLIST_ENV] = allowlistPath;
   writePolicy();
   engine = new PGLiteEngine();
   await engine.connect({});
@@ -150,8 +152,6 @@ beforeEach(async () => {
 afterAll(async () => {
   await engine.disconnect();
   if (existsSync(policyDir)) rmSync(policyDir, { recursive: true, force: true });
-  if (previousAllowlistPath === undefined) delete process.env[ALLOWLIST_ENV];
-  else process.env[ALLOWLIST_ENV] = previousAllowlistPath;
 });
 
 describe('D1 private-routing bypass paths', () => {

@@ -1,4 +1,5 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test as bunTest } from 'bun:test';
+import { withEnv } from './helpers/with-env.ts';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -7,7 +8,16 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 const STAMP = '20260916';
 const PROBE_MARKER = '-20260916';
 const PROVIDER_KEYS = ['GBRAIN_DATABASE_URL', 'DATABASE_URL', 'OPENAI_API_KEY', 'VOYAGE_API_KEY', 'OPENROUTER_API_KEY', 'ANTHROPIC_API_KEY'] as const;
-const savedEnv = new Map<string, string | undefined>();
+
+function cleared<T>(fn: () => T | Promise<T>): Promise<T> {
+  const overrides: Record<string, string | undefined> = {};
+  for (const key of PROVIDER_KEYS) overrides[key] = undefined;
+  return withEnv(overrides, fn);
+}
+
+function test(name: string, fn: () => unknown, timeout?: number) {
+  return bunTest(name, () => cleared(() => fn()), timeout);
+}
 
 let engine: PGLiteEngine;
 let policyDir: string;
@@ -54,10 +64,7 @@ async function probe(slug: string): Promise<{ slug: string; outcome: string; row
 }
 
 beforeAll(async () => {
-  for (const key of PROVIDER_KEYS) {
-    savedEnv.set(key, process.env[key]);
-    delete process.env[key];
-  }
+  await cleared(async () => {
   policyDir = mkdtempSync(join(tmpdir(), 'gbrain-prefix-writepath-'));
   writePolicy();
   engine = new PGLiteEngine();
@@ -74,27 +81,30 @@ beforeAll(async () => {
      ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path, config = EXCLUDED.config`,
     [policyDir],
   );
+  });
 }, 120_000);
 
 beforeEach(async () => {
-  await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE $1`, [`%${PROBE_MARKER}%`]);
-  expect(await liveRows()).toEqual([]);
+  await cleared(async () => {
+    await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE $1`, [`%${PROBE_MARKER}%`]);
+    expect(await liveRows()).toEqual([]);
+  });
 });
 
 afterEach(async () => {
-  await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE $1`, [`%${PROBE_MARKER}%`]);
-  const readBack = await liveRows();
-  console.log(`CLEANUP READ-BACK: ${JSON.stringify(readBack)}`);
-  expect(readBack).toEqual([]);
+  await cleared(async () => {
+    await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE $1`, [`%${PROBE_MARKER}%`]);
+    const readBack = await liveRows();
+    console.log(`CLEANUP READ-BACK: ${JSON.stringify(readBack)}`);
+    expect(readBack).toEqual([]);
+  });
 });
 
 afterAll(async () => {
-  await engine.disconnect();
+  await cleared(async () => {
+    await engine.disconnect();
+  });
   if (policyDir) rmSync(policyDir, { recursive: true, force: true });
-  for (const [key, value] of savedEnv) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
 });
 
 describe('D1 synthetic write-path probes', () => {

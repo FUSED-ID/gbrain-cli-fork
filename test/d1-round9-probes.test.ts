@@ -1,23 +1,44 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test as bunTest } from 'bun:test';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { withEnv } from './helpers/with-env.ts';
 
-process.env.GBRAIN_HOME = mkdtempSync(join(tmpdir(), 'fable9-home-test-'));
-const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
-const { forgetFactInFence } = await import('../src/core/facts/forget.ts');
-const { importFromContent } = await import('../src/core/import-file.ts');
-const { writeSingleFact } = await import('../src/core/facts/write-single.ts');
-const { operationsByName } = await import('../src/core/operations.ts');
-
+const home = mkdtempSync(join(tmpdir(), 'fable9-home-test-'));
 const policyDir = mkdtempSync(join(tmpdir(), 'fable9-policy-test-'));
 const brainDir = mkdtempSync(join(tmpdir(), 'fable9-brain-test-'));
 const allow = join(policyDir, 'allow.tsv');
-process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH = allow;
-copyFileSync('/Users/lg/gbrain-private/_excluded-people.md', join(policyDir, '_excluded-people.md'));
-copyFileSync('/Users/lg/gbrain-private/_brain-filing-rules.md', join(policyDir, '_brain-filing-rules.md'));
-const REAL_DENY = readFileSync(join(policyDir, '_excluded-people.md'), 'utf8');
-writeFileSync(allow, 'collision|people/lgv\ncollision|chris-hooper/_author\ncollision|wiki/chris-hooper/_author\n');
+
+let REAL_DENY = '';
+const loaded = await withEnv({
+  GBRAIN_HOME: home,
+  GBRAIN_PRIVACY_ALLOWLIST_PATH: allow,
+}, async () => {
+  const engineMod = await import('../src/core/pglite-engine.ts');
+  const forgetMod = await import('../src/core/facts/forget.ts');
+  const importMod = await import('../src/core/import-file.ts');
+  const writeMod = await import('../src/core/facts/write-single.ts');
+  const opsMod = await import('../src/core/operations.ts');
+  copyFileSync('/Users/lg/gbrain-private/_excluded-people.md', join(policyDir, '_excluded-people.md'));
+  copyFileSync('/Users/lg/gbrain-private/_brain-filing-rules.md', join(policyDir, '_brain-filing-rules.md'));
+  REAL_DENY = readFileSync(join(policyDir, '_excluded-people.md'), 'utf8');
+  writeFileSync(allow, 'collision|people/lgv\ncollision|chris-hooper/_author\ncollision|wiki/chris-hooper/_author\n');
+  return {
+    PGLiteEngine: engineMod.PGLiteEngine,
+    forgetFactInFence: forgetMod.forgetFactInFence,
+    importFromContent: importMod.importFromContent,
+    writeSingleFact: writeMod.writeSingleFact,
+    operationsByName: opsMod.operationsByName,
+  };
+});
+const { PGLiteEngine, forgetFactInFence, importFromContent, writeSingleFact, operationsByName } = loaded;
+
+function test(name: string, fn: () => unknown, timeout?: number) {
+  return bunTest(name, () => withEnv({
+    GBRAIN_HOME: home,
+    GBRAIN_PRIVACY_ALLOWLIST_PATH: allow,
+  }, () => fn()), timeout);
+}
 
 let engine: InstanceType<typeof PGLiteEngine>;
 
@@ -43,12 +64,18 @@ const seedFact = async (slug: string, txt = 'leaked fact', rowNum: number | null
 const factRow = (id: number) => engine.executeRaw<any>('SELECT id, source_id, expired_at, superseded_by, valid_until, visibility FROM facts WHERE id=$1', [id]).then(r => r[0]);
 
 beforeAll(async () => {
-  engine = new PGLiteEngine();
+  await withEnv({ GBRAIN_HOME: home, GBRAIN_PRIVACY_ALLOWLIST_PATH: allow }, async () => {
+  engine = openEngine();
   await engine.connect({});
   await engine.initSchema();
   await engine.executeRaw(`UPDATE sources SET local_path=$1, config = jsonb_set(jsonb_set(COALESCE(config,'{}'::jsonb),'{federated}','true'::jsonb),'{facts_visibility}','"world"'::jsonb) WHERE id='default'`, [brainDir]);
   await engine.executeRaw(`INSERT INTO sources (id, name, local_path, config) VALUES ('lg-private','LG private',$1,'{}'::jsonb)`, [policyDir]);
+  });
 }, 120_000);
+
+function openEngine() {
+  return new PGLiteEngine();
+}
 
 afterAll(async () => {
   await engine.disconnect();
@@ -244,12 +271,12 @@ describe('Fable round 9 chain.ts', () => {
   test('a refused remember does not reach disk and forget does not republish it', async () => {
     const localPolicyDir = mkdtempSync(join(tmpdir(), 'fable9-chain-policy-'));
     const localBrainDir = mkdtempSync(join(tmpdir(), 'fable9-chain-brain-'));
-    const previousAllowlist = process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH;
-    process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH = join(localPolicyDir, 'allow.tsv');
-    writeFileSync(process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH, '');
+    const chainAllow = join(localPolicyDir, 'allow.tsv');
+    await withEnv({ GBRAIN_PRIVACY_ALLOWLIST_PATH: chainAllow }, async () => {
+    writeFileSync(chainAllow, '');
     copyFileSync('/Users/lg/gbrain-private/_excluded-people.md', join(localPolicyDir, '_excluded-people.md'));
     copyFileSync('/Users/lg/gbrain-private/_brain-filing-rules.md', join(localPolicyDir, '_brain-filing-rules.md'));
-    const chain = new PGLiteEngine();
+    const chain = openEngine();
     await chain.connect({});
     await chain.initSchema();
     await chain.executeRaw(`UPDATE sources SET local_path=$1, config = jsonb_set(jsonb_set(COALESCE(config,'{}'::jsonb),'{federated}','true'::jsonb),'{facts_visibility}','"world"'::jsonb) WHERE id='default'`, [localBrainDir]);
@@ -273,7 +300,7 @@ describe('Fable round 9 chain.ts', () => {
     expect(after).not.toContain('REFUSED-SECRET');
     expect(readFileSync(join(localBrainDir, `${slug}.md`), 'utf8')).not.toContain('REFUSED-SECRET');
     await chain.disconnect();
-    process.env.GBRAIN_PRIVACY_ALLOWLIST_PATH = previousAllowlist;
+    });
     rmSync(localPolicyDir, { recursive: true, force: true });
     rmSync(localBrainDir, { recursive: true, force: true });
   }, 120_000);

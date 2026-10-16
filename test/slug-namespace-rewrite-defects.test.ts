@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { MAX_FILE_SIZE } from '../src/core/import-file.ts';
 import { resolveEntitySlug } from '../src/core/entities/resolve.ts';
 import { operations, OperationError } from '../src/core/operations.ts';
@@ -11,6 +11,28 @@ import {
   parseSlugNamespaceRewrites,
 } from '../src/core/slug-namespace.ts';
 import { withEnv } from './helpers/with-env.ts';
+
+const openedEngines: PGLiteEngine[] = [];
+
+beforeAll(() => {
+  // The config-outage test opens a real engine through openEngine.
+});
+
+function openEngine(): PGLiteEngine {
+  const created = new PGLiteEngine();
+  openedEngines.push(created);
+  return created;
+}
+
+afterAll(async () => {
+  for (const created of openedEngines) {
+    try {
+      await created.disconnect();
+    } catch {
+      // The test already disconnected this engine.
+    }
+  }
+});
 
 // GF-W52: the fence case binds a client to the legacy singular prefix on
 // purpose. The singular segment comes from the canonical mapping.
@@ -114,7 +136,7 @@ describe('opt-in slug namespace rewrite defects', () => {
       // v0.57 put_page publishes through the persistence pipeline, which a
       // stub engine cannot host. Use a real PGLite brain whose slug-rewrite
       // config read throws; every other config key reads normally.
-      const engine = new PGLiteEngine();
+      const engine = openEngine();
       await engine.connect({});
       await engine.initSchema();
       const realGetConfig = engine.getConfig.bind(engine);

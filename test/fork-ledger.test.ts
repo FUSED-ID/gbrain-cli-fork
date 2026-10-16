@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   FORK_MIGRATIONS,
@@ -44,8 +44,30 @@ async function oauthShape(engine: PGLiteEngine): Promise<OauthShape> {
   return row;
 }
 
+const openedEngines: PGLiteEngine[] = [];
+
+beforeAll(() => {
+  // Each test opens its own engine through openEngine.
+});
+
+function openEngine(): PGLiteEngine {
+  const created = new PGLiteEngine();
+  openedEngines.push(created);
+  return created;
+}
+
+afterAll(async () => {
+  for (const created of openedEngines) {
+    try {
+      await created.disconnect();
+    } catch {
+      // The test already disconnected this engine.
+    }
+  }
+});
+
 async function withStartedEngine(fn: (engine: PGLiteEngine) => Promise<void>): Promise<void> {
-  const engine = new PGLiteEngine();
+  const engine = openEngine();
   await engine.connect({});
   try {
     await engine.initSchema();
@@ -91,7 +113,7 @@ describe('fork ledger', () => {
     );
 
     await withColdPglite(async () => {
-      const engine = new PGLiteEngine();
+      const engine = openEngine();
       await engine.connect({});
       try {
         await engine.initSchema();

@@ -7,7 +7,8 @@
  * and writes the requested source.
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test as bunTest } from 'bun:test';
+import { withEnv } from './helpers/with-env.ts';
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -25,7 +26,10 @@ let engine: PGLiteEngine;
 let policyDir: string;
 let allowlistDir: string;
 let allowlistPath: string;
-let savedAllowlistPath: string | undefined;
+
+function test(name: string, fn: () => unknown, timeout?: number) {
+  return bunTest(name, () => withEnv({ [ALLOWLIST_PATH_ENV]: allowlistPath }, () => fn()), timeout);
+}
 
 function writePolicy(): void {
   writeFileSync(join(policyDir, '_brain-filing-rules.md'), '# filing rules\n');
@@ -82,8 +86,7 @@ beforeEach(async () => {
   policyDir = mkdtempSync(join(tmpdir(), 'gbrain-allowlist-fence-policy-'));
   allowlistDir = mkdtempSync(join(tmpdir(), 'gbrain-allowlist-fence-list-'));
   allowlistPath = join(allowlistDir, 'privacy-allowlist.tsv');
-  savedAllowlistPath = process.env[ALLOWLIST_PATH_ENV];
-  process.env[ALLOWLIST_PATH_ENV] = allowlistPath;
+  await withEnv({ [ALLOWLIST_PATH_ENV]: allowlistPath }, async () => {
   await pointPrivateSource();
   writePolicy();
   // Seed the private copy so rule (b) has a live private page to match.
@@ -94,11 +97,7 @@ beforeEach(async () => {
     timeline: '',
     frontmatter: {},
   }, { sourceId: 'lg-private' });
-});
-
-afterAll(() => {
-  if (savedAllowlistPath === undefined) delete process.env[ALLOWLIST_PATH_ENV];
-  else process.env[ALLOWLIST_PATH_ENV] = savedAllowlistPath;
+  });
 });
 
 describe('defect 1: collision allowlist must not weaken routing or the remote fence', () => {

@@ -11,14 +11,36 @@
  * (no lg-private source, no policy files at all) without being refused.
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { copyPageToTarget } from '../src/commands/migrate-engine.ts';
 
+const openedEngines: PGLiteEngine[] = [];
+
+beforeAll(() => {
+  // Each test opens its own engine through openEngine.
+});
+
+function openEngine(): PGLiteEngine {
+  const created = new PGLiteEngine();
+  openedEngines.push(created);
+  return created;
+}
+
+afterAll(async () => {
+  for (const created of openedEngines) {
+    try {
+      await created.disconnect();
+    } catch {
+      // The test already disconnected this engine.
+    }
+  }
+});
+
 describe('copyPageToTarget — D1 guard exemption on a fresh migration target', () => {
   test('a person-shaped page migrates onto a fresh, policy-unarmed target', async () => {
-    const source = new PGLiteEngine();
-    const target = new PGLiteEngine();
+    const source = openEngine();
+    const target = openEngine();
     await source.connect({});
     await target.connect({});
     await source.initSchema();
@@ -55,7 +77,7 @@ describe('copyPageToTarget — D1 guard exemption on a fresh migration target', 
   }, 60_000);
 
   test('without migrationWrite, the same fresh target refuses the write (control)', async () => {
-    const target = new PGLiteEngine();
+    const target = openEngine();
     await target.connect({});
     await target.initSchema();
     try {
