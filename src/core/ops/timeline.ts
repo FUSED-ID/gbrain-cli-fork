@@ -46,7 +46,7 @@ const add_timeline_entry: Operation = {
     enforceSubagentSlugFence(ctx, p.slug as string, 'add_timeline_entry');
     enforceClientSlugFence(ctx, p.slug as string, 'add_timeline_entry');
     const route = await enforcePrivatePageWrite(ctx.engine, { requestedSourceId: ctx.sourceId ?? 'default', slug: p.slug as string });
-    if (ctx.remote && route.routed) throw new Error(`private-write routing refused remote timeline write for '${p.slug}'`);
+    if (ctx.remote && route.routed) throw opError('permission_denied', `private-write routing refused remote timeline write for '${p.slug}'`, 'Ask the brain host to update this private routed timeline through its trusted local CLI.');
     if (ctx.dryRun) return { dry_run: true, action: 'add_timeline_entry', slug: p.slug };
     const date = p.date as string;
     const badDate = (message: string) => opError('invalid_params', message,

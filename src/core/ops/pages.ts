@@ -444,7 +444,7 @@ const restore_page: Operation = {
   handler: async (ctx, p) => {
     const sourceId = pageMutationSource(ctx, p, 'restore_page');
     const route = await enforcePrivatePageWrite(ctx.engine, { requestedSourceId: sourceId, slug: p.slug as string });
-    if (ctx.remote && route.routed) throw new Error(`private-write routing refused remote restore for '${p.slug}'`);
+    if (ctx.remote && route.routed) throw opError('permission_denied', `private-write routing refused remote restore for '${p.slug}'`, 'Ask the brain host to restore this private routed page through its trusted local CLI.');
     if (ctx.dryRun) {
       if (typeof p.slug === 'string') {
         await validateMutationSlug(ctx, 'restore_page', p.slug, sourceId);

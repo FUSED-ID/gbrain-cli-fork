@@ -108,14 +108,16 @@ export async function enforcePrivateWriteGuard(
   const route = await resolvePrivateWriteSource(ctx.engine, input);
   if (!route.routed || (ctx.remote === false && route.sourceId === requestedSourceId)) return route;
   if (ctx.remote !== false) {
-    throw new OperationError(
+    throw opError(
       'permission_denied',
       `${operation} slug '${input.slug}' is routed to private source '${route.privateSourceId}' and cannot be written by a remote caller`,
+      'Ask the brain host to make this private routed write through its trusted local CLI.',
     );
   }
-  throw new OperationError(
+  throw opError(
     'permission_denied',
     `${operation} slug '${input.slug}' must be written to private source '${route.sourceId}' (${route.reason})`,
+    'Write this identity through its configured private source on the trusted brain host.',
   );
 }
 const TOKEN_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
