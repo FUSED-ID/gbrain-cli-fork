@@ -305,7 +305,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
         WHERE e.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND e.next_attempt_at<=now())
       OR EXISTS (SELECT 1 FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation
         JOIN pages p ON p.source_id=s.id AND p.slug=j.slug
-        WHERE p.deleted_at IS NULL AND NOT s.archived AND p.page_kind IN ('markdown','code')
+        WHERE p.deleted_at IS NULL AND NOT s.archived AND p.page_kind IN ('markdown','wiki','code')
         AND ${PROJECTION_RETRY_READY_SQL})
       OR EXISTS (SELECT 1 FROM persistence_topology_changes c
         JOIN persistence_worktrees w ON w.id=(c.recovery->>'worktreeId')::uuid

@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS pages (
   slug          TEXT    NOT NULL,
   type          TEXT    NOT NULL,
   page_kind     TEXT    NOT NULL DEFAULT 'markdown'
-                CHECK (page_kind IN ('markdown','code','image')),
+                CHECK (page_kind IN ('markdown','wiki','code','image')),
   title         TEXT    NOT NULL,
   compiled_truth TEXT   NOT NULL DEFAULT '',
   timeline      TEXT    NOT NULL DEFAULT '',

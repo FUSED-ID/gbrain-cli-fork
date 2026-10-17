@@ -12,8 +12,8 @@ import { resealSafeChunks } from './projections.ts';
 import { PageRevisionConflictError } from './types.ts';
 
 const KEY_MARKER = `'-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----'`;
-const REBUILDABLE = `(p.page_kind='markdown' OR (p.page_kind='code' AND COALESCE(p.frontmatter->>'file',p.source_path) IS NOT NULL))`;
-const PENDING = `p.deleted_at IS NULL AND p.page_kind IN ('markdown','code')
+const REBUILDABLE = `(p.page_kind IN ('markdown','wiki') OR (p.page_kind='code' AND COALESCE(p.frontmatter->>'file',p.source_path) IS NOT NULL))`;
+const PENDING = `p.deleted_at IS NULL AND p.page_kind IN ('markdown','wiki','code')
   AND p.text_projection_revision IS DISTINCT FROM p.knowledge_revision
   AND (p.compiled_truth ~ ${KEY_MARKER} OR COALESCE(p.timeline,'') ~ ${KEY_MARKER})`;
 

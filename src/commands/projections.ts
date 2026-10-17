@@ -1,5 +1,5 @@
 /**
- * `gbrain projections drain` (#5401): rebuilds queued Markdown and code text
+ * `gbrain projections drain` (#5401): rebuilds queued Markdown, wiki and code text
  * projections in-process, in batches of up to 100, until every row queued
  * before the run started has been tried once. Trusted local CLI only; it is not
  * an operation, so MCP and remediation cannot run it.
@@ -25,7 +25,7 @@ export const PROJECTION_DRAIN_DOCS = 'docs/guides/repair.md#projection-drain';
 
 export const PROJECTIONS_HELP = `Usage: gbrain projections drain [--limit <n>] [--json]
 
-Rebuild queued Markdown and code text projections now, in batches of up to 100,
+Rebuild queued Markdown, wiki and code text projections now, in batches of up to 100,
 until every row queued before the run started has been tried once.
 
   --limit <n>   Try at most n pages in this run (default: no cap)

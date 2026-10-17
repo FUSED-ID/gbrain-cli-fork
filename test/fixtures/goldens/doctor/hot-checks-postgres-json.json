@@ -452,7 +452,7 @@
               "ready": false
             },
             "fix_unavailable_reason": "unstructured",
-            "message": "Visible pages have missing or stale text projections; search and code results may be incomplete. Run `gbrain projections drain` to rebuild queued Markdown and code projections now; it is safe while `gbrain serve` runs on Postgres. For code metadata repair, run `gbrain reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path. No repair or embedding was started by this check.",
+            "message": "Visible pages have missing or stale text projections; search and code results may be incomplete. Run `gbrain projections drain` to rebuild queued Markdown, wiki and code projections now; it is safe while `gbrain serve` runs on Postgres. For code metadata repair, run `gbrain reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path. No repair or embedding was started by this check.",
             "name": "text_projection_readiness",
             "status": "warn"
           },
@@ -2998,7 +2998,7 @@
             "tier": "symptom"
           },
           {
-            "fix": "Visible pages have missing or stale text projections; search and code results may be incomplete. Run `gbrain projections drain` to rebuild queued Markdown and code projections now; it is safe while `gbrain serve` runs on Postgres. For code metadata repair, run `gbrain reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path. No repair or embedding was started by this check.",
+            "fix": "Visible pages have missing or stale text projections; search and code results may be incomplete. Run `gbrain projections drain` to rebuild queued Markdown, wiki and code projections now; it is safe while `gbrain serve` runs on Postgres. For code metadata repair, run `gbrain reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path. No repair or embedding was started by this check.",
             "name": "text_projection_readiness",
             "status": "warn",
             "tier": "symptom"
@@ -3494,7 +3494,7 @@
               "ready": false
             },
             "fix_unavailable_reason": "unstructured",
-            "message": "Visible pages have missing or stale text projections; search and code results may be incomplete. Run `gbrain projections drain` to rebuild queued Markdown and code projections now; it is safe while `gbrain serve` runs on Postgres. For code metadata repair, run `gbrain reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path. No repair or embedding was started by this check.",
+            "message": "Visible pages have missing or stale text projections; search and code results may be incomplete. Run `gbrain projections drain` to rebuild queued Markdown, wiki and code projections now; it is safe while `gbrain serve` runs on Postgres. For code metadata repair, run `gbrain reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path. No repair or embedding was started by this check.",
             "name": "text_projection_readiness",
             "status": "warn"
           },
@@ -6040,7 +6040,7 @@
             "tier": "symptom"
           },
           {
-            "fix": "Visible pages have missing or stale text projections; search and code results may be incomplete. Run `gbrain projections drain` to rebuild queued Markdown and code projections now; it is safe while `gbrain serve` runs on Postgres. For code metadata repair, run `gbrain reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path. No repair or embedding was started by this check.",
+            "fix": "Visible pages have missing or stale text projections; search and code results may be incomplete. Run `gbrain projections drain` to rebuild queued Markdown, wiki and code projections now; it is safe while `gbrain serve` runs on Postgres. For code metadata repair, run `gbrain reindex-code --force --no-embed`. If work stays pending, inspect the recorded source path. No repair or embedding was started by this check.",
             "name": "text_projection_readiness",
             "status": "warn",
             "tier": "symptom"

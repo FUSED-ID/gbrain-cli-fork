@@ -201,7 +201,7 @@ export type EffectiveDateSource =
   | 'fallback';
 
 // `image` (v0.27.1): multimodal ingestion path, parallel to markdown + code.
-export type PageKind = 'markdown' | 'code' | 'image';
+export type PageKind = 'markdown' | 'wiki' | 'code' | 'image';
 
 /**
  * v0.40.3.0 — contextual retrieval tier ladder per `search.mode`.

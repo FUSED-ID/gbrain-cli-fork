@@ -122,7 +122,7 @@ describe('simplifyColumnDef', () => {
 
   it('strips CHECK constraints', () => {
     const result = simplifyColumnDef(
-      "TEXT NOT NULL DEFAULT 'markdown' CHECK (page_kind IN ('markdown','code'))"
+      "TEXT NOT NULL DEFAULT 'markdown' CHECK (page_kind IN ('markdown','wiki','code'))"
     );
     expect(result).toBe("TEXT NOT NULL DEFAULT 'markdown'");
   });

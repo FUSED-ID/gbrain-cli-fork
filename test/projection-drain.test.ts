@@ -7,7 +7,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { rebuildPendingPageProjections, projectionBacklog } from '../src/core/page-state/projections.ts';
+import { preparePageProjection, readProjectionSnapshot, rebuildPendingPageProjections, projectionBacklog } from '../src/core/page-state/projections.ts';
 import { runResidentProjectionInvocation } from '../src/core/persistence/consumer.ts';
 import { claimNextWrite, hasClaimableWrite } from '../src/core/persistence/journal.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
@@ -65,6 +65,27 @@ function costed(engine: BrainEngine, costMs: number) {
 }
 
 const pending = async (engine: BrainEngine) => (await projectionBacklog(engine)).pending;
+
+test('wiki text pages use the Markdown projection builder', async () => {
+  for (const engine of engines) {
+    const sourceId = await backlog(engine, 1);
+    const snapshot = await readProjectionSnapshot(engine, 'notes/n-0000', sourceId, { allowUnsealed: true });
+    expect(snapshot).not.toBeNull();
+    const projection = await preparePageProjection({ ...snapshot!, pageKind: 'wiki' as typeof snapshot.pageKind });
+    expect(projection.chunks.length).toBeGreaterThan(0);
+    expect(projection.code).toBeUndefined();
+  }
+}, 120_000);
+
+test('the drain selects and rebuilds queued wiki pages', async () => {
+  for (const engine of engines) {
+    const sourceId = await backlog(engine, 1);
+    await engine.executeRaw("UPDATE pages SET page_kind='wiki' WHERE source_id=$1 AND slug='notes/n-0000'", [sourceId]);
+    expect(await projectionBacklog(engine)).toMatchObject({ pending: 1 });
+    expect(await drainProjections(engine)).toMatchObject({ rebuilt: 1, remaining: 0 });
+    expect(await checkProjectionReadiness(engine, { sourceId })).toMatchObject({ status: 'ok' });
+  }
+}, 120_000);
 
 test('a budgeted rebuild starts no page after the deadline, and the resident invocation uses the 250 ms budget', async () => {
   for (const engine of engines) {

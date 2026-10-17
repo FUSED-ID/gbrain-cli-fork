@@ -326,7 +326,7 @@ export async function preparePageProjection(prepared: ProjectionSnapshot) {
     const code = await prepareCodeChunks(page, path);
     return { chunks: code.chunks, code };
   }
-  if (prepared.pageKind !== 'markdown') throw new Error('This page kind requires its source importer.');
+  if (prepared.pageKind !== 'markdown' && prepared.pageKind !== 'wiki') throw new Error('This page kind requires its source importer.');
   return { chunks: await prepareMarkdownChunks(page, prepared.maxChunkTokens, prepared.fenceOverlay), code: undefined };
 }
 
@@ -337,7 +337,7 @@ export async function preparePageProjection(prepared: ProjectionSnapshot) {
 const PROJECTION_JOB_PROBES = `CROSS JOIN LATERAL (SELECT s.id FROM sources s
       WHERE s.incarnation=j.source_incarnation AND NOT s.archived OFFSET 0) s
     CROSS JOIN LATERAL (SELECT p.page_kind FROM pages p WHERE p.source_id=s.id AND p.slug=j.slug
-      AND p.deleted_at IS NULL AND p.page_kind IN ('markdown','code') OFFSET 0) p`;
+      AND p.deleted_at IS NULL AND p.page_kind IN ('markdown','wiki','code') OFFSET 0) p`;
 
 /**
  * Rebuilds between statistics refreshes, per engine. Like autovacuum's analyze
@@ -376,7 +376,7 @@ export interface ProjectionRebuildOptions {
   onFailure?: (failure: ProjectionRebuildFailure) => void;
 }
 
-/** Live Markdown and code rows a rebuild can take, and how many of them last failed. */
+/** Live Markdown, wiki and code rows a rebuild can take, and how many of them last failed. */
 export async function projectionBacklog(engine: Pick<BrainEngine, 'executeRaw'>): Promise<{ pending: number; failed: number; oldest_age_seconds: number | null }> {
   const [row] = await engine.executeRaw<{ pending: number; failed: number; oldest: number | null }>(`SELECT COUNT(*)::int AS pending,
       COUNT(*) FILTER (WHERE j.reason='rebuild_failed')::int AS failed,

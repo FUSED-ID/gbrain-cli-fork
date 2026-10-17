@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS pages (
   -- v0.19.0: distinguishes markdown vs code pages at the DB level.
   -- Drives orphans filter, auto-link bypass, and \`query --lang\`.
   page_kind     TEXT    NOT NULL DEFAULT 'markdown'
-                CHECK (page_kind IN ('markdown','code','image')),
+                CHECK (page_kind IN ('markdown','wiki','code','image')),
   title         TEXT    NOT NULL,
   compiled_truth TEXT   NOT NULL DEFAULT '',
   timeline      TEXT    NOT NULL DEFAULT '',

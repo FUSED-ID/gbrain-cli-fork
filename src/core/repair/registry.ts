@@ -95,7 +95,7 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
   },
   'safe-chunks': {
     handler: safeChunksRepair, embeds: 'inline', checks: ['safe_index_pending'],
-    summary: 'Re-seal pages of every kind (markdown and code) chunked before the safe-chunk fence, which remote/MCP search withholds (#5050, #5247). '
+    summary: 'Re-seal pages of every kind (markdown, wiki and code) chunked before the safe-chunk fence, which remote/MCP search withholds (#5050, #5247). '
       + 'Projection-only: no page write and no journal admission. Unchanged vectors are kept; the rest are embedded unless --no-embed.',
   },
   'contextual-mode': {

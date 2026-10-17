@@ -23,8 +23,8 @@ export async function checkProjectionReadiness(engine: BrainEngine, scope: PageR
       ? 'Visible text projections match their canonical revisions.'
       : readiness.status === 'projection_pending'
         ? `Visible pages have missing or stale text projections; search and code results may be incomplete. ${opts.resident
-          ? 'The resident gbrain process that holds this PGLite brain is rebuilding queued Markdown and code projections (up to 100 pages per pass, fewer while writes wait). On the brain host, `gbrain doctor` shows the pending count and how to drain faster.'
-          : 'Run `gbrain projections drain` to rebuild queued Markdown and code projections now; it is safe while `gbrain serve` runs on Postgres.'} ${CODE_REPAIR} ${UNCHANGED}`
+          ? 'The resident gbrain process that holds this PGLite brain is rebuilding queued Markdown, wiki and code projections (up to 100 pages per pass, fewer while writes wait). On the brain host, `gbrain doctor` shows the pending count and how to drain faster.'
+          : 'Run `gbrain projections drain` to rebuild queued Markdown, wiki and code projections now; it is safe while `gbrain serve` runs on Postgres.'} ${CODE_REPAIR} ${UNCHANGED}`
         : 'Text projection readiness is unknown because its read-only probe failed; index completeness could not be verified.',
     details: { readiness: readiness.status, ready: readiness.ready },
   };
