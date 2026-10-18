@@ -2,7 +2,7 @@ import type { BrainEngine } from './engine.ts';
 import { LATEST_SCHEMA_VERSION } from './schema-migrations/latest.generated.ts';
 
 const FORK_VERSION_KEY = 'fork_version';
-const LATEST_FORK_VERSION = 1;
+const LATEST_FORK_VERSION = 2;
 
 /**
  * Cheap probe: does this engine have schema migrations pending?

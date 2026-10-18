@@ -22,6 +22,24 @@ export const FORK_MIGRATIONS: Migration[] = [
         ALTER COLUMN permissions SET DEFAULT '{"takes_holders":["world"]}'::jsonb;
     `,
   },
+  {
+    version: 2,
+    name: 'wiki_page_projection_queue',
+    idempotent: true,
+    sql: `
+      ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_page_kind_check;
+      ALTER TABLE pages ADD CONSTRAINT pages_page_kind_check
+        CHECK (page_kind IN ('markdown','wiki','code','image'));
+
+      INSERT INTO page_projection_jobs(source_incarnation,slug,revision,reason)
+      SELECT s.incarnation,p.slug,p.knowledge_revision,'canonical_change'
+      FROM pages p JOIN sources s ON s.id=p.source_id
+      WHERE p.deleted_at IS NULL AND NOT s.archived AND p.page_kind='wiki'
+        AND p.text_projection_revision IS DISTINCT FROM p.knowledge_revision
+      ON CONFLICT(source_incarnation,slug) DO UPDATE
+        SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now();
+    `,
+  },
 ];
 
 export interface RunMigrationsOptions {
