@@ -2,6 +2,10 @@
 
 All notable changes to GBrain will be documented in this file.
 
+### Fused-ID fork build
+
+Version bumped to `0.60.174.0-fused-id.2` in preparation for the W9 re-cut.
+
 Historical entries use generic identifiers for the retired hosted provider
 and its removed commands.
 Those identifiers and any sample command containing them are non-executable
