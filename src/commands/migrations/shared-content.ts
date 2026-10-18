@@ -13,7 +13,8 @@ export const SHARED_CONTENT_MIGRATION_VERSION = '0.53.0';
 export const SHARED_CONTENT_INSPECT_ARGV = ['gbrain', 'apply-migrations', '--migration', SHARED_CONTENT_MIGRATION_VERSION, '--dry-run', '--json'];
 
 export async function inspectSharedContentMigration(dryRun: boolean, exportOptions?: OrchestratorOpts['dbOnlyExport'],
-  acceptReviewedInventory?: OrchestratorOpts['acceptReviewedInventory']): Promise<SharedMigrationReport | null> {
+  acceptReviewedInventory?: OrchestratorOpts['acceptReviewedInventory'],
+  excludedSources: string[] = []): Promise<SharedMigrationReport | null> {
   const config = loadConfig();
   if (!config) return null;
   if (isThinClient(config)) return {
@@ -25,8 +26,9 @@ export async function inspectSharedContentMigration(dryRun: boolean, exportOptio
     await engine.connect(toEngineConfig(config));
     const ctx = { engine, config, sourceId: exportOptions?.sourceId ?? 'default', remote: false, dryRun,
       logger: { info: console.error, warn: console.error, error: console.error } };
-    const exported = exportOptions ? await exportDatabaseContent(ctx, { ...exportOptions, dryRun }) : undefined;
-    const report = await runSharedSkillsMigration(ctx, { dryRun, acceptReviewedInventory });
+    const excludedExport = !!exportOptions && excludedSources.includes(exportOptions.sourceId);
+    const exported = exportOptions && !excludedExport ? await exportDatabaseContent(ctx, { ...exportOptions, dryRun }) : undefined;
+    const report = await runSharedSkillsMigration(ctx, { dryRun, acceptReviewedInventory, excludedSources });
     if (exported) {
       report.content_export = exported;
       if (exported.status !== 'complete') report.status = exported.status === 'conflict' ? 'conflict' : 'action_required';
@@ -42,14 +44,14 @@ export const sharedContentMigration: Migration = {
     headline: 'Knowledge and shared skills belong to the same source-scoped content repository.',
     description: 'Inventories and checkpoints existing packs without moving knowledge or changing grants. Existing true publishing remains prose-only, false stays disabled, and DB-only/export, old writers and client activation remain explicit pending actions.',
   },
-  preview: options => inspectSharedContentMigration(true, options.dbOnlyExport, options.acceptReviewedInventory),
+  preview: options => inspectSharedContentMigration(true, options.dbOnlyExport, options.acceptReviewedInventory, options.excludedSources),
   reconcile: true,
   orchestrator: async options => {
     try {
-      const report = await inspectSharedContentMigration(options.dryRun, options.dbOnlyExport, options.acceptReviewedInventory);
+      const report = await inspectSharedContentMigration(options.dryRun, options.dbOnlyExport, options.acceptReviewedInventory, options.excludedSources);
       if (!report) return { version: SHARED_CONTENT_MIGRATION_VERSION, status: 'complete', phases: [{ name: 'inventory', status: 'skipped', detail: 'No brain configured.' }] };
       const pending = report.status === 'action_required' || report.status === 'conflict';
-      console.error(`[shared-skills] ${report.status}. ${report.sources.filter(source => source.status !== 'complete').length} source(s) need host action; no grants or bundle consent changed.`
+      console.error(`[shared-skills] ${report.status}. ${report.sources.filter(source => source.status === 'action_required' || source.status === 'conflict').length} source(s) need host action; no grants or bundle consent changed.`
         + (pending ? ` Inspect each source's next step: ${shellQuote(SHARED_CONTENT_INSPECT_ARGV)}` : ''));
       for (const source of report.sources) for (const phase of source.stages) {
         if (phase.status === 'action_required' || phase.status === 'conflict') console.error(`[shared-skills] ${source.source_id}: ${phase.reason}`);

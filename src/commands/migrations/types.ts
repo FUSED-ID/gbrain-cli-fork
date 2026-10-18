@@ -44,6 +44,8 @@ export interface OrchestratorOpts {
   };
   /** #5476: `--accept-reviewed-inventory <source>=<digest>`: the reviewed shared-skills inventory change to accept, per source. */
   acceptReviewedInventory?: Record<string, string>;
+  /** Skip all source-scoped work for these source ids in migration 0.53.0. */
+  excludedSources?: string[];
 }
 
 export interface OrchestratorPhaseResult {

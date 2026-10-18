@@ -54,6 +54,7 @@ interface ApplyMigrationsArgs {
   json: boolean;
   dbOnlyExport?: OrchestratorOpts['dbOnlyExport'];
   acceptReviewedInventory?: OrchestratorOpts['acceptReviewedInventory'];
+  excludedSources: string[];
   yes: boolean;
   nonInteractive: boolean;
   mode?: 'always' | 'pain_triggered' | 'off';
@@ -91,6 +92,14 @@ function parseArgs(args: string[]): ApplyMigrationsArgs {
       'Example: gbrain apply-migrations --migration <version> --export-db-only --content-root <path> --backup-confirmed --dry-run --json'), COMMAND);
   }
   const accepted: Record<string, string> = {};
+  const excludedSources: string[] = [];
+  args.forEach((arg, i) => {
+    if (arg !== '--exclude-source') return;
+    const sourceId = args[i + 1];
+    if (!sourceId || sourceId.startsWith('--')) exitCliError(usageError('--exclude-source requires a source id.',
+      'Example: gbrain apply-migrations --migration 0.53.0 --exclude-source birdclaw --dry-run --json'), COMMAND);
+    if (!excludedSources.includes(sourceId)) excludedSources.push(sourceId);
+  });
   args.forEach((arg, i) => {
     if (arg !== '--accept-reviewed-inventory') return;
     const match = /^([^=\s]+)=([a-f0-9]{64})$/.exec(args[i + 1] ?? '');
@@ -110,6 +119,7 @@ function parseArgs(args: string[]): ApplyMigrationsArgs {
       confirmQuiesced: has('--confirm-quiesced'),
       backup: has('--backup-confirmed') ? 'operator_verified' : has('--acknowledge-no-backup') ? 'acknowledged_unprotected' : undefined } : undefined,
     ...(Object.keys(accepted).length ? { acceptReviewedInventory: accepted } : {}),
+    excludedSources,
     yes: has('--yes'),
     nonInteractive: has('--non-interactive'),
     mode,
@@ -145,6 +155,8 @@ Usage:
                                         Accept a skill-pack change the user reviewed; the
                                         digest comes from the conflict message and stops
                                         matching if the files change again. Repeatable.
+  gbrain apply-migrations --migration 0.53.0 --exclude-source <id> [--exclude-source <id>]
+                                        Skip all migration work for the named source(s).
   gbrain apply-migrations --list [--json]
                                          Show applied + pending migrations.
                                          pending_fresh_install = setup work a
@@ -416,6 +428,7 @@ function orchestratorOptsFrom(cli: ApplyMigrationsArgs, ownLeaseToken?: string):
     noAutopilotInstall: cli.noAutopilotInstall,
     dbOnlyExport: cli.dbOnlyExport && { ...cli.dbOnlyExport, ownLeaseToken },
     ...(cli.acceptReviewedInventory ? { acceptReviewedInventory: cli.acceptReviewedInventory } : {}),
+    ...(cli.excludedSources.length ? { excludedSources: cli.excludedSources } : {}),
   };
 }
 

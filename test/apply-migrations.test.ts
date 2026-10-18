@@ -44,6 +44,11 @@ describe('parseArgs', () => {
     expect(a.hostDir).toBe('/tmp/abc');
   });
 
+  test('--exclude-source accepts repeatable source ids', () => {
+    const a = parseArgs(['--exclude-source', 'birdclaw', '--exclude-source', 'legacy']);
+    expect(a.excludedSources).toEqual(['birdclaw', 'legacy']);
+  });
+
   test('--no-autopilot-install flips flag', () => {
     expect(parseArgs(['--no-autopilot-install']).noAutopilotInstall).toBe(true);
   });

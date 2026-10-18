@@ -13,10 +13,10 @@ import { sharedSkillSourcePolicyOrPreserve } from './setup-source-policy.ts';
 import { INVENTORY_LIMIT_CEILINGS, readInventoryLimits, type InventoryLimits } from './inventory-limits.ts';
 import { SHARED_SKILL_LIMITS } from './model.ts';
 
-export type MigrationPublication = 'disabled' | 'prose_only' | 'consent_required';
+export type MigrationPublication = 'disabled' | 'prose_only' | 'consent_required' | 'excluded';
 export interface SharedMigrationStage {
   stage: 'inventory' | 'ownership' | 'projection' | 'policy' | 'members';
-  status: 'complete' | 'action_required' | 'conflict' | 'planned';
+  status: 'complete' | 'action_required' | 'conflict' | 'planned' | 'excluded';
   reason?: string;
 }
 export interface SharedSourceMigration {
@@ -26,7 +26,7 @@ export interface SharedSourceMigration {
   inventory: PackInventory | null;
   publication: MigrationPublication;
   stages: SharedMigrationStage[];
-  status: 'complete' | 'action_required' | 'conflict' | 'planned';
+  status: 'complete' | 'action_required' | 'conflict' | 'planned' | 'excluded';
   member_installations?: SharedMemberMigration[];
   parked?: SharedSourceParked;
 }
@@ -85,7 +85,7 @@ export async function legacyPublication(ctx: OperationContext): Promise<Migratio
   return 'consent_required';
 }
 
-export async function runSharedSkillsMigration(ctx: OperationContext, options: { dryRun?: boolean; acceptReviewedInventory?: Record<string, string> } = {}): Promise<SharedMigrationReport> {
+export async function runSharedSkillsMigration(ctx: OperationContext, options: { dryRun?: boolean; acceptReviewedInventory?: Record<string, string>; excludedSources?: string[] } = {}): Promise<SharedMigrationReport> {
   if (ctx.remote !== false) {
     throw opError('permission_denied', 'Shared-skills migration requires the trusted local host.',
       'The shared-skills migration runs only from gbrain apply-migrations on the brain host; a remote connection cannot run it.');
@@ -110,6 +110,13 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
   const roots = await ctx.engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>('SELECT id,incarnation,local_path FROM sources WHERE NOT archived ORDER BY id');
   const fallback = await ctx.engine.getConfig('sync.repo_path');
   for (const source of roots) {
+    if (options.excludedSources?.includes(source.id)) {
+      report.sources.push({ source_id: source.id, source_incarnation: source.incarnation,
+        root: source.local_path || (source.id === 'default' ? fallback : null), inventory: null,
+        publication: 'excluded', stages: [{ stage: 'inventory', status: 'excluded', reason: 'Excluded by --exclude-source; no export or source claim was attempted.' }],
+        status: 'excluded' });
+      continue;
+    }
     const sourcePolicy = await sharedSkillSourcePolicyOrPreserve(ctx.engine, source.id);
     const contentCheckpoint = await ctx.engine.getConfig(contentSetupKey(source.id, source.incarnation));
     if (contentCheckpoint && !dryRun && sourcePolicy.mode === 'content') {

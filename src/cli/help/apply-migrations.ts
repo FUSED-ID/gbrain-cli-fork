@@ -32,6 +32,7 @@ export const help: CliHelpSpec = {
     { name: '--backup-confirmed', type: 'boolean', desc: 'Attest an operational backup was verified.' },
     { name: '--acknowledge-no-backup', type: 'boolean', desc: 'Proceed without a verified backup (explicit choice).', consent: ['destructive'] },
     { name: '--accept-reviewed-inventory', type: 'string', desc: 'With --migration 0.53.0: accept a skill-pack change the user reviewed, as <source>=<digest> from the conflict message (repeatable; a later edit changes the digest).' },
+    { name: '--exclude-source', type: 'string', desc: 'With --migration 0.53.0: exclude a source from all export and claim actions (repeatable); excluded sources are reported as excluded.' },
   ],
   examples: [
     'gbrain apply-migrations --dry-run --json',
