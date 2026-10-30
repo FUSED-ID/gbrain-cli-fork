@@ -46,6 +46,7 @@ import {
 import { dirname, resolve } from 'path';
 import { hostname } from 'os';
 import type { BrainEngine } from '../engine.ts';
+import { parseWorkerOnlyNames } from '../../commands/jobs-worker-flags.ts';
 import { tryAcquireDbLock, waitForDbLockTakeover, inspectLock, isLockHolderLive, type DbLockHandle } from '../db-lock.ts';
 import { currentBrainId, readWorkers, workerRegistryReadFailure } from './worker-registry.ts';
 import { autopilotOperatorPauseMarkerPath, autopilotPaused } from '../autopilot-paths.ts';
@@ -110,6 +111,8 @@ export interface SupervisorOpts {
    *  SIGKILL-able child process (passed through as `--job-isolation process`).
    *  Omitted/inline: today's shared-process execution. */
   jobIsolation?: 'inline' | 'process';
+  /** Worker job-name allow-list, resolved from GBRAIN_WORKER_ONLY_NAMES when omitted. */
+  onlyNames?: string[];
   /** Error string if the supervisor's own renice failed (e.g. EPERM). */
   nice_error?: string;
   /**
@@ -185,7 +188,7 @@ const DEFAULTS: Omit<SupervisorOpts, 'cliPath'> = {
  * niceness also inherits to the worker's own children automatically.
  */
 export function buildWorkerArgs(
-  opts: Pick<SupervisorOpts, 'concurrency' | 'queue' | 'maxRssMb' | 'nice_requested' | 'jobIsolation'> &
+  opts: Pick<SupervisorOpts, 'concurrency' | 'queue' | 'maxRssMb' | 'nice_requested' | 'jobIsolation' | 'onlyNames'> &
     Partial<Pick<SupervisorOpts, 'allowShellJobs'>>,
 ): string[] {
   const args = [
@@ -211,6 +214,9 @@ export function buildWorkerArgs(
   // re-asserts the env from this flag after its preflight.
   if (opts.allowShellJobs) {
     args.push('--allow-shell-jobs');
+  }
+  if (opts.onlyNames) {
+    args.push('--only', opts.onlyNames.join(','));
   }
   return args;
 }
@@ -604,7 +610,8 @@ export class MinionSupervisor {
 
   constructor(engine: BrainEngine, opts: Partial<SupervisorOpts> & { cliPath: string }) {
     this.engine = engine;
-    this.opts = { ...DEFAULTS, ...opts };
+    const onlyNames = opts.onlyNames ?? parseWorkerOnlyNames([], process.env);
+    this.opts = { ...DEFAULTS, ...opts, ...(onlyNames ? { onlyNames } : {}) };
 
     // issue #1678 (Codex #4): when the caller didn't pin an explicit cap,
     // auto-size cgroup-aware instead of the flat DEFAULTS.maxRssMb footgun.
@@ -886,6 +893,7 @@ export class MinionSupervisor {
       // gates execution), so registeredNames is a static set — `quiet` just
       // suppresses the informational startup lines during derivation.
       await registerBuiltinHandlers(probe, this.engine, { quiet: true });
+      if (this.opts.onlyNames) probe.keepOnly(this.opts.onlyNames);
       this.handlerNames = [...probe.registeredNames];
     } catch (e) {
       this.handlerNames = [];

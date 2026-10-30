@@ -12,6 +12,7 @@ import type { BrainEngine } from '../../core/engine.ts';
 import { loadConfig } from '../../core/config.ts';
 import { startPersistenceConsumer } from '../../core/persistence/service.ts';
 import { describeLanePolicy, resolveLanePolicy } from '../../core/minions/lanes.ts';
+import { parseWorkerOnlyNames } from '../jobs-worker-flags.ts';
 
 export async function maybeRunWorkerStartupRecovery(
   queue: MinionQueue,
@@ -52,9 +53,20 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
   // opt-in AFTER preflight. Read sites keep checking the env var.
   if (hasFlag(args, '--allow-shell-jobs')) process.env.GBRAIN_ALLOW_SHELL_JOBS = '1';
 
+  // P1: bounded worker allow-list (`--only` / GBRAIN_WORKER_ONLY_NAMES).
+  // Parsed before either path constructs a worker so filtering is in place
+  // before the first claim.
+  let onlyNames: string[] | undefined;
+  try {
+    onlyNames = parseWorkerOnlyNames(args);
+  } catch (error) {
+    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+
   const queueName = parseFlag(args, '--queue') ?? 'default';
   if (engine.kind === 'pglite') {
-    await drainPgliteQueue(engine, queue, queueName, registerBuiltinHandlers);
+    await drainPgliteQueue(engine, queue, queueName, registerBuiltinHandlers, onlyNames);
     return;
   }
   const concurrency = resolveWorkerConcurrency(args);
@@ -207,6 +219,7 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
     reportWorkerConfiguration(error);
     process.exit(WORKER_EXIT_CONFIGURATION);
   }
+  if (onlyNames) worker.keepOnly(onlyNames);
 
   // Subscribe to self-health failures emitted by the worker. Library code
   // (worker.ts) never calls process.exit directly so it stays embeddable;
@@ -347,10 +360,12 @@ export async function drainPgliteQueue(
   queue: MinionQueue,
   queueName: string,
   registerHandlers: (worker: MinionWorker, engine: BrainEngine) => Promise<void>,
+  onlyNames?: string[],
 ): Promise<{ delayed: number }> {
   await queue.ensureSchema();
   const worker = new MinionWorker(engine, { queue: queueName, pollInterval: 200, healthCheckInterval: 0 });
   await registerHandlers(worker, engine);
+  if (onlyNames) worker.keepOnly(onlyNames);
   const names = worker.registeredNames;
   const count = async (statuses: string[]): Promise<number> => {
     const [row] = await engine.executeRaw<{ n: number }>(

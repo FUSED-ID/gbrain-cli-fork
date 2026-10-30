@@ -6,7 +6,40 @@ import { WORKER_EXIT_CONFIGURATION } from '../../core/minions/worker-exit-codes.
 import { writeStdoutFinal } from '../../core/cli-force-exit.ts';
 import { opError } from '../../core/ops/contract.ts';
 import { usageError, writeCliRefusal } from '../../cli/cli-error.ts';
+import { parseWorkerOnlyNames } from '../jobs-worker-flags.ts';
 import type { BrainEngine } from '../../core/engine.ts';
+
+const SUPERVISOR_WORKER_NAMES = new Set([
+  'sync', 'embed', 'lint', 'extract-conversation-facts', 'chronicle_extract', 'loops_extract',
+  'enrich', 'lint-fix', 'integrity-auto', 'sync-retry-failed', 'import', 'extract', 'backlinks',
+  'facts-absorb', 'contextual_reindex_per_chunk', 'autopilot-cycle', 'autopilot-global-maintenance',
+  'shell', 'subagent', 'subagent_aggregator', 'ingest_capture', 'reindex', 'repair-jsonb', 'orphans',
+  'doctor-refresh', 'integrity', 'purge', 'synthesize', 'patterns', 'consolidate', 'extract_facts',
+  'resolve_symbol_edges', 'recompute_emotional_weight', 'extract-atoms-drain', 'embed-backfill',
+  'connector-sync', 'extract-ner', 'extract-takes-from-pages', 'extract-timeline-from-meetings',
+  'embed-catch-up', 'unify-types', 'skillopt',
+]);
+
+function refuseSupervisorOnly(jsonMode: boolean): never {
+  const message = 'The supervisor command does not support --only. ' +
+    'The worker allow-list is environment-only here: set GBRAIN_WORKER_ONLY_NAMES ' +
+    '(or run `gbrain jobs work --only NAMES` directly).';
+  process.exit(writeCliRefusal(usageError(message,
+    'GBRAIN_WORKER_ONLY_NAMES=facts-absorb gbrain jobs supervisor start --detach'),
+  'jobs', { json: jsonMode, human: `Error: ${message}` }));
+}
+
+function validateSupervisorWorkerOnlyEnv(jsonMode: boolean): void {
+  if (process.env.GBRAIN_WORKER_ONLY_NAMES === undefined) return;
+  try {
+    const names = parseWorkerOnlyNames([], process.env);
+    if (!names || names.some(name => !SUPERVISOR_WORKER_NAMES.has(name))) {
+      refuseSupervisorOnly(jsonMode);
+    }
+  } catch {
+    refuseSupervisorOnly(jsonMode);
+  }
+}
 
 export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsCommandContext): Promise<void> {
   // Dispatcher for supervisor subcommands:
@@ -14,15 +47,27 @@ export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsComm
   //   gbrain jobs supervisor start [--detach]   → foreground or detached start
   //   gbrain jobs supervisor status             → JSON liveness + queue stats
   //   gbrain jobs supervisor stop               → SIGTERM + drain wait
-  const { MinionSupervisor, DEFAULT_PID_FILE } = await import('../../core/minions/supervisor.ts');
-  const { writeSupervisorEvent } = await import('../../core/minions/handlers/supervisor-audit.ts');
-
   const supCmd = args[1];
   const isStatusCmd = supCmd === 'status';
   const isStopCmd = supCmd === 'stop';
   const isStartCmd = supCmd === 'start' || supCmd === undefined || supCmd === '--detach' ||
                       (typeof supCmd === 'string' && supCmd.startsWith('--'));
   const jsonMode = hasFlag(args, '--json');
+  validateSupervisorWorkerOnlyEnv(jsonMode);
+
+  // P1/Astra NO_GO: `jobs work --only NAMES` bounds a worker, but the
+  // supervisor has no CLI allow-list of its own. Accepting the flag here and
+  // ignoring it would start an unrestricted probe and child, so refuse it
+  // explicitly — before configuration, `--detach`, and any child spawn. The
+  // allow-list stays environment-only (GBRAIN_WORKER_ONLY_NAMES), which the
+  // supervisor already applies to both its probe and the worker it spawns.
+  if (isStartCmd && args.some(arg => arg === '--only' || arg.startsWith('--only='))) {
+    refuseSupervisorOnly(jsonMode);
+  }
+
+  const { MinionSupervisor, DEFAULT_PID_FILE } = await import('../../core/minions/supervisor.ts');
+  const { writeSupervisorEvent } = await import('../../core/minions/handlers/supervisor-audit.ts');
+
   const pidFile = parseFlag(args, '--pid-file') ?? DEFAULT_PID_FILE;
 
   // ----- status subcommand -----

@@ -69,6 +69,7 @@ export {
   type JobIsolationMode,
 } from './jobs/shared.ts';
 export { maybeRunWorkerStartupRecovery } from './jobs/work.ts';
+export { parseWorkerOnlyNames } from './jobs-worker-flags.ts';
 
 /**
  * Long-lived workers outlive operator config changes. Re-stamp the AI gateway
@@ -183,7 +184,13 @@ USAGE
   gbrain jobs watch [--json] [--follow] [--refresh-ms=N]
   gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
                    [--health-interval MS] [--nice N]
-                   [--job-isolation inline|process]
+                   [--job-isolation inline|process] [--only NAMES]
+    --only NAMES   Claim only these job names (comma-separated); every other
+                   queued job is left for another worker. Use --only=NAMES as
+                   an equivalent form. A bare, empty, or flag-looking value
+                   is rejected, and unknown job names are rejected.
+                   Env fallback: GBRAIN_WORKER_ONLY_NAMES. An explicit
+                   --only flag takes precedence over the environment.
   gbrain jobs supervisor [start] [--detach] [--json]
                          [--concurrency N] [--queue Q] [--pid-file PATH]
                          [--max-crashes N] [--health-interval N]
@@ -265,6 +272,7 @@ USAGE
   gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
                    [--health-interval MS] [--nice N]
                    [--job-isolation inline|process] [--allow-shell-jobs]
+                   [--only NAMES]
 
 OPTIONS
   --queue Q            Queue to claim from (default: default)
@@ -294,6 +302,13 @@ OPTIONS
   --nice N             OS scheduling priority, -20 (highest) to 19
                        (nicest). Env fallback: GBRAIN_NICE; flag wins.
                        Negative values need root.
+  --only NAMES         Claim only these job names (comma-separated); every
+                       other queued job is left for another worker. The
+                       equals form --only=NAMES is also accepted. A bare,
+                       empty, or flag-looking value is rejected. Unknown job
+                       names are rejected and listed in the error. Env
+                       fallback: GBRAIN_WORKER_ONLY_NAMES. An explicit
+                       --only flag takes precedence over the environment.
 
 NOTES
   PGLite's exclusive file lock cannot host a long-lived daemon: there it runs
