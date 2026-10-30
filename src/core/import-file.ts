@@ -1,4 +1,5 @@
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
+import { routeMarkdownImport } from './import-private-route.ts';
 import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
 import { maintenanceBeliefTransaction } from './belief/writers.ts';
 import { withUnmanagedBeliefs } from './belief/projection-point.ts';
@@ -360,7 +361,7 @@ export async function importFromContent(
   // (source_id, slug) row. Pre-fix, putPage relied on the schema DEFAULT and
   // silently fabricated a duplicate at (default, slug) — causing later
   // bare-slug subqueries (getTags, deleteChunks, etc.) to crash with 21000.
-  const sourceId = opts.sourceId;
+  let sourceId = opts.sourceId;
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
@@ -369,12 +370,9 @@ export async function importFromContent(
     return { slug, status: screen.refusal.code === 'file_too_large' ? 'skipped' : 'error', chunks: 0, error: screen.refusal.message, refusal: screen.refusal, skip_reason: screen.refusal.code };
   }
   const parsed = (screen as { parsed: ParsedMarkdown }).parsed;
-  if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct content import', { sourceId: sourceId ?? 'default' });
-  // Canonicalize only free-prose fields before protected-fence parsing, hidden
-  // row merging, hashing and indexing. Frontmatter identities stay untouched.
-  parsed.title = sanitizeText(parsed.title);
-  parsed.compiled_truth = sanitizeText(parsed.compiled_truth);
-  parsed.timeline = sanitizeText(parsed.timeline);
+  const routedImport = await routeMarkdownImport(engine, opts.prepare, parsed, content, slug, sourceId);
+  sourceId = routedImport.sourceId;
+  const routedFromSourceId = routedImport.routedFromSourceId;
 
   // #1699/#6259 trust boundary: only the gate and owner-tier paths keep gate-owned markers (import-screen.ts).
   stripGateOwnedMarkers(parsed, opts);
@@ -911,6 +909,8 @@ export async function importFromContent(
     throw decorateEmbeddingDimError(err, slug, activeColName);
   }));
   const searchable = await segmented?.afterCommit(engine);
+
+  if (routedFromSourceId) await engine.softDeletePage(slug, { sourceId: routedFromSourceId });
 
 
   if (postCommitEmbedding && !noEmbed && chunks.length > 0) {

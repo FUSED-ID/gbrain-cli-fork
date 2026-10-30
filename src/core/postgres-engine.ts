@@ -116,6 +116,7 @@ import { logConnectionEvent } from './connection-audit.ts';
 import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { requestSignal, throwIfRequestAborted } from './request-signal.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { enforcePrivatePageWrite, enforcePrivateFactWrite } from './private-source-routing.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns } from './search/sql-ranking.ts';
 import { narrowedOrFallbackQuery } from './search/keyword-or-narrow.ts';
@@ -161,19 +162,14 @@ import type { CjkKeywordCtx } from './search/cjk-keyword-sql.ts';
 import { postgresExecutor, type RunUnsafeOpts } from './engine-sql/dialect-postgres.ts';
 
 /**
- * #6278: how long a cancelled statement may stay unsettled after its cancel request before the reserved
- * connection is discarded to settle it client-side. A transaction-mode pooler (Supavisor :6543) may not
- * forward the cancel, leaving the backend in ClientRead where no server timeout applies.
+ * #6278: how long a cancelled statement may stay unsettled after its cancel
+ * request before the reserved connection is discarded client-side.
  */
 export const DEFAULT_CANCEL_SETTLE_MS = 2_000;
 export function cancelSettleMs(): number {
   const raw = Number(process.env.GBRAIN_CANCEL_SETTLE_MS);
   return Number.isFinite(raw) && raw >= 100 ? raw : DEFAULT_CANCEL_SETTLE_MS;
 }
-import type { SqlExecutor } from './engine-sql/executor.ts';
-import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
-import { writerStamp } from './persistence/writer-versions.ts';
-import { wellFormedJson } from './text-safe.ts';
 
 function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
@@ -193,16 +189,10 @@ export function getPostgresSchema(
     .replace(/'text-embedding-3-large'/g, `'${sanitizedModel}'`)
     .replace(/\('embedding_dimensions', '1536'\)/g, `('embedding_dimensions', '${parsedDims}')`);
 }
-
-// CONNECTION_ERROR_PATTERNS / isConnectionError were used by the per-call
-// executeRaw retry that #406 originally shipped. Eng-review D3 dropped that
-// retry as unsound (regex idempotence-boundary doesn't hold for writable
-// CTEs or side-effecting SELECTs). Recovery now happens at the supervisor
-// level (3-strikes-then-reconnect). The unit tests in
-// test/connection-resilience.test.ts retain a self-contained copy of the
-// helper so the regression-against-future-reintroduction guard still works.
-// See TODOS.md item: "err.code-based connection-error matching" for the
-// follow-up that will reintroduce a typed retry mechanism.
+import type { SqlExecutor } from './engine-sql/executor.ts';
+import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
+import { writerStamp } from './persistence/writer-versions.ts';
+import { wellFormedJson } from './text-safe.ts';
 
 export class PostgresEngine implements BrainEngine {
   private vectorIterativeScan?: Promise<boolean>;
@@ -850,6 +840,7 @@ export class PostgresEngine implements BrainEngine {
     slug = validateSlug(slug);
     const write = async (tx: BrainEngine) => {
       const sourceId = opts?.sourceId ?? 'default';
+      if (!opts?.migrationWrite) await enforcePrivatePageWrite(tx, { requestedSourceId: sourceId, slug, entityType: page.type, entityName: page.title });
       await tx.lockPageKeys([{ sourceId, slug }]);
       if (opts?.expectedRevision !== undefined || opts?.force !== undefined) {
         assertPageRevision(await tx.readPageSnapshot(slug, { sourceId, includeDeleted: true }), opts);
@@ -901,7 +892,10 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async restorePage(slug: string, opts?: { sourceId?: string }): Promise<boolean> {
-    return this.transaction(async tx => { await assertRevivalUnclaimed(tx, slug, opts?.sourceId); return pagesImpl.restorePage((tx as PostgresEngine).engineSql, slug, opts); });
+    const sourceId = opts?.sourceId ?? 'default';
+    const page = await this.getPage(slug, { sourceId, includeDeleted: true });
+    if (page) await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug, entityType: page.type, entityName: page.title });
+    return this.transaction(async tx => { await assertRevivalUnclaimed(tx, slug, sourceId); return pagesImpl.restorePage((tx as PostgresEngine).engineSql, slug, opts); });
   }
 
   async purgeDeletedPages(
@@ -918,6 +912,7 @@ export class PostgresEngine implements BrainEngine {
     timeline: string,
     contentHash: string,
   ): Promise<void> {
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug, content: compiledTruth });
     return pagesImpl.refreshPageBody(this.engineSql, slug, sourceId, compiledTruth, timeline, contentHash);
   }
 
@@ -1878,6 +1873,8 @@ export class PostgresEngine implements BrainEngine {
     entry: TimelineInput,
     opts?: { skipExistenceCheck?: boolean; sourceId?: string },
   ): Promise<boolean> {
+    const sourceId = opts?.sourceId ?? 'default';
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
     return timelineImpl.addTimelineEntry(this.engineSql, slug, entry, opts);
   }
 
@@ -1913,6 +1910,12 @@ export class PostgresEngine implements BrainEngine {
   async mergeOntologyFact(obs: OntologyObservationInput): Promise<OntologyMergeResult> {
     const sql = this.sql;
     const sourceId = obs.sourceId ?? 'default';
+    await enforcePrivateFactWrite(this, {
+      sourceId,
+      pageSlug: obs.entitySlug,
+      entitySlug: obs.entitySlug,
+      visibility: obs.visibility ?? 'private',
+    });
     const dimension = normalizeDimension(obs.dimension);
     const vh = valueHash(obs.value);
     const conf = obs.confidence ?? 0.7;
@@ -1935,6 +1938,12 @@ export class PostgresEngine implements BrainEngine {
     const current = cur[0];
 
     if (current && current.value_hash === vh && !isBackdatedObservation(validFrom, current.valid_from)) {
+      await enforcePrivateFactWrite(this, {
+        sourceId,
+        pageSlug: obs.entitySlug,
+        entitySlug: obs.entitySlug,
+        visibility,
+      });
       // Same value → corroboration, or noop when this provenance already
       // observed the value during the current stint.
       const seen = await sql`
@@ -1970,6 +1979,12 @@ export class PostgresEngine implements BrainEngine {
 
     let supersededId: number | null = null;
     if (current && status === 'active') {
+      await enforcePrivateFactWrite(this, {
+        sourceId,
+        pageSlug: obs.entitySlug,
+        entitySlug: obs.entitySlug,
+        visibility,
+      });
       const forward = validFrom == null || current.valid_from == null
         || new Date(validFrom).getTime() >= new Date(current.valid_from).getTime();
       if (forward) {
@@ -2268,6 +2283,7 @@ export class PostgresEngine implements BrainEngine {
     input: NewFact,
     ctx: { source_id: string; supersedeId?: number },
   ): Promise<{ id: number; status: FactInsertStatus }> {
+    await enforcePrivateFactWrite(this, { sourceId: ctx.source_id, entitySlug: input.entity_slug, visibility: input.visibility ?? 'private' });
     return factsImpl.insertFact(this.engineSql, () => this.resolveFactsEmbeddingCast(), input, ctx);
   }
 
@@ -2280,6 +2296,9 @@ export class PostgresEngine implements BrainEngine {
     ctx: { source_id: string },
     opts?: { deleteForPageFirst?: { slug: string; excludeSourcePrefixes?: string[]; preserveExpiredLegacy?: boolean } },
   ): Promise<{ inserted: number; ids: number[]; warnings: string[]; deleted: number }> {
+    for (const row of rows) {
+      await enforcePrivateFactWrite(this, { sourceId: ctx.source_id, pageSlug: row.source_markdown_slug, entitySlug: row.entity_slug, visibility: row.visibility ?? 'private' });
+    }
     return factsImpl.insertFacts(this.engineSql, () => this.resolveFactsEmbeddingCast(), rows, ctx, opts);
   }
 
@@ -2524,7 +2543,9 @@ export class PostgresEngine implements BrainEngine {
 
   // Versions
   async createVersion(slug: string, opts?: { sourceId?: string; preimage?: PageSnapshot }): Promise<PageVersion> {
-    return createPageVersion(this, slug, opts?.sourceId ?? 'default', opts?.preimage);
+    const sourceId = opts?.sourceId ?? 'default';
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
+    return createPageVersion(this, slug, sourceId, opts?.preimage);
   }
 
   async getVersions<B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>): Promise<PageVersionRows<B>> {
@@ -2536,6 +2557,8 @@ export class PostgresEngine implements BrainEngine {
     versionId: number,
     opts?: { sourceId?: string },
   ): Promise<void> {
+    const sourceId = opts?.sourceId ?? 'default';
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
     return pagesImpl.revertToVersion(this.engineSql, slug, versionId, opts);
   }
 

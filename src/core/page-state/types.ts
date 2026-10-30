@@ -14,6 +14,8 @@ export interface PageMutationPrecondition {
 export interface PageWriteOptions extends PageMutationPrecondition {
   sourceId?: string;
   allowEmptyOverwrite?: boolean;
+  /** Verbatim source-engine copy; bypasses policy routing after source transfer. */
+  migrationWrite?: boolean;
   /**
    * #5984: inside a page transaction, write in that transaction instead of a
    * savepoint (one round trip less); a failure then aborts the transaction.

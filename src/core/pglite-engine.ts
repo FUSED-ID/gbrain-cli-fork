@@ -117,6 +117,7 @@ import type {
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { enforcePrivatePageWrite, enforcePrivateFactWrite } from './private-source-routing.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
 import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
 import { PAGE_SORT_SQL } from './types.ts';
@@ -599,28 +600,15 @@ export function buildWalRepairNotice(receipt: WalRepairReceipt): string {
     `    indexes are not rebuilt: pages written just before the crash can be`,
     `    missing from vector search while keyword search still finds them.`,
     `    Pre-repair backup: ${receipt.backupPath}`,
-    `    Next: rebuild the vector indexes with \`gbrain reindex --vectors\`,`,
+    `    Next: rebuild the vector indexes with \`gbrain reindex --vectors\`,` ,
     `    then run \`gbrain doctor\` to verify brain integrity.`,
     `    Disable auto-repair with GBRAIN_PGLITE_WAL_REPAIR=off.`,
   ].join('\n');
 }
 
 /**
- * #2084 — PGLite's Emscripten runtime hijacks `process.exitCode` as ITS status
- * channel: instantiation REPLACES the property with an accessor whose getter
- * falls back to the WASM runtime status (99 while alive, the exit status after
- * close) whenever no explicit value was assigned — and assigning `undefined`
- * resets to that fallback, so "unset" cannot be restored. Pre-fix, every clean
- * PGLite run carried a bogus 99 until close zeroed it, and an errored op's
- * exit 1 survived only by accident of write ordering.
- *
- * Containment: around PGlite.create(), snapshot the pre-call value and restore
- * it — pinning an explicit 0 when nothing was set, because restoring
- * `undefined` would surface the WASM fallback instead. This keeps the GLOBAL
- * tidy for external readers; the CLI's own verdict never reads it (it lives in
- * the owned channel: setCliExitVerdict/currentExitCode, cli-force-exit.ts —
- * in-memory brains run initdb whose status lands on a later tick, past any
- * snapshot). db.close() stays unwrapped (see the comment at the close site).
+ * #2084 - PGLite's Emscripten runtime hijacks process.exitCode as its status
+ * channel. Keep the global value stable around WASM initialization.
  */
 async function preservingProcessExitCode<T>(fn: () => Promise<T>): Promise<T> {
   const pre = process.exitCode;
@@ -1241,6 +1229,7 @@ export class PGLiteEngine implements BrainEngine {
     slug = validateSlug(slug);
     const write = async (tx: BrainEngine) => {
       const sourceId = opts?.sourceId ?? 'default';
+      if (!opts?.migrationWrite) await enforcePrivatePageWrite(tx, { requestedSourceId: sourceId, slug, entityType: page.type, entityName: page.title });
       await tx.lockPageKeys([{ sourceId, slug }]);
       if (opts?.expectedRevision !== undefined || opts?.force !== undefined) {
         assertPageRevision(await tx.readPageSnapshot(slug, { sourceId, includeDeleted: true }), opts);
@@ -1294,7 +1283,10 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async restorePage(slug: string, opts?: { sourceId?: string }): Promise<boolean> {
-    return this.transaction(async tx => { await assertRevivalUnclaimed(tx, slug, opts?.sourceId); return pagesImpl.restorePage((tx as PGLiteEngine).engineSql, slug, opts); });
+    const sourceId = opts?.sourceId ?? 'default';
+    const page = await this.getPage(slug, { sourceId, includeDeleted: true });
+    if (page) await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug, entityType: page.type, entityName: page.title });
+    return this.transaction(async tx => { await assertRevivalUnclaimed(tx, slug, sourceId); return pagesImpl.restorePage((tx as PGLiteEngine).engineSql, slug, opts); });
   }
 
   async purgeDeletedPages(
@@ -1311,6 +1303,7 @@ export class PGLiteEngine implements BrainEngine {
     timeline: string,
     contentHash: string,
   ): Promise<void> {
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug, content: compiledTruth });
     return pagesImpl.refreshPageBody(this.engineSql, slug, sourceId, compiledTruth, timeline, contentHash);
   }
 
@@ -2080,6 +2073,8 @@ export class PGLiteEngine implements BrainEngine {
     entry: TimelineInput,
     opts?: { skipExistenceCheck?: boolean; sourceId?: string },
   ): Promise<boolean> {
+    const sourceId = opts?.sourceId ?? 'default';
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
     return timelineImpl.addTimelineEntry(this.engineSql, slug, entry, opts);
   }
 
@@ -2114,6 +2109,12 @@ export class PGLiteEngine implements BrainEngine {
 
   async mergeOntologyFact(obs: OntologyObservationInput): Promise<OntologyMergeResult> {
     const sourceId = obs.sourceId ?? 'default';
+    await enforcePrivateFactWrite(this, {
+      sourceId,
+      pageSlug: obs.entitySlug,
+      entitySlug: obs.entitySlug,
+      visibility: obs.visibility ?? 'private',
+    });
     const dimension = normalizeDimension(obs.dimension);
     const vh = valueHash(obs.value);
     const conf = obs.confidence ?? 0.7;
@@ -2134,6 +2135,12 @@ export class PGLiteEngine implements BrainEngine {
     const current = cur.rows[0] as { id: number; value_hash: string; valid_from: string | null } | undefined;
 
     if (current && current.value_hash === vh && !isBackdatedObservation(validFrom, current.valid_from)) {
+      await enforcePrivateFactWrite(this, {
+        sourceId,
+        pageSlug: obs.entitySlug,
+        entitySlug: obs.entitySlug,
+        visibility,
+      });
       // This provenance already observed the value during the current stint.
       const seen = await this.db.query(
         `SELECT 1 FROM facts
@@ -2168,6 +2175,12 @@ export class PGLiteEngine implements BrainEngine {
 
     let supersededId: number | null = null;
     if (current && status === 'active') {
+      await enforcePrivateFactWrite(this, {
+        sourceId,
+        pageSlug: obs.entitySlug,
+        entitySlug: obs.entitySlug,
+        visibility,
+      });
       const forward = validFrom == null || current.valid_from == null
         || new Date(validFrom).getTime() >= new Date(current.valid_from).getTime();
       if (forward) {
@@ -2432,6 +2445,7 @@ export class PGLiteEngine implements BrainEngine {
     input: NewFact,
     ctx: { source_id: string; supersedeId?: number },
   ): Promise<{ id: number; status: FactInsertStatus }> {
+    await enforcePrivateFactWrite(this, { sourceId: ctx.source_id, entitySlug: input.entity_slug, visibility: input.visibility ?? 'private' });
     return factsImpl.insertFact(this.engineSql, undefined, input, ctx);
   }
 
@@ -2444,6 +2458,9 @@ export class PGLiteEngine implements BrainEngine {
     ctx: { source_id: string },
     opts?: { deleteForPageFirst?: { slug: string; excludeSourcePrefixes?: string[]; preserveExpiredLegacy?: boolean } },
   ): Promise<{ inserted: number; ids: number[]; warnings: string[]; deleted: number }> {
+    for (const row of rows) {
+      await enforcePrivateFactWrite(this, { sourceId: ctx.source_id, pageSlug: row.source_markdown_slug, entitySlug: row.entity_slug, visibility: row.visibility ?? 'private' });
+    }
     return factsImpl.insertFacts(this.engineSql, undefined, rows, ctx, opts);
   }
 
@@ -2691,7 +2708,9 @@ export class PGLiteEngine implements BrainEngine {
 
   // Versions
   async createVersion(slug: string, opts?: { sourceId?: string; preimage?: PageSnapshot }): Promise<PageVersion> {
-    return createPageVersion(this, slug, opts?.sourceId ?? 'default', opts?.preimage);
+    const sourceId = opts?.sourceId ?? 'default';
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
+    return createPageVersion(this, slug, sourceId, opts?.preimage);
   }
 
   async getVersions<B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>): Promise<PageVersionRows<B>> {
@@ -2703,6 +2722,8 @@ export class PGLiteEngine implements BrainEngine {
     versionId: number,
     opts?: { sourceId?: string },
   ): Promise<void> {
+    const sourceId = opts?.sourceId ?? 'default';
+    await enforcePrivatePageWrite(this, { requestedSourceId: sourceId, slug });
     return pagesImpl.revertToVersion(this.engineSql, slug, versionId, opts);
   }
 

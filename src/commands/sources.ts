@@ -32,7 +32,7 @@
  *   - MCP tool-def regen for full source-scoping of all ops (part of Step 2+5)
  */
 
-import { writeFileSync, unlinkSync, existsSync } from 'fs';
+import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
@@ -79,6 +79,7 @@ import { isSyncStrategy } from '../core/sync.ts';
 import { pullStrategyOf } from '../core/git-remote.ts';
 import { isValidSourceId } from '../core/source-id.ts';
 import { opError } from '../core/ops/contract.ts';
+import { runProvisionPrivateRouting } from './sources-provision-private-routing.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -140,6 +141,7 @@ async function countPages(engine: BrainEngine, sourceId: string): Promise<number
   );
   return rows[0]?.n ?? 0;
 }
+
 
 // ── Subcommand: add ─────────────────────────────────────────
 
@@ -1836,6 +1838,7 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
 export async function runSources(engine: BrainEngine, args: string[]): Promise<void> {
   const sub = args[0];
   const rest = args.slice(1);
+  if (sub === 'provision-private-routing') return runProvisionPrivateRouting(engine, rest);
   if (sub === 'reconcile') {
     const { runReconcileCli } = await import('./source-reconcile.ts');
     return runReconcileCli(rest, engine);

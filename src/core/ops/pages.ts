@@ -36,6 +36,9 @@ import { invalidParam, readFix } from './op-fix.ts';
 import { WHERE_PARAM, whereOpParam } from './where-param.ts';
 import { isDatetimeInputError } from '../utils.ts';
 import { rethrowNamingRevisionSource } from './put-page-revision-source.ts';
+import { enforcePrivatePageWrite } from '../private-source-routing.ts';
+import { preflightPutPagePrivateWrite } from './pages-private-preflight.ts';
+import { normalizeEntityPageWriteSlugWithConfig, normalizePageWriteSlugWithConfig } from '../slug-namespace.ts';
 import {
   assertExplicitSourceLive,
   enforceSubagentSlugFence,
@@ -109,7 +112,9 @@ const get_page: Operation = {
   },
   handler: async (ctx, p) => {
     if (p.known_as_of !== undefined) return getPageKnownAsOf(ctx, p);
-    const slug = p.slug as string;
+    const requestedSlug = p.slug as string;
+    const slug = typeof p.slug === 'string' ? await normalizePageWriteSlugWithConfig(ctx.engine, p.slug, ctx.logger) : requestedSlug;
+    const namespaceResolved = slug !== requestedSlug ? slug : undefined;
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
     // Large pages: resolve the body mode first, so a malformed selector fails before any read.
@@ -141,10 +146,16 @@ const get_page: Operation = {
     // oracle), composing with — not replacing — the source-grant scope above.
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
 
-    let snapshot = await ctx.engine.readPageSnapshot(slug, { includeDeleted, excludePrivate, ...sourceOpts, resolveAlias: true });
+    const readSnapshot: (candidateSlug: string, opts: Parameters<BrainEngine['readPageSnapshot']>[1]) => Promise<PageSnapshot | null> = typeof ctx.engine.readPageSnapshot === 'function'
+      ? ctx.engine.readPageSnapshot.bind(ctx.engine)
+      : async (candidateSlug, opts) => {
+        const legacyPage = await ctx.engine.getPage(candidateSlug, opts);
+        return legacyPage ? { page: legacyPage, tags: [], revision: '', sourceIncarnation: '', withdrawals: [] } : null;
+      };
+    let snapshot = await readSnapshot(slug, { includeDeleted, excludePrivate, ...sourceOpts, resolveAlias: true });
     let page = snapshot?.page ?? null;
     if (page && excludePrivate && isPrivatePage(page)) page = null;
-    let resolved_slug: string | undefined = page && page.slug !== slug ? page.slug : undefined;
+    let resolved_slug: string | undefined = namespaceResolved ?? (page && page.slug !== slug ? page.slug : undefined);
 
     if (!page && fuzzy) {
       const fallback = await ctx.engine.transaction(async tx => {
@@ -356,6 +367,11 @@ const put_page: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     const { pageMutationSource, submitPageMutation } = await pageMutations();
+    if (typeof p.slug === 'string') {
+      p.slug = ctx.dryRun
+        ? await normalizePageWriteSlugWithConfig(ctx.engine, p.slug, ctx.logger)
+        : await normalizeEntityPageWriteSlugWithConfig(ctx.engine, p.slug);
+    }
     const sourceId = pageMutationSource(ctx, p, 'put_page');
     if (ctx.dryRun) {
       if (typeof p.slug === 'string') {
@@ -367,7 +383,13 @@ const put_page: Operation = {
       return { dry_run: true, action: 'put_page', slug: p.slug };
     }
     if (ctx.remote !== false && typeof p.slug === 'string') await assertLargePageAdmission(ctx.engine, p.slug, sourceId, p);
-    return submitPageMutation(ctx, { operation: 'put_page', params: p }).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
+    const route = await preflightPutPagePrivateWrite(ctx, sourceId, p);
+    if (route.routedFromSourceId) p.source_id = route.sourceId;
+    const result = await submitPageMutation(ctx, { operation: 'put_page', params: p })
+      .then(funnelPassThrough('save'))
+      .catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
+    if (route.routedFromSourceId) await ctx.engine.softDeletePage(p.slug as string, { sourceId: route.routedFromSourceId });
+    return result;
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
@@ -461,6 +483,8 @@ const restore_page: Operation = {
   handler: async (ctx, p) => {
     const { pageMutationSource, submitPageMutation, validateMutationSlug } = await pageMutations();
     const sourceId = pageMutationSource(ctx, p, 'restore_page');
+    const route = await enforcePrivatePageWrite(ctx.engine, { requestedSourceId: sourceId, slug: p.slug as string });
+    if (ctx.remote && route.routed) throw opError('permission_denied', `private-write routing refused remote restore for '${p.slug}'`, 'Ask the brain host to restore this private routed page through its trusted local CLI.');
     if (ctx.dryRun) {
       if (typeof p.slug === 'string') {
         await validateMutationSlug(ctx, 'restore_page', p.slug, sourceId);
