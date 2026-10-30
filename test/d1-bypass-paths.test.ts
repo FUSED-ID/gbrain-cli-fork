@@ -160,7 +160,7 @@ describe('D1 private-routing bypass paths', () => {
     const opsDir = join(repo, 'src/core/ops');
     const remoteSurface = readdirSync(opsDir)
       .filter((name) => name.endsWith('.ts'))
-      .map((name) => readFileSync(join(opsDir, name), 'utf8'))
+      .map((name) => readFileSync(join(opsDir, name), 'utf8')) // test-reads-source-ok[structural]: census of the remote op surface, not a behavior pin
       .join('\n');
     const extractionSource = readFileSync(join(opsDir, 'extraction.ts'), 'utf8');
     const extractionReview = operationsByName.extraction_review;

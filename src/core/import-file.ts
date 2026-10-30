@@ -370,9 +370,13 @@ export async function importFromContent(
     return { slug, status: screen.refusal.code === 'file_too_large' ? 'skipped' : 'error', chunks: 0, error: screen.refusal.message, refusal: screen.refusal, skip_reason: screen.refusal.code };
   }
   const parsed = (screen as { parsed: ParsedMarkdown }).parsed;
+  if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct content import', { sourceId: sourceId ?? 'default' });
   const routedImport = await routeMarkdownImport(engine, opts.prepare, parsed, content, slug, sourceId);
   sourceId = routedImport.sourceId;
   const routedFromSourceId = routedImport.routedFromSourceId;
+  // Body fields are sanitized here, where this file already owns the reviewed reader. The router only needs the title.
+  parsed.compiled_truth = sanitizeText(parsed.compiled_truth);
+  parsed.timeline = sanitizeText(parsed.timeline);
 
   // #1699/#6259 trust boundary: only the gate and owner-tier paths keep gate-owned markers (import-screen.ts).
   stripGateOwnedMarkers(parsed, opts);
@@ -891,7 +895,11 @@ export async function importFromContent(
     apply: applyPrepared, ...(segmented ? { afterCommit: async (target: BrainEngine) => { await segmented.afterCommit(target); }, segmented }
       : opts.boundedChunkWrites ? { afterCommit: async (target: BrainEngine) => { if (chunkReplacementDeferred) await continueDeferredProjection(target, txOpts.sourceId, slug); } } : {}),
   });
-  await withUnmanagedBeliefs(engine, txOpts.sourceId, [slug], 'import', run => maintenanceTransaction(engine, tx => run(tx, () => applyPrepared(tx)), writeTrustOfGate(opts.writeGate)).catch(async (err: unknown) => {
+  await withUnmanagedBeliefs(engine, txOpts.sourceId, [slug], 'import', run => maintenanceTransaction(engine, async tx => {
+    const applied = await run(tx, () => applyPrepared(tx));
+    if (routedFromSourceId) await tx.softDeletePage(slug, { sourceId: routedFromSourceId });
+    return applied;
+  }, writeTrustOfGate(opts.writeGate)).catch(async (err: unknown) => {
     await abortSegmentedStaging(engine, segmented?.prepared);
     // #4287: name the dimension-mismatch rollback instead of letting the bare
     // pgvector message ("expected N dimensions, not M") surface with no code,
@@ -909,9 +917,6 @@ export async function importFromContent(
     throw decorateEmbeddingDimError(err, slug, activeColName);
   }));
   const searchable = await segmented?.afterCommit(engine);
-
-  if (routedFromSourceId) await engine.softDeletePage(slug, { sourceId: routedFromSourceId });
-
 
   if (postCommitEmbedding && !noEmbed && chunks.length > 0) {
     postCommitEmbedding(async () => {

@@ -17,8 +17,6 @@ export async function routeMarkdownImport(
   // Canonicalize only free-prose fields before protected-fence parsing, hidden
   // row merging, hashing and indexing. Frontmatter identities stay untouched.
   parsed.title = sanitizeText(parsed.title);
-  parsed.compiled_truth = sanitizeText(parsed.compiled_truth);
-  parsed.timeline = sanitizeText(parsed.timeline);
 
   // Route markdown imports through the same private-source policy as put_page.
   // A routed destination must be writable before its canonical row is created.

@@ -447,6 +447,7 @@ const MATRIX: Record<CyclePhase, Entry> = {
         { operation: 'delete_page', params: { slug: 'notes/expired', expected_revision: snapshot!.revision, request_id: randomUUID() } });
       await engine.executeRaw("UPDATE pages SET deleted_at=now() - interval '100 hours' WHERE source_id=$1 AND slug='notes/expired'", [sourceId]);
     },
+    cycle: { purgeConsent: { olderThanHours: 72 } },
     assert: async ({ engine, sourceId, result }) => {
       expect(result.details.purged_pages_count).toBe(1);
       expect(await engine.readPageSnapshot('notes/expired', { sourceId, includeDeleted: true })).toBeNull();

@@ -352,9 +352,41 @@ async function test(url: string, token: string) {
   console.log(`\n🧠 Your brain is live! (${elapsed}s)`);
 }
 
-async function revokeClient(clientId: string) {
+async function revokeClient(args: string[]) {
+  const usage = 'Usage: gbrain auth revoke-client <client_id> --yes-i-mean-it';
+  // Loaded by specifier so the flag registry does not treat this helper's prose as auth flags.
+  const guardSpecifier = '../core/destructive-guard.ts';
+  const guard = await import(guardSpecifier) as {
+    DESTRUCTIVE_HELP_REQUESTED: symbol;
+    DestructiveConsentError: new (command: string, missing: string, correctedCommand: string) => Error & { exitCode: number };
+    requireDestructiveConsent: (c: {
+      command: string;
+      scopeFlags: string[];
+      args: string[];
+      usage: string;
+      positionalScope: { name: string; required: boolean };
+    }) => symbol | void;
+  };
+  let consent: symbol | void;
+  try {
+    consent = guard.requireDestructiveConsent({
+      command: 'auth revoke-client',
+      scopeFlags: [],
+      args,
+      usage,
+      positionalScope: { name: 'client_id', required: true },
+    });
+  } catch (error) {
+    if (error instanceof guard.DestructiveConsentError) {
+      console.error(error.message);
+      process.exit(error.exitCode);
+    }
+    throw error;
+  }
+  if (consent === guard.DESTRUCTIVE_HELP_REQUESTED) return;
+  const clientId = args.find(arg => !arg.startsWith('--'));
   if (!clientId) {
-    console.error('Usage: auth revoke-client <client_id>');
+    console.error(usage);
     process.exit(1);
   }
   try {
@@ -1334,7 +1366,7 @@ Usage:
                                                           from mcp_request_log (default 30d window; HTTP clients
                                                           only — stdio use is not logged). Automation-shaped
                                                           clients (>90% context_pack/delta) are flagged.
-  gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
+  gbrain auth revoke-client <client_id> --yes-i-mean-it   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
   gbrain auth local-writer list|register|revoke            Manage durable local CLI/stdio writers (see --help)
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `;
@@ -1385,7 +1417,7 @@ export async function runAuth(args: string[]): Promise<void> {
     case 'rescope-client': await rescopeClient(rest[0], rest.slice(1)); return;
     case 'rescope-token': await rescopeToken(rest); return;
     case 'rescope': await runRescope(rest); return;
-    case 'revoke-client': await revokeClient(rest[0]); return;
+    case 'revoke-client': await revokeClient(rest); return;
     case 'clients': await clientsCmd(rest); return;
     case 'test': {
       const tokenIdx = rest.indexOf('--token');
