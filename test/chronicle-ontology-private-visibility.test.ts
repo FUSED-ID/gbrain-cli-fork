@@ -145,7 +145,9 @@ describe('operator opt-out matches the sibling reads', () => {
     __resetPrivateVisibilityCacheForTests();
     try {
       const rows = await operationsByName.ontology_get.handler(remote(), { entity: 'people/open-person' }) as Val[];
-      expect(rows.find((v) => v.dimension === 'role')?.value).toBe('secretvalue');
+      // The opt-out no longer promotes stored private facts: the remote caller still gets only the older world value.
+      expect(privateToken(rows)).toBeNull();
+      expect(rows.find((v) => v.dimension === 'role')?.value).toBe('openvalue');
     } finally {
       await engine.setConfig(REMOTE_PRIVATE_PAGES_KEY, '');
       __resetPrivateVisibilityCacheForTests();
