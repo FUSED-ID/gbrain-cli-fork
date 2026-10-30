@@ -80,6 +80,11 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const observedRevision = snapshot?.revision ?? null;
   const excludePrivate = await resolveExcludePrivatePages(engine, row.authority.remote === true);
   await assertFactNotWithdrawn(engine, row.source_id, input, { excludePrivate });
+  // astra-7: the requested identity, when a floor contracted it, survives through the intent.
+  if (typeof p.requested_visibility === 'string' && p.requested_visibility !== input.visibility) {
+    await assertFactNotWithdrawn(engine, row.source_id,
+      { ...input, visibility: p.requested_visibility as SingleFactIntent['visibility'] }, { excludePrivate });
+  }
   signal?.throwIfAborted();
   const embeddingConfigSql = "SELECT key,value FROM config WHERE key IN ('embedding_model','embedding_dimensions') ORDER BY key";
   const observedEmbeddingConfig = JSON.stringify(await engine.executeRaw(embeddingConfigSql));

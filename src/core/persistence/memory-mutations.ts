@@ -204,6 +204,10 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const visibility = call.visibilityDefaulted && p.replaces !== undefined && p.replaces !== null
     ? await replacementVisibility(ctx.engine, sourceId, Number(p.replaces), defaultedVisibility, { remote: ctx.remote !== false })
     : defaultedVisibility;
+  // astra-7: the floor above may have contracted the requested domain. Keep the pre-floor
+  // identity so a world withdrawal or purge still refuses this claim forced private.
+  const requestedVisibility = call.visibilityDefaulted ? null : (p.visibility ?? null);
+  const floorTightened = requestedVisibility !== null && requestedVisibility !== visibility;
   const factIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never, visibility, entity_slug: entitySlug };
   // Fail fast on an invalid target or a withdrawn claim; the coordinator re-checks both under its locks before publishing.
   if (p.replaces !== undefined && p.replaces !== null) {
@@ -211,13 +215,19 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
     await decideReplacement(ctx.engine, sourceId, factIntent, Number(p.replaces),
       { pageSlug: slug, remote: ctx.remote !== false, excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote), slugPrefixes: authority.slugPrefixes });
   }
-  await assertFactNotWithdrawn(ctx.engine, sourceId, factIntent, { excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote) });
+  const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+  await assertFactNotWithdrawn(ctx.engine, sourceId, factIntent, { excludePrivate });
+  if (floorTightened) {
+    // The requested domain is a second refusal identity, not a second write domain.
+    await assertFactNotWithdrawn(ctx.engine, sourceId, { ...factIntent, visibility: requestedVisibility as 'world' | 'private' }, { excludePrivate });
+  }
   const row = await admitWrite(ctx.engine, { origin: ctx.admissionOrigin, principal, operation: 'remember', sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, clientRequestId, callerIntent,
     // The transport's session (MCP `_meta.session_id`) is recorded on the fact, as extract_facts records
     // it, so recall's session_id filter finds single facts too. Identity only — never a trust surface.
     intent: { ...callerIntent, entity_slug: entitySlug, fence, valid_from: typeof p.valid_from === 'string' ? new Date(p.valid_from).toISOString() : new Date().toISOString(), valid_until: validUntil?.toISOString() ?? null,
       visibility, ...(call.visibilityDefaulted ? { visibility_defaulted: true } : {}),
+      ...(floorTightened ? { requested_visibility: requestedVisibility } : {}),
       ...(linked ? { entity_inferred: linked.via } : {}), ...(inference && 'warning' in inference ? { entity_warning: inference.warning } : {}),
       session_id: ctx.sessionId ?? null },
     authority, worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null });
