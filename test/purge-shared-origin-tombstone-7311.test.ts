@@ -24,6 +24,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { OperationError, type OperationContext } from '../src/core/ops/contract.ts';
 import { runCycle } from '../src/core/cycle.ts';
+import { readPurgeRetentionHours } from '../src/core/sync-reconcile.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readGitSourceHolds } from '../src/core/persistence/sync-holds.ts';
@@ -108,7 +109,8 @@ for (const backend of testBackends()) {
       await sharedTombstone(engine, ctx);
       await ageTombstones(engine);
       const before = await snapshotBefore(engine);
-      const phase = (await withEnv(CONSENT_ENV, () => runCycle(engine, { brainDir: root, phases: ['purge'], sourceId: 'default' }))).phases.find(p => p.phase === 'purge')!;
+      const olderThanHours = await readPurgeRetentionHours(engine);
+      const phase = (await withEnv(CONSENT_ENV, () => runCycle(engine, { brainDir: root, phases: ['purge'], sourceId: 'default', purgeConsent: { olderThanHours } }))).phases.find(p => p.phase === 'purge')!;
       expect({ status: phase.status, blocked: phase.details.purged_pages_blocked, slugs: phase.details.purged_page_slugs }).toEqual({ status: 'ok', blocked: [], slugs: [TWIN] });
       await expectSurvivorIntact(engine, root, before);
       // The next full sync finds the file unchanged under the survivor: no hold, no deletion, no new page.
@@ -116,6 +118,17 @@ for (const backend of testBackends()) {
       expect((await pageRow(engine, SURVIVOR))!.deleted_at).toBeNull();
       expect(await pageRow(engine, TWIN)).toBeUndefined();
       expect(((await readGitSourceHolds(engine, { sourceIds: ['default'] }))[0]?.holds ?? []).map(hold => hold.code)).toEqual([]);
+      expect(readFileSync(join(root, FILE), 'utf8')).toBe(BYTES);
+    }, { setup, databaseUrl }), 300_000);
+
+    test('without purge consent the phase is skipped and the tombstone stays', () => managedBrain(async ({ engine, ctx, root }) => {
+      await sharedTombstone(engine, ctx);
+      await ageTombstones(engine);
+      const phase = (await withEnv(CONSENT_ENV, () => runCycle(engine, { brainDir: root, phases: ['purge'], sourceId: 'default' }))).phases.find(p => p.phase === 'purge')!;
+      expect(phase.status).toBe('skipped');
+      expect(phase.details).toEqual({ reason: 'missing_purge_consent', required_flag: '--yes-i-mean-it' });
+      expect(await pageRow(engine, TWIN)).toBeDefined();
+      expect(await pageRow(engine, SURVIVOR)).toBeDefined();
       expect(readFileSync(join(root, FILE), 'utf8')).toBe(BYTES);
     }, { setup, databaseUrl }), 300_000);
 

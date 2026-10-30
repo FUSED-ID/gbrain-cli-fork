@@ -1,8 +1,8 @@
 /**
- * mcp-registration-blocks.test.ts — cathedral-6 lane B pins:
+ * mcp-registration-blocks.test.ts \u2014 cathedral-6 lane B pins:
  * - openclawThinClientBlock is the HONEST v1 OpenClaw path: the scoped
  *   `gbrain init` thin-client command with all four connection args, plus the
- *   FULL-local-DB-access honesty sentence — and NOT an mcpServers/stdio JSON
+ *   FULL-local-DB-access honesty sentence \u2014 and NOT an mcpServers/stdio JSON
  *   config.
  * - OAUTH_SECRET_NOTE moved to core with its text unchanged; connect.ts
  *   re-exports the identical value (surface unchanged).
@@ -54,8 +54,8 @@ describe('openclawThinClientBlock', () => {
 describe('OAUTH_SECRET_NOTE (moved to core)', () => {
   test('text is unchanged by the move', () => {
     expect(OAUTH_SECRET_NOTE).toBe(
-      'Note: the client secret is sensitive — store it like a password. It mints ' +
-        'short-lived, scoped access tokens; revoke with `gbrain auth revoke-client`.',
+      'Note: the client secret is sensitive \u2014 store it like a password. It mints ' +
+        'short-lived, scoped access tokens; revoke with `gbrain auth revoke-client <client-id> --yes-i-mean-it`.',
     );
   });
 

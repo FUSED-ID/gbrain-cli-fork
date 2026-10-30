@@ -18,7 +18,7 @@ export interface MigrateEmbeddingsFlags {
 const CONTROLS: Record<string, string> = {
   '--to': 'text', '--dim': 'dimension', '--reranker': 'text',
   '--batch-size': 'batch', '--max-cost-usd': 'cost',
-  '--yes': 'boolean', '--non-interactive': 'boolean', '--dry-run': 'boolean',
+  '--yes': 'boolean', '--yes-i-mean-it': 'boolean', '--non-interactive': 'boolean', '--dry-run': 'boolean',
   '--json': 'boolean', '--no-embed': 'boolean', '--ignore-env-override': 'boolean',
   '--retarget': 'boolean', '--status': 'boolean', '--help': 'boolean', '-h': 'boolean',
   '--pace': 'pace', '--pace-max-concurrency': 'concurrency',
@@ -83,7 +83,7 @@ export function parseMigrateEmbeddingsFlags(
   return {
     ...(values.has('--max-cost-usd') && { maxCostUsd: Number(values.get('--max-cost-usd')) }),
     to: values.get('--to'), dim: values.has('--dim') ? Number(values.get('--dim')) : undefined,
-    yes: values.has('--yes') || values.has('--non-interactive'), dryRun: values.has('--dry-run'),
+    yes: values.has('--yes') || values.has('--non-interactive') || values.has('--yes-i-mean-it'), dryRun: values.has('--dry-run'),
     json: values.has('--json'), noEmbed: values.has('--no-embed'),
     ignoreEnvOverride: values.has('--ignore-env-override'), retarget: values.has('--retarget'),
     ...(values.has('--reranker') && { reranker: values.get('--reranker') }),

@@ -70,8 +70,10 @@ async function age(engine: BrainEngine, hours: number): Promise<void> {
     WHERE c.op=$1 AND p.id::text = c.fingerprint`, [SYNC_DELETE_TOMBSTONE_OP]);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
 }
-const purgePhase = async (engine: BrainEngine, root: string) =>
-  (await withEnv(CONSENT_ENV, () => runCycle(engine, { brainDir: root, phases: ['purge'], sourceId: 'default' }))).phases.find(p => p.phase === 'purge')!;
+const purgePhase = async (engine: BrainEngine, root: string) => {
+  const olderThanHours = await readPurgeRetentionHours(engine);
+  return (await withEnv(CONSENT_ENV, () => runCycle(engine, { brainDir: root, phases: ['purge'], sourceId: 'default', purgeConsent: { olderThanHours } }))).phases.find(p => p.phase === 'purge')!;
+};
 async function cli(engine: BrainEngine, args: string[]): Promise<string> {
   const out: string[] = [];
   const log = spyOn(console, 'log').mockImplementation((...parts: unknown[]) => { out.push(parts.map(String).join(' ')); });
@@ -107,8 +109,8 @@ for (const backend of testBackends()) {
       expect(await page(engine, GONE)).toBeDefined();
       expect(await page(engine, TWIN)).toBeUndefined();
       expect(await page(engine, USER)).toBeUndefined();
-      // The purge job runs without consent too.
-      expect(await makePurgeHandler(engine)({ data: { scope: 'pages' } } as never)).toMatchObject({ pagesPurged: 0, pagesBlocked: [expect.objectContaining({ slug: GONE, code: 'sync_delete_unreviewed' })] });
+      // The purge job gets the same explicit consent and the configured cutoff.
+      expect(await makePurgeHandler(engine)({ data: { scope: 'pages', olderThanHours: await readPurgeRetentionHours(engine), confirm: 'yes-i-mean-it' } } as never)).toMatchObject({ pagesPurged: 0, pagesBlocked: [expect.objectContaining({ slug: GONE, code: 'sync_delete_unreviewed' })] });
 
       const preview = JSON.parse(await cli(engine, ['purge-deleted', '--dry-run', '--json']));
       expect(preview).toMatchObject({ dry_run: true, count: 1, slugs: [GONE], sync_unreviewed: 1 });
@@ -167,6 +169,17 @@ for (const backend of testBackends()) {
       }
       expect(await page(engine, USER)).toBeDefined();
       expect(await page(engine, TWIN)).toBeDefined();
+    }, { setup, databaseUrl }), 300_000);
+
+    test('without purge consent the phase is skipped and nothing is deleted', () => managedBrain(async ({ engine, ctx, root }) => {
+      await deleteBoth(engine, ctx, root);
+      await age(engine, 100);
+      const phase = (await withEnv(CONSENT_ENV, () => runCycle(engine, { brainDir: root, phases: ['purge'], sourceId: 'default' }))).phases.find(p => p.phase === 'purge')!;
+      expect(phase.status).toBe('skipped');
+      expect(phase.details).toEqual({ reason: 'missing_purge_consent', required_flag: '--yes-i-mean-it' });
+      expect(await page(engine, GONE)).toBeDefined();
+      expect(await page(engine, TWIN)).toBeDefined();
+      expect(await page(engine, USER)).toBeDefined();
     }, { setup, databaseUrl }), 300_000);
   });
 }
