@@ -60,6 +60,15 @@
       "createVersion": {
         "default": [
           {
+            "lane": "pool",
+            "params": [
+              "boolean",
+              "boolean"
+            ],
+            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR local_path IS NOT NULL) ORDER BY (id = 'default') DESC, id",
+            "textSha256": "8f708b7f5bb279ea14ecc0f958457d31237d81a165a02fbc5f62339bba8b9291"
+          },
+          {
             "event": "begin",
             "lane": "tx"
           },
@@ -817,6 +826,15 @@
           {
             "lane": "tx",
             "params": [
+              "boolean",
+              "boolean"
+            ],
+            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR local_path IS NOT NULL) ORDER BY (id = 'default') DESC, id",
+            "textSha256": "8f708b7f5bb279ea14ecc0f958457d31237d81a165a02fbc5f62339bba8b9291"
+          },
+          {
+            "lane": "tx",
+            "params": [
               "string"
             ],
             "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
@@ -857,6 +875,15 @@
             ],
             "sql": "SELECT id, slug, source_path, deleted_at FROM pages WHERE source_id=$1 AND slug=$2",
             "textSha256": "13e0824db40fa0938c1e53873667c76000adde55a7fa159fce8e1a5969bf1bb0"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT deleted_at FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NOT NULL LIMIT 1",
+            "textSha256": "c4970f6e79c931308dcdb65d9a66b07e2cd466e2819579f1a14864362a59031c"
           },
           {
             "lane": "tx",
@@ -905,6 +932,15 @@
           {
             "lane": "tx",
             "params": [
+              "boolean",
+              "boolean"
+            ],
+            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR local_path IS NOT NULL) ORDER BY (id = 'default') DESC, id",
+            "textSha256": "8f708b7f5bb279ea14ecc0f958457d31237d81a165a02fbc5f62339bba8b9291"
+          },
+          {
+            "lane": "tx",
+            "params": [
               "string"
             ],
             "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
@@ -950,6 +986,15 @@
             "lane": "tx",
             "params": [
               "string",
+              "string"
+            ],
+            "sql": "SELECT deleted_at FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NOT NULL LIMIT 1",
+            "textSha256": "c4970f6e79c931308dcdb65d9a66b07e2cd466e2819579f1a14864362a59031c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
               "string",
               "string",
               "string",
@@ -980,6 +1025,15 @@
           {
             "event": "begin",
             "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "boolean",
+              "boolean"
+            ],
+            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR local_path IS NOT NULL) ORDER BY (id = 'default') DESC, id",
+            "textSha256": "8f708b7f5bb279ea14ecc0f958457d31237d81a165a02fbc5f62339bba8b9291"
           },
           {
             "lane": "tx",
@@ -1035,6 +1089,15 @@
             ],
             "sql": "SELECT id, slug, source_path, deleted_at FROM pages WHERE source_id=$1 AND slug=$2",
             "textSha256": "13e0824db40fa0938c1e53873667c76000adde55a7fa159fce8e1a5969bf1bb0"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT deleted_at FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NOT NULL LIMIT 1",
+            "textSha256": "c4970f6e79c931308dcdb65d9a66b07e2cd466e2819579f1a14864362a59031c"
           },
           {
             "lane": "tx",
@@ -1281,6 +1344,26 @@
       "restorePage": {
         "default": [
           {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 ORDER BY (p.slug=$3) DESC, (p.source_id=$4) DESC, p.source_id ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, wd.snapshot_withdrawals, wd.snapshot_global_purges, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_body, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline FROM chosen p CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) || COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',x.visibility,'fact_hash',x.fact_hash,'withdrawn_at',x.purged_at,'purged',true) ORDER BY x.visibility,x.fact_hash) FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at FROM fact_purges WHERE source_id=p.source_id AND subject=p.slug GROUP BY visibility,fact_hash) x), '[]'::jsonb) AS snapshot_withdrawals, (SELECT jsonb_build_object('count',count(*),'latest',max(g.purged_at)) FROM fact_purges g WHERE g.source_id=p.source_id AND g.subject='*' ) AS snapshot_global_purges) wd",
+            "textSha256": "d49abdfac0d474258cc62de6b765f6c2bd3d4dc6f1098394ab26b05e48e8bc1c"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "boolean",
+              "boolean"
+            ],
+            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR local_path IS NOT NULL) ORDER BY (id = 'default') DESC, id",
+            "textSha256": "8f708b7f5bb279ea14ecc0f958457d31237d81a165a02fbc5f62339bba8b9291"
+          },
+          {
             "event": "begin",
             "lane": "tx"
           },
@@ -1288,8 +1371,8 @@
             "lane": "tx",
             "params": [
               "string",
-              "null",
-              "null"
+              "string",
+              "string"
             ],
             "sql": "SELECT id, source_id FROM pages WHERE slug=$1 AND deleted_at IS NOT NULL AND ($2::text IS NULL OR source_id=$3) ORDER BY source_id",
             "textSha256": "8d4bea0f03c96cfdea2bad6a82c4050073b3cad615d0115bb66cf05aaa9f9300"
@@ -1308,6 +1391,17 @@
           }
         ],
         "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 ORDER BY (p.slug=$3) DESC, (p.source_id=$4) DESC, p.source_id ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, wd.snapshot_withdrawals, wd.snapshot_global_purges, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_body, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline FROM chosen p CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) || COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',x.visibility,'fact_hash',x.fact_hash,'withdrawn_at',x.purged_at,'purged',true) ORDER BY x.visibility,x.fact_hash) FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at FROM fact_purges WHERE source_id=p.source_id AND subject=p.slug GROUP BY visibility,fact_hash) x), '[]'::jsonb) AS snapshot_withdrawals, (SELECT jsonb_build_object('count',count(*),'latest',max(g.purged_at)) FROM fact_purges g WHERE g.source_id=p.source_id AND g.subject='*' ) AS snapshot_global_purges) wd",
+            "textSha256": "d49abdfac0d474258cc62de6b765f6c2bd3d4dc6f1098394ab26b05e48e8bc1c"
+          },
           {
             "event": "begin",
             "lane": "tx"
@@ -1339,6 +1433,15 @@
       },
       "revertToVersion": {
         "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "boolean",
+              "boolean"
+            ],
+            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR local_path IS NOT NULL) ORDER BY (id = 'default') DESC, id",
+            "textSha256": "8f708b7f5bb279ea14ecc0f958457d31237d81a165a02fbc5f62339bba8b9291"
+          },
           {
             "lane": "pool",
             "params": [

@@ -172,11 +172,21 @@
     "getVersions#metadataOnly": {},
     "getVersions#sourceId": {},
     "getVersions#sourceIds": {},
-    "insertFact#default": {},
-    "insertFact#noEntity": {},
-    "insertFact#supersedeId+embedding": {},
-    "insertFacts#default": {},
-    "insertFacts#deleteForPageFirst": {},
+    "insertFact#default": {
+      "raw": 2
+    },
+    "insertFact#noEntity": {
+      "raw": 1
+    },
+    "insertFact#supersedeId+embedding": {
+      "raw": 2
+    },
+    "insertFacts#default": {
+      "raw": 2
+    },
+    "insertFacts#deleteForPageFirst": {
+      "raw": 2
+    },
     "invalidateContentDriftEmbeddings#default": {
       "raw": 3,
       "tx": 1
@@ -274,9 +284,15 @@
     },
     "markPagesAttendanceBlocked#default": {},
     "markPagesExtractedBatch#default": {},
-    "mergeOntologyFact#corroborate": {},
-    "mergeOntologyFact#insert": {},
-    "mergeOntologyFact#supersede": {},
+    "mergeOntologyFact#corroborate": {
+      "raw": 2
+    },
+    "mergeOntologyFact#insert": {
+      "raw": 2
+    },
+    "mergeOntologyFact#supersede": {
+      "raw": 2
+    },
     "migrateFactsToCanonical#default": {
       "raw": 1
     },
