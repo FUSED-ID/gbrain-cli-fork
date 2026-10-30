@@ -316,10 +316,20 @@ export async function insertFacts(
     // v0.46 (#3014): the fence path carries struck rows — `expired_at` is
     // stamped inline here, and `superseded by #N` references are resolved
     // to `facts.superseded_by` in a second pass below (same transaction).
-    const flooredRows = await Promise.all(rows.map(async row => ({
+    // One source read for the batch and one page read per distinct slug, not
+    // per row. The same tightenToSource / tightenToPage decisions apply per row.
+    const srcFloor = await sourceFloor(exec, ctx.source_id);
+    const pageFloors = new Map<string, Awaited<ReturnType<typeof pageFloor>>>();
+    for (const slug of new Set(rows.map(row => row.source_markdown_slug))) {
+      if (slug) pageFloors.set(slug, await pageFloor(exec, ctx.source_id, slug));
+    }
+    const flooredRows = rows.map(row => ({
       ...row,
-      visibility: await floorVisibility(exec, ctx.source_id, row.visibility ?? 'private', row.source_markdown_slug),
-    })));
+      visibility: tightenToPage(
+        tightenToSource(row.visibility ?? 'private', srcFloor),
+        row.source_markdown_slug ? pageFloors.get(row.source_markdown_slug) ?? null : null,
+      ),
+    }));
     const ids = await exec.transaction(async (tx) => {
       // v0.46 (#3014) — atomic reconcile: wipe the page's fence-owned rows
       // as the FIRST statement of this transaction so a failing insert
