@@ -57,6 +57,8 @@ export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'shared_skills.migration.v1.', prefix: true, reason: 'shared-skills migration checkpoints per source incarnation' },
   { key: 'shared_skills.migration.v1', reason: 'the shared-skills migration report the 0.53.0 migration writes and apply-migrations --list / doctor read for host work (#6796)' },
   { key: 'shared_skills.bridge_owner.v1.', prefix: true, reason: 'shared-brain bridge ownership claims' },
+  { key: 'privacy.private_source_id', reason: 'D1 private-source designation read by private-source-routing.ts; set by sources provision-private-routing, not by config set' },
+  { key: 'routing.private_source_id', reason: 'D1 private-source designation read by private-source-routing.ts; set by sources provision-private-routing, not by config set' },
 ];
 
 /**

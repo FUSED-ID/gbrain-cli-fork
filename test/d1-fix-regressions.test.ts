@@ -84,6 +84,7 @@ describe('D1 exposure-reducing writes and routed reconciliation', () => {
     // file into the indexed page.
     const DRIFT = 'DRIFT-ONLY-IN-FILE';
     writeFileSync(join(brainDir, `${SLUG}.md`), `${BODY}\n${DRIFT}\n`);
+    const fileBefore = readFileSync(join(brainDir, `${SLUG}.md`), 'utf8');
     const [before] = await engine.executeRaw<{ compiled_truth: string; content_hash: string }>(
       `SELECT compiled_truth, content_hash FROM pages WHERE source_id = 'default' AND slug = $1`, [SLUG]);
 
@@ -101,7 +102,8 @@ describe('D1 exposure-reducing writes and routed reconciliation', () => {
       `SELECT count(*)::int AS n FROM fact_withdrawals WHERE source_id = 'default'`);
     expect(Number(withdrawals[0].n)).toBe(1);
     const file = readFileSync(join(brainDir, `${SLUG}.md`), 'utf8');
-    expect(file).toContain('~~A family fact~~');
+    // Drift guard holds the canonical file: the forget must leave its bytes unchanged.
+    expect(file).toBe(fileBefore);
     const rendered = await engine.getPage(SLUG, { sourceId: 'default' });
     expect(rendered?.compiled_truth).toContain('~~A family fact~~');
 
