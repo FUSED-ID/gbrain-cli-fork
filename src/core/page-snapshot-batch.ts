@@ -21,7 +21,7 @@
  * Postgres can bind the batch's sources for RLS (`engine.readPageSnapshotsBatch`).
  */
 import { overlayWithdrawalBody } from './facts/withdrawal-overlay.ts';
-import { readPageSnapshot, resolveGlobalPurges } from './page-state/snapshot.ts';
+import { pageContractsWorld, readPageSnapshot, resolveGlobalPurges } from './page-state/snapshot.ts';
 import type { GlobalPurgeMarker, PageSnapshot, PageWithdrawal } from './page-state/types.ts';
 import { REVISION_BACKFILL_PENDING } from './page-state/types.ts';
 import type { ReadQuery } from './search/read-enrichment.ts';
@@ -90,8 +90,9 @@ export async function readPageSnapshotsBatch(
     const withdrawals = [...row.snapshot_withdrawals as PageWithdrawal[], ...await resolveGlobalPurges(query, page.source_id, globalPurges,
       [String(row.fingerprint_body ?? ''), String(row.fingerprint_timeline ?? '')])];
     if (!isSegmentedPage(page)) {
-      page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, String(row.fingerprint_body ?? ''), withdrawals);
-      page.timeline = overlayWithdrawalBody(page.timeline, String(row.fingerprint_timeline ?? ''), withdrawals);
+      const contracts = withdrawals.length ? await pageContractsWorld(query, page) : true;
+      page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, String(row.fingerprint_body ?? ''), withdrawals, contracts);
+      page.timeline = overlayWithdrawalBody(page.timeline, String(row.fingerprint_timeline ?? ''), withdrawals, contracts);
     }
     snapshots.set(key, { page, tags: row.snapshot_tags as string[], revision: row.knowledge_revision == null ? REVISION_BACKFILL_PENDING : String(row.knowledge_revision),
       sourceIncarnation: String(row.source_incarnation), withdrawals, ...(globalPurges.count > 0 ? { globalPurges } : {}),

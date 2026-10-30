@@ -18,7 +18,8 @@ beforeAll(async () => {
     const fixture = await isolatedPersistencePostgres(process.env.DATABASE_URL);
     engines.push(fixture.engine); disposePostgres = fixture.close;
   }
-  for (const engine of engines) await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [sourceId]);
+  for (const engine of engines) await engine.executeRaw('INSERT INTO sources(id,name,config) VALUES ($1,$1,$2::text::jsonb)',
+    [sourceId, JSON.stringify({ federated: true, facts_visibility: 'world' })]);
 }, 120_000);
 afterAll(async () => {
   for (const engine of engines) await engine.disconnect();
