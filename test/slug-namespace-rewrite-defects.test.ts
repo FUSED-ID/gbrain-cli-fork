@@ -139,10 +139,15 @@ describe('opt-in slug namespace rewrite defects', () => {
       const engine = openEngine();
       await engine.connect({});
       await engine.initSchema();
-      const realGetConfig = engine.getConfig.bind(engine);
-      (engine as unknown as { getConfig: (key: string) => Promise<string | null> }).getConfig = async (key: string) => {
+      const realGetConfig = PGLiteEngine.prototype.getConfig;
+      const engineWithConfig = engine as unknown as {
+        getConfig: (this: PGLiteEngine, key: string) => Promise<string | null>;
+      };
+      // A page transaction reads config on the transaction engine. The fallback
+      // must use that receiver so the read stays inside the held transaction.
+      engineWithConfig.getConfig = async function (this: PGLiteEngine, key: string) {
         if (key === 'slug_namespace_rewrites') throw new Error('synthetic config outage');
-        return realGetConfig(key);
+        return realGetConfig.call(this, key);
       };
       try {
         const warnings: string[] = [];

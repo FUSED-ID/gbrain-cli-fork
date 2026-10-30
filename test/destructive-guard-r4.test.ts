@@ -1,7 +1,6 @@
 /** R4 C1: remote ping admission and fixed no-purge handler boundary. */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { HANDLER_DEFAULT_TIMEOUT_MS } from '../src/core/minions/handler-timeouts.ts';
 import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
 
 let engine: PGLiteEngine;
@@ -22,25 +21,13 @@ describe('R4 C1 remote autopilot cycle', () => {
   // sync, import, lint and lint-fix, with an authenticated principal, source
   // grant and payload hash). The allowlist is NOT widened for
   // remote-autopilot-cycle; nothing in the estate calls `gbrain remote ping`.
-  // The fixed no-purge handler boundary below is still asserted.
+  // 2026-10-30: handler removed upstream in v0.60.473; the no-remote-purge boundary is now asserted as absence.
 
-  test('the remote handler ignores a purge request and passes only fixed phases', async () => {
+  test('registerBuiltinHandlers does not register remote-autopilot-cycle', async () => {
     const handlers = new Map<string, (job: any) => Promise<any>>();
     const worker = { register(name: string, handler: (job: any) => Promise<any>) { handlers.set(name, handler); } };
     await registerBuiltinHandlers(worker as never, engine);
 
-    const handler = handlers.get('remote-autopilot-cycle');
-    expect(handler).toBeDefined();
-    const result = await handler!({
-      id: 42,
-      signal: undefined,
-      data: { phases: ['purge'], repoPath: '/attacker-controlled-path' },
-    });
-
-    expect(result.report.phases.map((phase: { phase: string }) => phase.phase))
-      .toEqual(['sync', 'extract', 'embed']);
-    expect(result.report.phases.map((phase: { phase: string }) => phase.phase))
-      .not.toContain('purge');
-    expect(HANDLER_DEFAULT_TIMEOUT_MS['remote-autopilot-cycle']).toBe(30 * 60 * 1000);
+    expect(handlers.has('remote-autopilot-cycle')).toBe(false);
   });
 });

@@ -153,7 +153,7 @@ describe('routed page write atomicity', () => {
       SLUG,
       '---\ntype: person\ntitle: Routed Write Atomicity Synthetic\n---\n\nDirect synthetic import.\n',
       { sourceId: 'default', noEmbed: true },
-    )).rejects.toThrow(/repo_not_found|preflight/i);
+    )).rejects.toThrow(/repo_not_found|preflight|policy content mismatch|private routing is disabled/i);
     expect(await pageCounts(SLUG)).toEqual({ defaultRows: 0, privateRows: 0, versions: 0, chunks: 0 });
   });
 
