@@ -71,8 +71,7 @@ async function age(engine: BrainEngine, hours: number): Promise<void> {
   await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
 }
 const purgePhase = async (engine: BrainEngine, root: string) => {
-  const olderThanHours = await readPurgeRetentionHours(engine);
-  return (await withEnv(CONSENT_ENV, () => runCycle(engine, { brainDir: root, phases: ['purge'], sourceId: 'default', purgeConsent: { olderThanHours } }))).phases.find(p => p.phase === 'purge')!;
+  return (await withEnv(CONSENT_ENV, () => runCycle(engine, { brainDir: root, phases: ['purge'], sourceId: 'default', purgeConsent: { olderThanHours: 72 } }))).phases.find(p => p.phase === 'purge')!;
 };
 async function cli(engine: BrainEngine, args: string[]): Promise<string> {
   const out: string[] = [];

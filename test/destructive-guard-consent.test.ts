@@ -183,7 +183,7 @@ describe('pages purge-deleted v0.60.473 argument seam', () => {
 });
 
 describe('wrapped destructive subcommand help', () => {
-  const noTouchEngine = { executeRaw: async () => [{ enabled: false }] } as unknown as BrainEngine;
+  const noTouchEngine = { executeRaw: async () => { throw new Error('engine access'); } } as unknown as BrainEngine;
 
   test('sources remove --help never reaches the source engine', async () => {
     const output = await captureLogs(() => runSources(noTouchEngine, ['remove', '--help']));
