@@ -102,7 +102,7 @@ async function refusedWindow(engine: BrainEngine, dir: string, pages: Array<type
   const corpusDir = join(dir, 'sessions'); mkdirSync(corpusDir);
   const sourceId = `refused-${randomUUID().slice(0, 8)}`;
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-  await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
+  await engine.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{"federated":true,"facts_visibility":"world"}'::jsonb)`, [sourceId, root]);
   for (const [key, value] of [['sync.write_through', 'true'], ['facts.extraction_enabled', 'true'], ['dream.synthesize.session_corpus_dir', corpusDir],
     ['facts.default_visibility', 'world']]) await engine.setConfig(key, value);
   await claimWorktree(engine, sourceId, root);

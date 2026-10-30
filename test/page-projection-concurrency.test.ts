@@ -26,7 +26,7 @@ beforeAll(async () => {
   }
   for (const engine of engines) {
     await engine.executeRaw('DELETE FROM sources WHERE id=$1', [sourceId]);
-    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [sourceId]);
+    await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES ($1,$1,'{"federated":true,"facts_visibility":"world"}'::jsonb)`, [sourceId]);
   }
 }, 120_000);
 afterAll(async () => {

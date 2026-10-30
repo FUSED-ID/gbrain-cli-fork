@@ -68,7 +68,7 @@ async function fact(text: string, entity: string, opts: { visibility?: 'world' |
 
 async function googleSource(id: string, syncedAgoMs: number | null) {
   await engine.executeRaw(
-    `INSERT INTO sources (id, name, config, last_sync_at) VALUES ($1, $1, '{"kind":"google"}'::jsonb, $2)
+    `INSERT INTO sources (id, name, config, last_sync_at) VALUES ($1, $1, '{"kind":"google","federated":true,"facts_visibility":"world"}'::jsonb, $2)
      ON CONFLICT (id) DO UPDATE SET last_sync_at = EXCLUDED.last_sync_at`,
     [id, syncedAgoMs === null ? null : new Date(Date.now() - syncedAgoMs).toISOString()],
   );

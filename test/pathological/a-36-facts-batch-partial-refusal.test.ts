@@ -66,7 +66,7 @@ async function managedSource(engine: BrainEngine, atB: AtB, run: (s: Source) => 
   try {
     await withEnv({ GBRAIN_HOME: home }, async () => {
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-      await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+      await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES($1,$1,'{"federated":true,"facts_visibility":"world"}'::jsonb)`, [sourceId]);
       await engine.putPage(A, { type: 'person', title: 'Alice Example', compiled_truth: 'Alice Example is a person.', timeline: '', frontmatter: {} }, { sourceId });
       await engine.putPage(B, { type: 'company', title: 'Acme Example', compiled_truth: 'Acme Example is a company.', timeline: '', frontmatter: {} }, { sourceId });
       await engine.putPage(BYSTANDER, { type: 'note', title: 'Bystander', compiled_truth: 'An unrelated note.', timeline: '', frontmatter: {} }, { sourceId });

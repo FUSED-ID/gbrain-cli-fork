@@ -41,7 +41,7 @@ beforeAll(async () => {
   for (const engine of engines) {
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     await engine.executeRaw('DELETE FROM sources WHERE id=$1', [sourceId]);
-    await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+    await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES($1,$1,'{"federated":true,"facts_visibility":"world"}'::jsonb)`, [sourceId]);
     await registerLocalWriter(engine, 'cli'); await registerLocalWriter(engine, 'stdio');
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
   }
