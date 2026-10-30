@@ -21,6 +21,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { isDerivationPrivate } from '../search/private-visibility.ts';
+import { parseSourceConfig } from '../sources-load.ts';
 
 export type FactVisibility = 'private' | 'world';
 
@@ -60,6 +61,69 @@ export async function resolveVisibilityParam(
   if (value === 'private') return 'private';
   if (value == null) return resolveDefaultVisibility(engine);
   return 'private';
+}
+
+const clampWarnedOnce = new Set<string>();
+
+function warnVisibilityClamp(
+  sourceId: string,
+  requested: FactVisibility,
+  reason: 'source_not_federated' | 'source_not_found' | 'resolution_failed',
+): void {
+  const key = `visibility-clamp:${sourceId}:${reason}`;
+  if (clampWarnedOnce.has(key)) return;
+  clampWarnedOnce.add(key);
+  console.error(
+    `[facts:visibility] explicit visibility '${requested}' was OVERRIDDEN to 'private' for source '${sourceId}' (${reason}).`,
+  );
+}
+
+/** Apply the source floor to a stage-one visibility decision. */
+export function tightenToSource(
+  visibility: FactVisibility,
+  source: { exists: boolean; federated: boolean },
+): FactVisibility {
+  return source.exists && source.federated ? visibility : 'private';
+}
+
+/**
+ * Resolve source policy after caller precedence, then apply the source floor.
+ * A source must exist and carry the literal boolean `federated: true` for a
+ * world fact to survive. Policy only fills an unset caller value.
+ */
+export async function resolveSourceVisibility(
+  engine: BrainEngine,
+  sourceId: string,
+  requested?: unknown,
+): Promise<FactVisibility> {
+  try {
+    const source = (await engine.listAllSources({ includeArchived: true })).find(row => row.id === sourceId);
+    if (!source) {
+      if (requested === 'world') warnVisibilityClamp(sourceId, 'world', 'source_not_found');
+      return 'private';
+    }
+    const config = parseSourceConfig(source.config);
+    const stageOne = requested === 'world' || requested === 'private'
+      ? requested
+      : requested == null
+        ? config.facts_visibility === 'world' || config.facts_visibility === 'private'
+          ? config.facts_visibility
+          : await resolveDefaultVisibility(engine)
+        : 'private';
+    const result = tightenToSource(stageOne, { exists: true, federated: config.federated === true });
+    if (result === 'private' && stageOne === 'world') {
+      warnVisibilityClamp(sourceId, stageOne, 'source_not_federated');
+    }
+    return result;
+  } catch {
+    if (requested === 'world') warnVisibilityClamp(sourceId, 'world', 'resolution_failed');
+    return 'private';
+  }
+}
+
+/** Test seam for the once-per-process warning contract. */
+export function __resetVisibilityClampWarnings(): void {
+  clampWarnedOnce.clear();
 }
 
 /**

@@ -107,13 +107,14 @@ export async function writeSingleFact(
 
   const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
   const { decideSingleFact } = await import('./single-prepare.ts');
+  const { resolveSourceVisibility } = await import('./visibility.ts');
   const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
   const { isAvailable, embedOne, getEmbeddingModel } = await import('../ai/gateway.ts');
 
   const factText = input.fact.trim();
   const kind = input.kind ?? 'fact';
-  const visibility = input.visibility ?? 'private';
+  const visibility = await resolveSourceVisibility(engine, sourceId, input.visibility ?? 'private');
   const validUntil = input.validUntil ?? null;
   // #4755: normalize null-like entity refs to ABSENT before resolution so
   // the `resolved?.slug ?? entityRef` fallback can never adopt "null" as a

@@ -30,6 +30,8 @@ import { compileRowNormalizer } from './normalize.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { FACT_WITHDRAWAL_STAMP_DEFERRED_SETTING } from '../facts/insert-guard-schema.ts';
 import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
+import { tightenToPage, tightenToSource } from '../facts/visibility.ts';
+import { isSourceFederated } from '../sources-load.ts';
 import { storedTrustTier } from '../trust/tier.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 
@@ -45,6 +47,46 @@ export type ResolveEmbeddingCast = () => Promise<EmbeddingCast>;
 async function embeddingCast(exec: SqlExecutor, probe: ResolveEmbeddingCast | undefined): Promise<EmbeddingCast> {
   if (!exec.capabilities.probesEmbeddingCast || !probe) return '::vector';
   return probe();
+}
+
+type SourceFloor = { exists: boolean; federated: boolean };
+
+async function sourceFloor(exec: SqlExecutor, sourceId: string): Promise<SourceFloor> {
+  try {
+    const rows = await exec.executeRaw<{ config: unknown }>(
+      'SELECT config FROM sources WHERE id = $1 AND archived IS NOT TRUE', [sourceId],
+    );
+    return { exists: rows.length > 0, federated: rows.length > 0 && isSourceFederated(rows[0]!.config) };
+  } catch {
+    return { exists: false, federated: false };
+  }
+}
+
+async function pageFloor(
+  exec: SqlExecutor,
+  sourceId: string,
+  slug: string | null | undefined,
+): Promise<{ type?: string | null; frontmatter?: unknown } | null> {
+  if (!slug) return null;
+  try {
+    const rows = await exec.executeRaw<{ type: string | null; frontmatter: unknown }>(
+      'SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1',
+      [sourceId, slug],
+    );
+    return rows[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function floorVisibility(
+  exec: SqlExecutor,
+  sourceId: string,
+  visibility: FactVisibility,
+  pageSlug?: string | null,
+): Promise<FactVisibility> {
+  const sourceVisibility = tightenToSource(visibility, await sourceFloor(exec, sourceId));
+  return tightenToPage(sourceVisibility, await pageFloor(exec, sourceId, pageSlug));
 }
 
 /**
@@ -87,7 +129,7 @@ export async function insertFact(
     const validFrom = input.valid_from ?? new Date();
     const validUntil = input.valid_until ?? null;
     const kind = input.kind ?? 'fact';
-    const visibility = input.visibility ?? 'private';
+    const visibility = await floorVisibility(exec, ctx.source_id, input.visibility ?? 'private', input.entity_slug);
     const notability = input.notability ?? 'medium';
     const confidence = input.confidence ?? 1.0;
     const entitySlug = input.entity_slug ?? null;
@@ -272,6 +314,10 @@ export async function insertFacts(
     // v0.46 (#3014): the fence path carries struck rows — `expired_at` is
     // stamped inline here, and `superseded by #N` references are resolved
     // to `facts.superseded_by` in a second pass below (same transaction).
+    const flooredRows = await Promise.all(rows.map(async row => ({
+      ...row,
+      visibility: await floorVisibility(exec, ctx.source_id, row.visibility ?? 'private', row.source_markdown_slug),
+    })));
     const ids = await exec.transaction(async (tx) => {
       // v0.46 (#3014) — atomic reconcile: wipe the page's fence-owned rows
       // as the FIRST statement of this transaction so a failing insert
@@ -307,7 +353,7 @@ export async function insertFacts(
       // #6574: one INSERT per chunk of rows, not one per row. A publication
       // over a high-latency link paid a round trip per fact row; a 1,000-row
       // fence took a minute before anything else ran.
-      const rowIds = await insertFactRows(tx, castSuffix, rows, ctx.source_id);
+      const rowIds = await insertFactRows(tx, castSuffix, flooredRows, ctx.source_id);
       const out = rowIds.filter((id): id is number => id !== null);
 
       // v0.46 (#3014) — second pass: resolve `superseded by #N` page-local

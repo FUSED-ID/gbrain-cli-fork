@@ -140,9 +140,12 @@ type PageLabel = { type?: string | null; frontmatter?: unknown };
 
 /** The visibility a remember saves into `page`: the caller's own, or the resolved default that never widens a private target. */
 async function rememberVisibility(ctx: OperationContext, call: RememberCall, page: PageLabel | null | undefined): Promise<'world' | 'private'> {
-  if (!call.visibilityDefaulted) return call.p.visibility === 'private' ? 'private' : 'world';
-  const { resolveRememberVisibility } = await import('../facts/visibility.ts');
-  return resolveRememberVisibility(ctx.engine, page);
+  const { resolveRememberVisibility, resolveSourceVisibility, tightenToPage } = await import('../facts/visibility.ts');
+  const requested = call.visibilityDefaulted
+    ? await resolveRememberVisibility(ctx.engine, page)
+    : call.p.visibility === 'private' ? 'private' : 'world';
+  const sourceId = ctx.sourceId ?? 'default';
+  return tightenToPage(await resolveSourceVisibility(ctx.engine, sourceId, requested), page);
 }
 
 async function rememberCarry(ctx: OperationContext, call: RememberCall, page: PageLabel): Promise<RememberCarry> {
