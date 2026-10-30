@@ -36,6 +36,7 @@ beforeAll(async () => {
   await engine.connect({});
   await engine.initSchema();
   sourceId = await newSource(engine);
+  await engine.executeRaw(`UPDATE sources SET config = '{"federated":true,"facts_visibility":"world"}'::jsonb WHERE id = $1`, [sourceId]);
   await putPage(engine, sourceId, 'notes/forge-plan', page('note', 'Forge plan', 'Planning notes for the Forge offsite.', 'visibility: private\n'));
   await putPage(engine, sourceId, 'notes/forge-public', page('note', 'Forge public', 'Public notes on the Forge offsite.'));
   const add = (fact: string, visibility: 'world' | 'private', day: string) =>
