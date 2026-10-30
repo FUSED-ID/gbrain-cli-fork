@@ -93,10 +93,11 @@ export async function normalizePageWriteSlugWithConfig(
 export async function normalizeEntityPageWriteSlugWithConfig(
   engine: BrainEngine,
   slug: string,
+  logger?: SlugNamespaceLogger,
 ): Promise<string> {
   const first = slug.split('/', 1)[0] ?? '';
   if (!['person', 'people', 'company', 'companies'].includes(first)) {
-    return normalizePageWriteSlugWithConfig(engine, slug);
+    return normalizePageWriteSlugWithConfig(engine, slug, logger);
   }
   const envValue = process.env[GBRAIN_SLUG_NAMESPACE_REWRITES_ENV];
   if (envValue !== undefined) return normalizePageWriteSlug(slug, parseSlugNamespaceRewrites(envValue));

@@ -370,7 +370,7 @@ const put_page: Operation = {
     if (typeof p.slug === 'string') {
       p.slug = ctx.dryRun
         ? await normalizePageWriteSlugWithConfig(ctx.engine, p.slug, ctx.logger)
-        : await normalizeEntityPageWriteSlugWithConfig(ctx.engine, p.slug);
+        : await normalizeEntityPageWriteSlugWithConfig(ctx.engine, p.slug, ctx.logger);
     }
     const sourceId = pageMutationSource(ctx, p, 'put_page');
     if (ctx.dryRun) {

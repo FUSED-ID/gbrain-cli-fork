@@ -239,6 +239,11 @@ function isWorldFederated(source: { config: unknown }): boolean {
 }
 
 export async function shouldAssertPrivateRouting(engine: BrainEngine, sourceId: string): Promise<boolean> {
+  // The D1 seam protects the public/default publication boundary. Federated
+  // secondary sources may have their own visibility floor without carrying
+  // the brain's private policy documents, so they are not implicitly routed
+  // through lg-private.
+  if (sourceId !== DEFAULT_SOURCE_ID) return false;
   const source = (await listSources(engine)).find(s => s.id === sourceId);
   return !!source && isWorldFederated(source);
 }

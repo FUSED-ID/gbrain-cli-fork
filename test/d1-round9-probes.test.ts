@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test as bunTest } from 'bun:test';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { withEnv } from './helpers/with-env.ts';
@@ -9,7 +9,13 @@ const policyDir = mkdtempSync(join(tmpdir(), 'fable9-policy-test-'));
 const brainDir = mkdtempSync(join(tmpdir(), 'fable9-brain-test-'));
 const allow = join(policyDir, 'allow.tsv');
 
-let REAL_DENY = '';
+const SYNTHETIC_DENY = `## Family deny-list
+| Slug pattern | Name |
+|---|---|
+| \`wiki/albert-bausch\` | Albert Bausch |
+| \`g-pavlov-kuna-family\` | G Pavlov Kuna Family |
+| \`julie-anne-vandenberg\` | Julie Anne Vandenberg |
+`;
 const loaded = await withEnv({
   GBRAIN_HOME: home,
   GBRAIN_PRIVACY_ALLOWLIST_PATH: allow,
@@ -19,9 +25,8 @@ const loaded = await withEnv({
   const importMod = await import('../src/core/import-file.ts');
   const writeMod = await import('../src/core/facts/write-single.ts');
   const opsMod = await import('../src/core/operations.ts');
-  copyFileSync('/Users/lg/gbrain-private/_excluded-people.md', join(policyDir, '_excluded-people.md'));
-  copyFileSync('/Users/lg/gbrain-private/_brain-filing-rules.md', join(policyDir, '_brain-filing-rules.md'));
-  REAL_DENY = readFileSync(join(policyDir, '_excluded-people.md'), 'utf8');
+  writeFileSync(join(policyDir, '_excluded-people.md'), SYNTHETIC_DENY);
+  writeFileSync(join(policyDir, '_brain-filing-rules.md'), '# filing rules\n');
   writeFileSync(allow, 'collision|people/lgv\ncollision|chris-hooper/_author\ncollision|wiki/chris-hooper/_author\n');
   return {
     PGLiteEngine: engineMod.PGLiteEngine,
@@ -231,7 +236,7 @@ describe('Fable round 9 probe.ts', () => {
     }
 
     console.log('\n=== D3: gate gone, fail-closed ===');
-    const resetDeny = () => writeFileSync(join(policyDir, '_excluded-people.md'), REAL_DENY);
+    const resetDeny = () => writeFileSync(join(policyDir, '_excluded-people.md'), SYNTHETIC_DENY);
     await engine.executeRaw(`DELETE FROM pages WHERE source_id='default' AND slug IN ('wiki/g-pavlov-kuna-family','notes/innocuous','people/julie-anne-vandenberg','notes/plain','wiki/alex-bausch')`);
     expect((await probe('D3 valid deny: putPage wiki/g-pavlov-kuna-family note', () => engine.putPage('wiki/g-pavlov-kuna-family', page('G Pavlov Kuna Family','note'), { sourceId: 'default' }))).ok).toBe(false);
     expect((await probe('D3 valid deny: putPage wiki/g-pavlov-kuna-family title Holiday notes', () => engine.putPage('wiki/g-pavlov-kuna-family', page('Holiday notes','note'), { sourceId: 'default' }))).ok).toBe(false);
@@ -242,7 +247,7 @@ describe('Fable round 9 probe.ts', () => {
     expect((await probe('D3 valid deny: putPage notes/plain', () => engine.putPage('notes/plain', page('Plain','note'), { sourceId: 'default' }))).ok).toBe(true);
     expect((await probe('D3 valid deny: insertFact wiki/g-pavlov-kuna-family', () => engine.insertFact({ fact: 'x', entity_slug: 'wiki/g-pavlov-kuna-family', visibility: 'world', source: 'p' } as any, { source_id: 'default' }))).ok).toBe(false);
     for (const [label, mut] of [
-      ['renamed heading', REAL_DENY.replace(/## Family deny-list/i, '## Family denylist')],
+      ['renamed heading', SYNTHETIC_DENY.replace(/## Family deny-list/i, '## Family denylist')],
       ['corrupted (garbage)', 'not markdown policy'],
       ['empty file', ''],
     ] as const) {
@@ -274,8 +279,8 @@ describe('Fable round 9 chain.ts', () => {
     const chainAllow = join(localPolicyDir, 'allow.tsv');
     await withEnv({ GBRAIN_PRIVACY_ALLOWLIST_PATH: chainAllow }, async () => {
     writeFileSync(chainAllow, '');
-    copyFileSync('/Users/lg/gbrain-private/_excluded-people.md', join(localPolicyDir, '_excluded-people.md'));
-    copyFileSync('/Users/lg/gbrain-private/_brain-filing-rules.md', join(localPolicyDir, '_brain-filing-rules.md'));
+    writeFileSync(join(localPolicyDir, '_excluded-people.md'), SYNTHETIC_DENY);
+    writeFileSync(join(localPolicyDir, '_brain-filing-rules.md'), '# filing rules\n');
     const chain = openEngine();
     await chain.connect({});
     await chain.initSchema();

@@ -117,6 +117,7 @@ import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { requestSignal, throwIfRequestAborted } from './request-signal.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { enforcePrivatePageWrite, enforcePrivateFactWrite } from './private-source-routing.ts';
+import { sanitizeRemoteBody } from './remote-body.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns } from './search/sql-ranking.ts';
 import { narrowedOrFallbackQuery } from './search/keyword-or-narrow.ts';
@@ -805,9 +806,11 @@ export class PostgresEngine implements BrainEngine {
 
   async readPageSnapshot(slug: string, opts?: PageSnapshotOptions): Promise<PageSnapshot | null> {
     // #6276: the remote alias-resolving read's visibility subplans cross the JIT thresholds on larger brains; run it with JIT off.
-    return this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx =>
+    const snapshot = await this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx =>
       readCanonicalPageSnapshot(async (query, params) => Array.from(await tx.unsafe(query, params as never, { prepare: true })) as never, slug, opts),
     opts?.resolveAlias && opts.excludePrivate ? { alwaysTransaction: true, jitOff: true } : undefined);
+    if (!snapshot || snapshot.page.source_id !== 'default' || snapshot.page.type !== 'person' || !snapshot.page.compiled_truth.includes('~~')) return snapshot;
+    return { ...snapshot, page: { ...snapshot.page, compiled_truth: sanitizeRemoteBody(snapshot.page.compiled_truth, { keepMaterializedMarkers: true }) } };
   }
 
   async readPageSnapshotsBatch(refs: ReadonlyArray<{ slug: string; sourceId: string }>, opts?: { maxBytes?: number; includeDeleted?: boolean; absentIsNull?: boolean }) {
