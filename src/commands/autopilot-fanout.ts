@@ -510,6 +510,7 @@ export async function dispatchPerSource(
         timeout_ms: opts.timeoutMs,
         maxPending: 1,
       },
+      { allowProtectedSubmit: true },
     );
     if (job.coalesced) {
       if (opts.jsonMode) {
@@ -621,6 +622,7 @@ export async function dispatchPerSource(
           // still in flight (waiting or live-lock active).
           maxPending: 1,
         },
+        { allowProtectedSubmit: true },
       );
       if (job.coalesced) {
         coalesced.push(src.id);
@@ -756,6 +758,7 @@ export async function dispatchGlobalMaintenance(
       timeout_ms: timeoutMs,
       maxPending: 1,
     },
+    { allowProtectedSubmit: true },
   );
   if (job.coalesced) {
     if (opts.jsonMode) {
