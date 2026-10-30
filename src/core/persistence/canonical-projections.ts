@@ -6,6 +6,7 @@ import { pipelined } from '../page-state/transactions.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence } from '../takes-fence.ts';
 import { extractFactsFromFenceText, pageFactDate } from '../facts/extract-from-fence.ts';
+import { floorFactRows } from '../engine-sql/facts.ts';
 import { takesPreparation } from '../takes-write.ts';
 import { LINK_EXTRACTOR_VERSION_TS, parseTimelineEntries } from '../link-extraction.ts';
 import { eachStoredTimelineRow, extractTimelineFromContent, hasExtractorDetail, supersededCitationTimeline, TimelineKeySet,
@@ -665,7 +666,10 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
   prior: PageSnapshot | null, writer: ProjectionWriter, policy?: TimelineWritePolicy): Promise<(tx: BrainEngine, pageId?: number) => Promise<CanonicalProjectionResult>> {
   // #7247: a fence row without a valid_from takes the page's stated date, as extract_facts does, never the import time.
   const factDate = pageFactDate({ slug, frontmatter: page.frontmatter, timeZone: await engine.getConfig('brain.timezone') });
-  const { factRows, takes, quoted, sections } = compileCanonicalProjections(page, slug, sourceId, factDate);
+  const compiled = compileCanonicalProjections(page, slug, sourceId, factDate);
+  const { takes, quoted, sections } = compiled;
+  // The stored fact rows carry the floored visibility (the P4 insert chokepoint), so the match keys below use it too.
+  const factRows = await floorFactRows(engine, sourceId, slug, compiled.factRows);
   // #6259: a page the content-quality gate hid as junk projects no facts or takes. Rows projected before it
   // was quarantined are left as they are (hiding them would need a new row state); only new projection stops.
   const projectFences = !isQuarantined(page.frontmatter);

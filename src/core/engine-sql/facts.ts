@@ -51,7 +51,7 @@ async function embeddingCast(exec: SqlExecutor, probe: ResolveEmbeddingCast | un
 
 type SourceFloor = { exists: boolean; federated: boolean };
 
-async function sourceFloor(exec: SqlExecutor, sourceId: string): Promise<SourceFloor> {
+async function sourceFloor(exec: Pick<SqlExecutor, 'executeRaw'>, sourceId: string): Promise<SourceFloor> {
   try {
     const rows = await exec.executeRaw<{ config: unknown }>(
       'SELECT config FROM sources WHERE id = $1 AND archived IS NOT TRUE', [sourceId],
@@ -63,7 +63,7 @@ async function sourceFloor(exec: SqlExecutor, sourceId: string): Promise<SourceF
 }
 
 async function pageFloor(
-  exec: SqlExecutor,
+  exec: Pick<SqlExecutor, 'executeRaw'>,
   sourceId: string,
   slug: string | null | undefined,
 ): Promise<{ type?: string | null; frontmatter?: unknown } | null> {
@@ -89,6 +89,25 @@ export async function floorVisibility(
 ): Promise<FactVisibility> {
   const sourceVisibility = tightenToSource(visibility, await sourceFloor(exec, sourceId));
   return tightenToPage(sourceVisibility, await pageFloor(exec, sourceId, pageSlug));
+}
+
+/**
+ * The batch floor the insert chokepoint applies, for callers that match fence
+ * rows before they are stored: one source read and one page read for the
+ * page, then tightenToPage(tightenToSource(...)) per row.
+ */
+export async function floorFactRows<T extends { visibility?: FactVisibility }>(
+  exec: Pick<SqlExecutor, 'executeRaw'>,
+  sourceId: string,
+  pageSlug: string | null | undefined,
+  rows: readonly T[],
+): Promise<Array<T & { visibility: FactVisibility }>> {
+  const srcFloor = await sourceFloor(exec, sourceId);
+  const page = await pageFloor(exec, sourceId, pageSlug);
+  return rows.map(row => ({
+    ...row,
+    visibility: tightenToPage(tightenToSource(row.visibility ?? 'private', srcFloor), page),
+  }));
 }
 
 /**
