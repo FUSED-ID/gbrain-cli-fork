@@ -150,10 +150,12 @@ export function partialFenceRuns(text: string, entryOpen: boolean): { head: numb
 /** Apply hashes from DB-normalized companion text to the original Markdown. */
 export function overlayWithdrawalBody(body: string, normalizedBody: string, withdrawals: PageWithdrawal[]): string {
   if (!withdrawals.length || !body.includes('gbrain:facts:begin')) return body;
-  const ledger = new Map<string, PageWithdrawal>();
+  const ledger = new Map<string, PageWithdrawal>(), byHash = new Map<string, PageWithdrawal>();
   for (const w of withdrawals) {
     const key = `${w.visibility}:${w.fact_hash}`;
     if (!ledger.get(key)?.purged) ledger.set(key, w);
+    // Fail closed: no source id or page slug here to floor the cell visibility, so also match on the hash alone.
+    if (!byHash.get(w.fact_hash)?.purged) byHash.set(w.fact_hash, w);
   }
   const blocks = withdrawalFenceBlocks(body), normalized = withdrawalFenceBlocks(normalizedBody);
   for (let i = blocks.length - 1; i >= 0; i--) {
@@ -165,8 +167,9 @@ export function overlayWithdrawalBody(body: string, normalizedBody: string, with
     const facts = block.parsed.facts.flatMap(f => {
       const claim = claims.get(f.rowNum);
       if (claim === undefined) return [f];
-      const entry = ledger.get(`${f.visibility}:${createHash('sha256').update(normalizeLoweredClaim(claim)).digest('hex')}`)
-        ?? ledger.get(`${f.visibility}:${createHash('sha256').update(claim).digest('hex')}`);
+      const [loweredHash, rawHash] = [normalizeLoweredClaim(claim), claim].map(text => createHash('sha256').update(text).digest('hex'));
+      const entry = ledger.get(`${f.visibility}:${loweredHash}`) ?? ledger.get(`${f.visibility}:${rawHash}`)
+        ?? byHash.get(loweredHash) ?? byHash.get(rawHash);
       if (!entry) return [f];
       changed = true;
       return entry.purged ? [] : [withdrawnFact(f, new Date(entry.withdrawn_at).toISOString().slice(0, 10))];

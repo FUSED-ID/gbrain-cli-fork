@@ -1,5 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
-import { renderFactsTable, type ParsedFact } from '../facts-fence.ts';
+import { renderFactsTable, type FactVisibility, type ParsedFact } from '../facts-fence.ts';
+import { floorFactRows } from '../engine-sql/facts.ts';
 import { OperationError, opError, type WithdrawnDetail } from '../ops/contract.ts';
 import { fenceOperationError } from '../fence-repair/refusal.ts';
 import { withdrawnFact, withdrawalFenceBlocks } from './withdrawal-overlay.ts';
@@ -139,34 +140,38 @@ export async function recordFactWithdrawal(
 // Fingerprint each incoming claim once. Inside the join condition the planner
 // re-evaluates both fingerprint functions for every (claim, withdrawal) pair,
 // so a 28-row fence against 400 withdrawals spent 4 s in this query.
-const FINGERPRINTED_CLAIMS = 'SELECT i.visibility, gbrain_fact_fingerprint(i.claim) AS fp, gbrain_fact_fingerprint_v1(i.claim) AS fp_v1';
+// The cell visibility is matched as written and as P4 stores it (floored by source and page), so a withdrawal
+// recorded at the stored visibility still strikes a row whose fence cell says otherwise.
+const FINGERPRINTED_CLAIMS = 'SELECT i.visibility, i.floored_visibility, gbrain_fact_fingerprint(i.claim) AS fp, gbrain_fact_fingerprint_v1(i.claim) AS fp_v1';
 
 async function ambiguousFenceMatchesWithdrawal(engine: BrainEngine, sourceId: string, bodies: readonly string[], subject: string | null): Promise<boolean> {
   const claims = bodies.flatMap(ambiguousFenceClaims);
   if (!claims.length) return false;
+  const floored = await floorFactRows(engine, sourceId, subject, claims.map(c => ({ visibility: (c.visibility ?? 'private') as FactVisibility })));
   const rows = await engine.executeRaw(`WITH incoming AS MATERIALIZED (${FINGERPRINTED_CLAIMS}
-      FROM jsonb_to_recordset($2::text::jsonb) i(claim text,visibility text))
+      FROM jsonb_to_recordset($2::text::jsonb) i(claim text,visibility text,floored_visibility text))
     SELECT 1 FROM incoming
     JOIN (SELECT source_id,visibility,subject,fact_hash FROM fact_withdrawals WHERE source_id=$1
       UNION ALL SELECT source_id,visibility,subject,fact_hash FROM fact_purges WHERE source_id=$1) w
       ON w.source_id=$1 AND w.fact_hash IN (incoming.fp,incoming.fp_v1)
-      AND (incoming.visibility IS NULL OR w.visibility=incoming.visibility)
+      AND (incoming.visibility IS NULL OR w.visibility IN (incoming.visibility,incoming.floored_visibility))
       AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text) LIMIT 1`,
-  [sourceId, JSON.stringify(claims), subject]);
+  [sourceId, JSON.stringify(claims.map((c, i) => ({ ...c, floored_visibility: floored[i].visibility }))), subject]);
   return rows.length > 0;
 }
 
 async function withdrawalDates(engine: BrainEngine, sourceId: string, facts: readonly ParsedFact[], subject: string | null): Promise<Map<number,string>> {
   if (!facts.length) return new Map();
+  const floored = await floorFactRows(engine, sourceId, subject, facts);
   const rows = await engine.executeRaw<{ row_num: number; withdrawn_at: string }>(
     `WITH incoming AS MATERIALIZED (${FINGERPRINTED_CLAIMS}, i.row_num
-        FROM jsonb_to_recordset($2::text::jsonb) AS i(row_num integer,claim text,visibility text))
+        FROM jsonb_to_recordset($2::text::jsonb) AS i(row_num integer,claim text,visibility text,floored_visibility text))
       SELECT incoming.row_num, min(w.withdrawn_at)::text AS withdrawn_at FROM incoming
-      JOIN fact_withdrawals w ON w.source_id=$1 AND w.visibility=incoming.visibility
+      JOIN fact_withdrawals w ON w.source_id=$1 AND w.visibility IN (incoming.visibility,incoming.floored_visibility)
         AND w.fact_hash IN (incoming.fp,incoming.fp_v1)
         AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text)
       GROUP BY incoming.row_num`,
-    [sourceId, JSON.stringify(facts.map(f => ({ row_num:f.rowNum, claim:f.claim, visibility:f.visibility }))), subject],
+    [sourceId, JSON.stringify(facts.map((f, i) => ({ row_num:f.rowNum, claim:f.claim, visibility:f.visibility, floored_visibility:floored[i].visibility }))), subject],
   );
   return new Map(rows.map(r => [r.row_num, new Date(r.withdrawn_at).toISOString().slice(0,10)]));
 }
