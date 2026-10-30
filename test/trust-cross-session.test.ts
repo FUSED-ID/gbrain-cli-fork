@@ -86,7 +86,7 @@ async function source(engine: BrainEngine): Promise<Conn> {
   await disposePersistenceConsumer(engine);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   try {
-    await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+    await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES($1,$1,'{"federated":true,"facts_visibility":"world"}')`, [sourceId]);
     const minted = await mintLegacyToken(engine, { name: `agent-${sourceId}`, scopes: ['read', 'write'], sourceGrant: [sourceId], takesHolders: ['world'] });
     return { sourceId, tokenId: minted.id };
   } finally {

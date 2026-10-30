@@ -509,7 +509,7 @@ test('aged live connector cursors survive actual checkpoint purge and normal inc
 
 test('a fact withdrawn between bound connector preparation and publication leaves the canonical file and page unchanged', async () => withEnv(env, async () => {
   for (const engine of engines) {
-    const f = await boundSource(engine, githubConfig);
+    const f = await boundSource(engine, { ...githubConfig, federated: true, facts_visibility: 'world' });
     const claim = 'withdrawn between connector preparation and publication';
     let body = 'Original bound body';
     const fetcher = async (url: string) => new URL(url).pathname.endsWith('/issues/1') ? json({ ...issueFixture, body }) : githubFetch()(url);

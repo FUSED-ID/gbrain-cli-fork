@@ -45,7 +45,7 @@ async function fixture(engine: BrainEngine) {
   const root = join(home, sourceId), input = join(home, `${sourceId}-input`);
   mkdirSync(root); mkdirSync(input);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-  await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
+  await engine.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{"federated":true,"facts_visibility":"world"}')`, [sourceId, root]);
   await registerLocalWriter(engine, 'cli');
   await claimWorktree(engine, sourceId, root);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
