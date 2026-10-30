@@ -82,7 +82,7 @@ async function managed(seed: (f: Fixture) => Promise<void>, run: (f: Fixture) =>
     try {
       await withEnv({ GBRAIN_HOME: join(dir, 'home'), GBRAIN_AUDIT_DIR: join(dir, 'audit') }, async () => {
         await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-        await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
+        await engine.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{"federated":true,"facts_visibility":"world"}')`, [sourceId, root]);
         await engine.setConfig('sync.write_through', 'true');
         await engine.setConfig('facts.extraction_enabled', 'true');
         await engine.setConfig('conversation_parser.llm_fallback_enabled', 'false');

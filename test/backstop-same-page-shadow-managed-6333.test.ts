@@ -91,7 +91,7 @@ async function managedSource(engine: BrainEngine, seeds: Seed[] = []) {
   const session = `sync:${sourceId}`;
   const vector = () => Float32Array.from(vectorFor(sourceId));
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-  await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+  await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES($1,$1,'{"federated":true,"facts_visibility":"world"}')`, [sourceId]);
   await engine.putPage(ENTITY, { type: 'person', title: 'Alice Example', compiled_truth: 'Alice Example is a person.', timeline: '', frontmatter: {} }, { sourceId });
   for (const seed of seeds) {
     await engine.insertFact({ fact: seed.fact, entity_slug: ENTITY, kind: 'fact', visibility: seed.visibility ?? 'world', source: seed.source ?? 'mcp:extract_facts',

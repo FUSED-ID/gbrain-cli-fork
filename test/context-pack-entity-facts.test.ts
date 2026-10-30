@@ -40,7 +40,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('wiki', 'wiki', '{}') ON CONFLICT (id) DO NOTHING`);
+  await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('wiki', 'wiki', '{"federated":true,"facts_visibility":"world"}') ON CONFLICT (id) DO NOTHING`);
   await person('default', 'people/alice-example', 'Alice Example');
   await person('default', 'people/bob-example', 'Bob Example');
   await person('wiki', 'people/zoe-example', 'Zoe Example');
