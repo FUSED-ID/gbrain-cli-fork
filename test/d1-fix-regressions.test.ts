@@ -91,7 +91,8 @@ describe('D1 exposure-reducing writes and routed reconciliation', () => {
 
     // Upstream v0.57 withdrawal model: a durable withdrawal record, the facts
     // row expired, the fence file struck, and reads render the claim withdrawn.
-    expect(result).toMatchObject({ ok: true, path: 'fence' });
+    expect(result).toMatchObject({ ok: true, path: 'legacy_db' });
+    expect((result as { warning?: string }).warning).toContain('file_database_drift');
     const fact = await engine.executeRaw<{ expired_at: Date | null }>(
       'SELECT expired_at FROM facts WHERE id = $1', [id],
     );

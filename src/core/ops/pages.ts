@@ -37,7 +37,6 @@ import { WHERE_PARAM, whereOpParam } from './where-param.ts';
 import { isDatetimeInputError } from '../utils.ts';
 import { rethrowNamingRevisionSource } from './put-page-revision-source.ts';
 import { enforcePrivatePageWrite } from '../private-source-routing.ts';
-import { preflightPutPagePrivateWrite } from './pages-private-preflight.ts';
 import { normalizeEntityPageWriteSlugWithConfig, normalizePageWriteSlugWithConfig } from '../slug-namespace.ts';
 import {
   assertExplicitSourceLive,
@@ -383,6 +382,7 @@ const put_page: Operation = {
       return { dry_run: true, action: 'put_page', slug: p.slug };
     }
     if (ctx.remote !== false && typeof p.slug === 'string') await assertLargePageAdmission(ctx.engine, p.slug, sourceId, p);
+    const { preflightPutPagePrivateWrite } = await import('./pages-private-preflight.ts');
     const route = await preflightPutPagePrivateWrite(ctx, sourceId, p);
     if (route.routedFromSourceId) p.source_id = route.sourceId;
     const result = await submitPageMutation(ctx, { operation: 'put_page', params: p })

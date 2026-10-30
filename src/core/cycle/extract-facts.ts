@@ -81,6 +81,7 @@ import {
 } from '../facts/supersede-resolve.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { resolveSourceVisibility, tightenToPage } from '../facts/visibility.ts';
+import { enforcePrivateFactWrite } from '../private-source-routing.ts';
 import { fenceUnfencedFacts, planUnfencedFacts } from '../facts/unfenced-facts.ts';
 import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { factsFenceView } from '../facts-fence.ts';
@@ -526,6 +527,7 @@ async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: stri
       await resolveSourceVisibility(tx, sourceId, f.visibility ?? 'private'),
       pageSnapshot?.page,
     );
+    await enforcePrivateFactWrite(tx, { sourceId, pageSlug: slug, entitySlug: f.entity_slug, visibility });
     await tx.executeRaw(
       `UPDATE facts SET kind = $3, visibility = $4, notability = $5, context = $6,
           valid_from = COALESCE($7::timestamptz, valid_from),
