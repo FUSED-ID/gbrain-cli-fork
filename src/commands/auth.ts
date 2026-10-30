@@ -776,7 +776,7 @@ export function formatRegisterClientOutput(name: string, r: RegisteredClient, pa
   } else {
     lines.push('Public client (PKCE-only) — no secret needed.');
   }
-  lines.push(`Revoke with: gbrain auth revoke-client "${r.clientId}"`);
+  lines.push(`Revoke with: gbrain auth revoke-client "${r.clientId}" --yes-i-mean-it`);
   return lines;
 }
 

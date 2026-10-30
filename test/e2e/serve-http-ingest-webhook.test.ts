@@ -184,7 +184,7 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
     for (const registeredClientId of registeredClientIds) {
       try {
         const { execSync } = await import('child_process');
-        execSync(`bun run src/cli.ts auth revoke-client "${registeredClientId}"`, {
+        execSync(`bun run src/cli.ts auth revoke-client "${registeredClientId}" --yes-i-mean-it`, {
           cwd: process.cwd(),
           encoding: 'utf8',
           env: { ...process.env },

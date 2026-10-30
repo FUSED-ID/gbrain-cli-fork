@@ -333,7 +333,7 @@ export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<
         `and look self-registered (no operator grant record): ${shown.join('; ')}` +
         (privilegedDcr.length > 5 ? ` (+${privilegedDcr.length - 5} more)` : '') +
         `. If you did not register these yourself, narrow with \`gbrain auth rescope-client <client_id> --scopes ${dcrCeiling.join(',')}\` ` +
-        `or remove with \`gbrain auth revoke-client <client_id>\`.`,
+        `or remove with \`gbrain auth revoke-client <client_id> --yes-i-mean-it\`.`,
       );
     }
     if (dangling.length > 0) {
