@@ -670,6 +670,8 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
   const { takes, quoted, sections } = compiled;
   // The stored fact rows carry the floored visibility (the P4 insert chokepoint), so the match keys below use it too.
   const factRows = await floorFactRows(engine, sourceId, slug, compiled.factRows);
+  // Private cannot widen. The publication insert may skip its own floor read only when every row is already private.
+  const factRowsAlreadyPrivate = factRows.every(row => row.visibility === 'private');
   // #6259: a page the content-quality gate hid as junk projects no facts or takes. Rows projected before it
   // was quarantined are left as they are (hiding them would need a new row state); only new projection stops.
   const projectFences = !isQuarantined(page.frontmatter);
@@ -818,7 +820,9 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
       const guard = factsHeld ? { rows: [] as typeof factRows, finish: async () => [] as string[] } : await step('timeline', () => guardFenceRows(tx, { sourceId, slug, incoming, rows: factRows, cfg: loadWriteGateConfig },
         () => pipelined(tx, factGeneration.retiring ? [expireFacts, ...timelineRows] : timelineRows)));
       if (factsHeld) await step('timeline', () => pipelined(tx, timelineRows));
-      if (guard.rows.length) await step('facts', () => tx.insertFacts(guard.rows, { source_id: sourceId })); // gbrain-allow-direct-insert: canonical fence projection shares the journal publication transaction
+      if (guard.rows.length) await step('facts', () => tx.insertFacts(guard.rows, { source_id: sourceId }, factRowsAlreadyPrivate
+        ? { skipFloor: true } as NonNullable<Parameters<BrainEngine['insertFacts']>[2]>
+        : undefined)); // gbrain-allow-direct-insert: canonical fence projection shares the journal publication transaction
       const contested = await step('fact_trust', () => guard.finish(tx));
       // W1 #6783 §12 (b): a fence row's field rewrite can lower a more trusted fact (the tier trigger); what was derived from it follows.
       const above = factRows.length ? await factsAboveWriter(tx, sourceId, slug) : [];

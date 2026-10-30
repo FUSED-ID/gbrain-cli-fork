@@ -102,7 +102,15 @@ export async function floorFactRows<T extends { visibility?: FactVisibility }>(
   pageSlug: string | null | undefined,
   rows: readonly T[],
 ): Promise<Array<T & { visibility: FactVisibility }>> {
+  // No row means the source and page reads have nothing to tighten.
+  if (rows.length === 0) return [];
+  // Only world can change, and only toward private. A private row stays private
+  // for every source and every page, so the reads would not change the result.
+  const needsFloor = rows.some(row => (row.visibility ?? 'private') === 'world');
+  if (!needsFloor) return rows.map(row => ({ ...row, visibility: row.visibility ?? 'private' }));
   const srcFloor = await sourceFloor(exec, sourceId);
+  // A missing or non-federated source forces private before the page is consulted.
+  if (!srcFloor.exists || !srcFloor.federated) return rows.map(row => ({ ...row, visibility: 'private' as const }));
   const page = await pageFloor(exec, sourceId, pageSlug);
   return rows.map(row => ({
     ...row,
@@ -318,7 +326,15 @@ export async function insertFacts(
   resolveCast: ResolveEmbeddingCast | undefined,
     rows: Array<NewFact & { row_num: number; source_markdown_slug: string; superseded_by_row?: number }>,
     ctx: { source_id: string },
-    opts?: { deleteForPageFirst?: { slug: string; excludeSourcePrefixes?: string[]; preserveExpiredLegacy?: boolean } },
+    opts?: {
+      deleteForPageFirst?: { slug: string; excludeSourcePrefixes?: string[]; preserveExpiredLegacy?: boolean };
+      /**
+       * Caller already ran the source and page floor, and every row is private.
+       * Private cannot widen, so the floor statements would store the same visibility.
+       * A world row ignores the flag and reads. The flag is this call's argument, not module state.
+       */
+      skipFloor?: boolean;
+    },
   ): Promise<{ inserted: number; ids: number[]; warnings: string[]; deleted: number }> {
     if (rows.length === 0) return { inserted: 0, ids: [], warnings: [], deleted: 0 };
 
@@ -337,18 +353,26 @@ export async function insertFacts(
     // to `facts.superseded_by` in a second pass below (same transaction).
     // One source read for the batch and one page read per distinct slug, not
     // per row. The same tightenToSource / tightenToPage decisions apply per row.
-    const srcFloor = await sourceFloor(exec, ctx.source_id);
-    const pageFloors = new Map<string, Awaited<ReturnType<typeof pageFloor>>>();
-    for (const slug of new Set(rows.map(row => row.source_markdown_slug))) {
-      if (slug) pageFloors.set(slug, await pageFloor(exec, ctx.source_id, slug));
+    // skipFloor is safe only while every row is already private: the floor never widens private.
+    // Callers that omit the flag keep both reads, including the SQL-text golden.
+    const alreadyPrivate = opts?.skipFloor === true && rows.every(row => (row.visibility ?? 'private') !== 'world');
+    let flooredRows: typeof rows;
+    if (alreadyPrivate) {
+      flooredRows = rows.map(row => ({ ...row, visibility: row.visibility ?? 'private' }));
+    } else {
+      const srcFloor = await sourceFloor(exec, ctx.source_id);
+      const pageFloors = new Map<string, Awaited<ReturnType<typeof pageFloor>>>();
+      for (const slug of new Set(rows.map(row => row.source_markdown_slug))) {
+        if (slug) pageFloors.set(slug, await pageFloor(exec, ctx.source_id, slug));
+      }
+      flooredRows = rows.map(row => ({
+        ...row,
+        visibility: tightenToPage(
+          tightenToSource(row.visibility ?? 'private', srcFloor),
+          row.source_markdown_slug ? pageFloors.get(row.source_markdown_slug) ?? null : null,
+        ),
+      }));
     }
-    const flooredRows = rows.map(row => ({
-      ...row,
-      visibility: tightenToPage(
-        tightenToSource(row.visibility ?? 'private', srcFloor),
-        row.source_markdown_slug ? pageFloors.get(row.source_markdown_slug) ?? null : null,
-      ),
-    }));
     const ids = await exec.transaction(async (tx) => {
       // v0.46 (#3014) — atomic reconcile: wipe the page's fence-owned rows
       // as the FIRST statement of this transaction so a failing insert

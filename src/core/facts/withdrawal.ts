@@ -1,12 +1,11 @@
 import type { BrainEngine } from '../engine.ts';
-import { renderFactsTable, type FactVisibility, type ParsedFact } from '../facts-fence.ts';
-import { floorFactRows } from '../engine-sql/facts.ts';
+import { renderFactsTable, type ParsedFact } from '../facts-fence.ts';
 import { OperationError, opError, type WithdrawnDetail } from '../ops/contract.ts';
 import { fenceOperationError } from '../fence-repair/refusal.ts';
 import { withdrawnFact, withdrawalFenceBlocks } from './withdrawal-overlay.ts';
 import { ambiguousFenceClaims, discoverWithdrawalTargets, withdrawalDiscoveryFailure } from './withdrawal-discovery.ts';
 import { dropPurgedFenceRows } from './purge-overlay.ts';
-import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
+import { derivationPrivateSql, privateProvenanceFilterFragment } from '../search/private-visibility.ts';
 import { coverageActive, noteBelief, readLedgerSource, withBeliefBatch } from '../belief/ledger.ts';
 import { createPageVersion } from '../page-state/versions.ts';
 import { validateSlug } from '../utils.ts';
@@ -144,34 +143,98 @@ export async function recordFactWithdrawal(
 // recorded at the stored visibility still strikes a row whose fence cell says otherwise.
 const FINGERPRINTED_CLAIMS = 'SELECT i.visibility, i.floored_visibility, gbrain_fact_fingerprint(i.claim) AS fp, gbrain_fact_fingerprint_v1(i.claim) AS fp_v1';
 
+/** Private (and a null cell, which the match ignores) cannot be widened. World can become private. */
+function claimNeedsSourcePageFloor(rows: readonly { visibility?: string | null }[]): boolean {
+  return rows.some(row => row.visibility === 'world');
+}
+
+/**
+ * Same source and page predicates as sourceFloor and pageFloor, inside the statement that uses them.
+ * Built per call so derivationPrivateSql sees the current honor-aliases setting.
+ * $1 is the source, $3 is the page slug (also the withdrawal subject). A null slug matches no page.
+ * A missing, archived, or non-federated source is not federated, so world tightens to private.
+ * A missing page does not tighten. World stays world only when the source exists, is not archived,
+ * config.federated is boolean true, and the newest live page is not derivation-private.
+ */
+function flooredClaimSql(withRowNum: boolean): string {
+  return `WITH floor AS (
+      SELECT
+        EXISTS (
+          SELECT 1 FROM sources s
+          WHERE s.id = $1 AND s.archived IS NOT TRUE
+            AND s.config->'federated' = 'true'::jsonb
+        ) AS federated,
+        EXISTS (
+          SELECT 1 FROM (
+            SELECT type, frontmatter FROM pages
+            WHERE source_id = $1 AND slug = $3 AND deleted_at IS NULL
+            ORDER BY id DESC LIMIT 1
+          ) pf
+          WHERE ${derivationPrivateSql('pf')}
+        ) AS page_private
+    ),
+    incoming AS MATERIALIZED (
+      SELECT i.visibility,
+        CASE
+          WHEN COALESCE(i.visibility, 'private') <> 'world' THEN COALESCE(i.visibility, 'private')
+          WHEN NOT floor.federated OR floor.page_private THEN 'private'
+          ELSE 'world'
+        END AS floored_visibility,
+        gbrain_fact_fingerprint(i.claim) AS fp,
+        gbrain_fact_fingerprint_v1(i.claim) AS fp_v1${withRowNum ? ', i.row_num' : ''}
+      FROM jsonb_to_recordset($2::text::jsonb) AS i(claim text, visibility text${withRowNum ? ', row_num integer' : ''})
+      CROSS JOIN floor
+    )`;
+}
+
 async function ambiguousFenceMatchesWithdrawal(engine: BrainEngine, sourceId: string, bodies: readonly string[], subject: string | null): Promise<boolean> {
   const claims = bodies.flatMap(ambiguousFenceClaims);
   if (!claims.length) return false;
-  const floored = await floorFactRows(engine, sourceId, subject, claims.map(c => ({ visibility: (c.visibility ?? 'private') as FactVisibility })));
-  const rows = await engine.executeRaw(`WITH incoming AS MATERIALIZED (${FINGERPRINTED_CLAIMS}
-      FROM jsonb_to_recordset($2::text::jsonb) i(claim text,visibility text,floored_visibility text))
-    SELECT 1 FROM incoming
-    JOIN (SELECT source_id,visibility,subject,fact_hash FROM fact_withdrawals WHERE source_id=$1
-      UNION ALL SELECT source_id,visibility,subject,fact_hash FROM fact_purges WHERE source_id=$1) w
-      ON w.source_id=$1 AND w.fact_hash IN (incoming.fp,incoming.fp_v1)
-      AND (incoming.visibility IS NULL OR w.visibility IN (incoming.visibility,incoming.floored_visibility))
-      AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text) LIMIT 1`,
-  [sourceId, JSON.stringify(claims.map((c, i) => ({ ...c, floored_visibility: floored[i].visibility }))), subject]);
+  // No world cell: the floor result is private for every row, and a null visibility ignores it.
+  const sql = claimNeedsSourcePageFloor(claims)
+    ? `${flooredClaimSql(false)}
+      SELECT 1 FROM incoming
+      JOIN (SELECT source_id,visibility,subject,fact_hash FROM fact_withdrawals WHERE source_id=$1
+        UNION ALL SELECT source_id,visibility,subject,fact_hash FROM fact_purges WHERE source_id=$1) w
+        ON w.source_id=$1 AND w.fact_hash IN (incoming.fp,incoming.fp_v1)
+        AND (incoming.visibility IS NULL OR w.visibility IN (incoming.visibility,incoming.floored_visibility))
+        AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text) LIMIT 1`
+    : `WITH incoming AS MATERIALIZED (${FINGERPRINTED_CLAIMS}
+        FROM jsonb_to_recordset($2::text::jsonb) i(claim text,visibility text,floored_visibility text))
+      SELECT 1 FROM incoming
+      JOIN (SELECT source_id,visibility,subject,fact_hash FROM fact_withdrawals WHERE source_id=$1
+        UNION ALL SELECT source_id,visibility,subject,fact_hash FROM fact_purges WHERE source_id=$1) w
+        ON w.source_id=$1 AND w.fact_hash IN (incoming.fp,incoming.fp_v1)
+        AND (incoming.visibility IS NULL OR w.visibility IN (incoming.visibility,incoming.floored_visibility))
+        AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text) LIMIT 1`;
+  const payload = claimNeedsSourcePageFloor(claims)
+    ? claims.map(c => ({ claim: c.claim, visibility: c.visibility }))
+    : claims.map(c => ({ ...c, floored_visibility: c.visibility ?? 'private' }));
+  const rows = await engine.executeRaw(sql, [sourceId, JSON.stringify(payload), subject]);
   return rows.length > 0;
 }
 
 async function withdrawalDates(engine: BrainEngine, sourceId: string, facts: readonly ParsedFact[], subject: string | null): Promise<Map<number,string>> {
   if (!facts.length) return new Map();
-  const floored = await floorFactRows(engine, sourceId, subject, facts);
+  const world = claimNeedsSourcePageFloor(facts);
   const rows = await engine.executeRaw<{ row_num: number; withdrawn_at: string }>(
-    `WITH incoming AS MATERIALIZED (${FINGERPRINTED_CLAIMS}, i.row_num
-        FROM jsonb_to_recordset($2::text::jsonb) AS i(row_num integer,claim text,visibility text,floored_visibility text))
-      SELECT incoming.row_num, min(w.withdrawn_at)::text AS withdrawn_at FROM incoming
-      JOIN fact_withdrawals w ON w.source_id=$1 AND w.visibility IN (incoming.visibility,incoming.floored_visibility)
-        AND w.fact_hash IN (incoming.fp,incoming.fp_v1)
-        AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text)
-      GROUP BY incoming.row_num`,
-    [sourceId, JSON.stringify(facts.map((f, i) => ({ row_num:f.rowNum, claim:f.claim, visibility:f.visibility, floored_visibility:floored[i].visibility }))), subject],
+    world
+      ? `${flooredClaimSql(true)}
+        SELECT incoming.row_num, min(w.withdrawn_at)::text AS withdrawn_at FROM incoming
+        JOIN fact_withdrawals w ON w.source_id=$1 AND w.visibility IN (incoming.visibility,incoming.floored_visibility)
+          AND w.fact_hash IN (incoming.fp,incoming.fp_v1)
+          AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text)
+        GROUP BY incoming.row_num`
+      : `WITH incoming AS MATERIALIZED (${FINGERPRINTED_CLAIMS}, i.row_num
+          FROM jsonb_to_recordset($2::text::jsonb) AS i(row_num integer,claim text,visibility text,floored_visibility text))
+        SELECT incoming.row_num, min(w.withdrawn_at)::text AS withdrawn_at FROM incoming
+        JOIN fact_withdrawals w ON w.source_id=$1 AND w.visibility IN (incoming.visibility,incoming.floored_visibility)
+          AND w.fact_hash IN (incoming.fp,incoming.fp_v1)
+          AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text)
+        GROUP BY incoming.row_num`,
+    [sourceId, JSON.stringify(facts.map(f => world
+      ? { row_num: f.rowNum, claim: f.claim, visibility: f.visibility }
+      : { row_num: f.rowNum, claim: f.claim, visibility: f.visibility, floored_visibility: f.visibility ?? 'private' })), subject],
   );
   return new Map(rows.map(r => [r.row_num, new Date(r.withdrawn_at).toISOString().slice(0,10)]));
 }
