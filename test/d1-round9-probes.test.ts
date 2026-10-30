@@ -184,8 +184,17 @@ describe('Fable round 9 probe.ts', () => {
     await engine.executeRaw('DELETE FROM facts');
     id = await seedFact('wiki/albert-bausch', 'Albert lives in Spain', 1);
     expect((await probe('forgetFactInFence(albert fact)', async () => ({ res: await forgetFactInFence(engine, id, { reason: 'cleanup' }), row: await factRow(id) }))).ok).toBe(true);
-    expect((await engine.executeRaw<{ expired_at: unknown }>('SELECT expired_at FROM facts WHERE id = $1', [id]))[0].expired_at).not.toBeNull();
-    expect((await engine.getPage('wiki/albert-bausch', { sourceId: 'default' }))?.compiled_truth).not.toContain('~~Albert lives in Spain~~');
+    const expiredRow = (await engine.executeRaw<{ expired_at: unknown; fact: string }>(
+      'SELECT expired_at, fact FROM facts WHERE id = $1', [id]))[0];
+    expect(expiredRow.expired_at).not.toBeNull();
+    expect(expiredRow.fact).toBe('Albert lives in Spain');
+    const remotePage = await operationsByName.get_page.handler(
+      { engine, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true, sourceId: 'default' } as any,
+      { slug: 'wiki/albert-bausch', source_id: 'default' },
+    ) as { compiled_truth?: string };
+    const remoteBody = remotePage.compiled_truth ?? '';
+    expect(remoteBody).not.toContain('| 1 | Albert lives in Spain |');
+    expect(remoteBody).toContain('forgotten:');
     expect(readFileSync(join(brainDir, 'wiki/albert-bausch.md'),'utf8')).toContain('~~');
 
     console.log('\n=== D1-ADVERSARIAL: forget must not mirror drifted FILE into DB ===');

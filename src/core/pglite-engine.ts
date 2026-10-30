@@ -118,7 +118,6 @@ import type {
 } from './types.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { enforcePrivatePageWrite, enforcePrivateFactWrite } from './private-source-routing.ts';
-import { sanitizeRemoteBody } from './remote-body.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
 import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
 import { PAGE_SORT_SQL } from './types.ts';
@@ -1182,12 +1181,6 @@ export class PGLiteEngine implements BrainEngine {
       Object.defineProperty(txEngine, '_pageTransaction', { value: true });
       Object.defineProperty(txEngine, '_heldPageKeys', { value: held });
       Object.defineProperty(txEngine, 'db', { get: () => tx });
-      Object.defineProperty(txEngine, 'getConfig', { value: async (key: string) => {
-        const heldConfig = await requestConfigValue(txEngine, key);
-        if (heldConfig !== undefined) return heldConfig;
-        const { rows } = await tx.query('SELECT value FROM config WHERE key = $1', [key]);
-        return rows.length > 0 ? (rows[0] as { value: string }).value : null;
-      } });
       return fn(txEngine);
     }));
     if (this._pageTransaction || !this._dbWork) return run();
@@ -1205,9 +1198,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async readPageSnapshot(slug: string, opts?: PageSnapshotOptions): Promise<PageSnapshot | null> {
-    const snapshot = await readCanonicalPageSnapshot(this.executeRaw.bind(this), slug, opts);
-    if (!snapshot || snapshot.page.source_id !== 'default' || snapshot.page.type !== 'person' || !snapshot.page.compiled_truth.includes('~~')) return snapshot;
-    return { ...snapshot, page: { ...snapshot.page, compiled_truth: sanitizeRemoteBody(snapshot.page.compiled_truth, { keepMaterializedMarkers: true }) } };
+    return readCanonicalPageSnapshot(this.executeRaw.bind(this), slug, opts);
   }
 
   async readPageSnapshotsBatch(refs: ReadonlyArray<{ slug: string; sourceId: string }>, opts?: { maxBytes?: number; includeDeleted?: boolean; absentIsNull?: boolean }) {
