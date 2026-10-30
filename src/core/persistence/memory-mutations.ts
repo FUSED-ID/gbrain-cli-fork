@@ -206,7 +206,11 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
     : defaultedVisibility;
   // astra-7: the floor above may have contracted the requested domain. Keep the pre-floor
   // identity so a world withdrawal or purge still refuses this claim forced private.
-  const requestedVisibility = call.visibilityDefaulted ? null : (p.visibility ?? null);
+  // A defaulted request keeps the brain default from before the source floor and the page floor,
+  // and only when that floor changed the value.
+  const { resolveRememberVisibility } = await import('../facts/visibility.ts');
+  const preFloor = call.visibilityDefaulted ? await resolveRememberVisibility(ctx.engine, null) : null;
+  const requestedVisibility = preFloor !== null && preFloor !== visibility ? preFloor : (call.visibilityDefaulted ? null : (p.visibility ?? null));
   const floorTightened = requestedVisibility !== null && requestedVisibility !== visibility;
   const factIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never, visibility, entity_slug: entitySlug };
   // Fail fast on an invalid target or a withdrawn claim; the coordinator re-checks both under its locks before publishing.

@@ -17,6 +17,7 @@ import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { FACT_WITHDRAWN_MESSAGE, recordFactWithdrawal } from '../src/core/facts/withdrawal.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 
 const SOURCE = 'p4b-identity-fed';
 const WITHDRAWN = 'the launch date moved to 2026-11-04';
@@ -49,6 +50,19 @@ async function remember(slug: string, fact: string) {
   return submitRememberMutation(ctx(), {
     fact, entity: slug, provenance: 'test', visibility: 'world', request_id: randomUUID(),
   }, 30_000);
+}
+
+async function rememberDefaulted(slug: string, fact: string) {
+  return submitRememberMutation(ctx(), {
+    fact, entity: slug, provenance: 'test', request_id: randomUUID(),
+  }, 30_000, { visibilityDefaulted: true });
+}
+
+async function putPrivacyMarked(slug: string) {
+  await engine.transaction(tx => withCoordinatedWrite(tx, [SOURCE], () => tx.putPage(slug, {
+    type: 'note', title: slug, compiled_truth: 'page body', timeline: '',
+    frontmatter: { access: 'private' },
+  }, { sourceId: SOURCE }), TEST_WRITE_ATTRIBUTION));
 }
 
 async function unmanaged<T>(body: () => Promise<T>): Promise<T> {
@@ -146,5 +160,38 @@ describe('P4 withdrawal identity when a floor forces world to private', () => {
     const remembered = await remember(slug, UNRELATED);
     expect(remembered.status).toBe('inserted');
     expect(await active(UNRELATED)).toEqual([{ visibility: 'private' }]);
+  }, 60_000);
+
+  test('e brain default world, privacy-marked page, refuses a defaulted remember of a withdrawn world claim', async () => {
+    const slug = 'notes/p4b-defaulted-withdrawn';
+    const fact = 'the launch window moved to 2026-12-02';
+    await engine.setConfig('facts.default_visibility', 'world');
+    await seedWorldWithdrawal(slug, fact);
+    await putPrivacyMarked(slug);
+    const error = await rememberDefaulted(slug, fact).then(() => null, (caught: unknown) => caught);
+    expect(error).toMatchObject({ code: 'invalid_params', message: FACT_WITHDRAWN_MESSAGE });
+    expect(await active(fact)).toEqual([]);
+  }, 60_000);
+
+  test('f a world withdrawal recorded after admission is refused at publication', async () => {
+    const slug = 'notes/p4b-defaulted-late-withdrawal';
+    const fact = 'the rehearsal moved to wednesday evening';
+    await engine.setConfig('facts.default_visibility', 'world');
+    await putPrivacyMarked(slug);
+    installFaultHook(async (point, detail) => {
+      if (point !== 'consumer:prepared' || detail.operation !== 'remember' || detail.sourceId !== SOURCE) return;
+      await engine.executeRaw(
+        `INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash)
+         VALUES($1,'world',$2,gbrain_fact_fingerprint($3)) ON CONFLICT DO NOTHING`,
+        [SOURCE, slug, fact],
+      );
+    });
+    try {
+      const error = await rememberDefaulted(slug, fact).then(() => null, (caught: unknown) => caught);
+      expect(error).toMatchObject({ code: 'invalid_params', message: FACT_WITHDRAWN_MESSAGE });
+      expect(await active(fact)).toEqual([]);
+    } finally {
+      installFaultHook(undefined);
+    }
   }, 60_000);
 });

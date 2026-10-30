@@ -118,6 +118,10 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const contestedOld = contested ? decision.candidate! : lexicalOld;
   const validate = async (tx: BrainEngine) => {
     await assertFactNotWithdrawn(tx, row.source_id, input, { excludePrivate });
+    if (typeof p.requested_visibility === 'string' && p.requested_visibility !== input.visibility) {
+      await assertFactNotWithdrawn(tx, row.source_id,
+        { ...input, visibility: p.requested_visibility as SingleFactIntent['visibility'] }, { excludePrivate });
+    }
     if (embedding && JSON.stringify(await tx.executeRaw(`${embeddingConfigSql} FOR SHARE`)) !== observedEmbeddingConfig) conflict(row);
     const current = await decide(tx, true);
     if (candidateState(current) !== candidateState(decision)) conflict(row);
