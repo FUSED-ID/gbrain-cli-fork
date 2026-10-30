@@ -91,7 +91,7 @@ describe('global_maintenance_timeouts doctor check (#4578)', () => {
   async function deadJobs(n: number, error = 'timeout exceeded') {
     const queue = new MinionQueue(engine);
     for (let i = 0; i < n; i++) {
-      const job = await queue.add('autopilot-global-maintenance', {}, { idempotency_key: `dead-${error}-${i}` });
+      const job = await queue.add('autopilot-global-maintenance', {}, { idempotency_key: `dead-${error}-${i}` }, { allowProtectedSubmit: true });
       await engine.executeRaw(`UPDATE minion_jobs SET status = 'dead', error_text = $2, finished_at = now() + ($1 || ' seconds')::interval WHERE id = $3`,
         [String(i), error, job.id]);
     }
@@ -118,13 +118,13 @@ describe('global_maintenance_timeouts doctor check (#4578)', () => {
   test('a completed job after timeout deaths clears the warning', async () => {
     await deadJobs(3);
     expect((await globalMaintenanceTimeoutsCheck(engine)).status).toBe('warn');
-    const job = await new MinionQueue(engine).add('autopilot-global-maintenance', {}, { idempotency_key: 'completed-after' });
+    const job = await new MinionQueue(engine).add('autopilot-global-maintenance', {}, { idempotency_key: 'completed-after' }, { allowProtectedSubmit: true });
     await engine.executeRaw(`UPDATE minion_jobs SET status = 'completed', finished_at = now() + interval '1 hour' WHERE id = $1`, [job.id]);
     expect((await globalMaintenanceTimeoutsCheck(engine)).status).toBe('ok');
   });
   test('#6303: three dead patterns children at their own timeout warn while the jobs complete', async () => {
     const queue = new MinionQueue(engine);
-    const job = await queue.add('autopilot-global-maintenance', {}, { idempotency_key: 'completed-partial' });
+    const job = await queue.add('autopilot-global-maintenance', {}, { idempotency_key: 'completed-partial' }, { allowProtectedSubmit: true });
     await engine.executeRaw(`UPDATE minion_jobs SET status = 'completed', finished_at = now() WHERE id = $1`, [job.id]);
     const child = async (i: number, error: string, key = `dream:patterns:k${i}`) => {
       const sub = await queue.add('subagent', {}, { idempotency_key: key }, { allowProtectedSubmit: true });
