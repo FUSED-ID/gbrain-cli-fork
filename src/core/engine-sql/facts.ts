@@ -81,7 +81,7 @@ async function pageFloor(
   }
 }
 
-async function floorVisibility(
+export async function floorVisibility(
   exec: SqlExecutor,
   sourceId: string,
   visibility: FactVisibility,

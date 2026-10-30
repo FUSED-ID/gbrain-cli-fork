@@ -144,7 +144,7 @@ async function rememberVisibility(ctx: OperationContext, call: RememberCall, pag
   const requested = call.visibilityDefaulted
     ? await resolveRememberVisibility(ctx.engine, page)
     : call.p.visibility === 'private' ? 'private' : 'world';
-  const sourceId = ctx.sourceId ?? 'default';
+  const sourceId = typeof call.p.source_id === 'string' ? call.p.source_id : ctx.sourceId ?? 'default';
   return tightenToPage(await resolveSourceVisibility(ctx.engine, sourceId, requested), page);
 }
 
