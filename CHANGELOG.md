@@ -10,6 +10,10 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## Post-473 security carry
+
+- Commit 1a104187d carries @hono/node-server from 2.1.0 to 2.1.3 for GHSA-rmxm-3fg6-px4f.
+
 ## [0.60.473.0] - 2026-10-27
 
 **A change you stage while a write is finishing is no longer overwritten.**
