@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
 import { runAuth } from '../src/commands/auth.ts';
 
+// test-reads-source-ok[generated-artifact]: pins a generated registry row for the revoke-client consent flag
 const AUTH_SRC = readFileSync(new URL('../src/commands/auth.ts', import.meta.url), 'utf8');
 
 describe('auth revoke-client consent pin (1030)', () => {

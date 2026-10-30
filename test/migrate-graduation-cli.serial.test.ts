@@ -222,7 +222,7 @@ describe('runMigrateGraduation', () => {
     expect(JSON.parse(drain.stdout).resume_command).toEqual(['gbrain', 'migrate', '--resume', '--drain-timeout', '120']);
     const blocked = await run(['--resume', '--json'], fakeApi({ resumeGraduation: async () => { throw drainTimeoutError({ timeoutSec: 60, blockers: [{ kind: 'writer_admin_lock', id: 'l', detail: 'locked', argv: ['gbrain', 'sources', 'writer', 'unlock'], needsUser: true }] }); } }));
     expect(blocked.code).toBe(1);
-    const orchestratorBlocked = await run(['--resume', '--json'], fakeApi({ resumeGraduation: async () => { throw drainTimeoutError({ blockers: [{ kind: 'dangling_reference', id: 'oauth_clients.c1', detail: 'bound to a missing source', argv: ['gbrain', 'auth', 'revoke-client', 'c1'], needsUser: true }], timeoutSec: 60 }); } }));
+    const orchestratorBlocked = await run(['--resume', '--json'], fakeApi({ resumeGraduation: async () => { throw drainTimeoutError({ blockers: [{ kind: 'dangling_reference', id: 'oauth_clients.c1', detail: 'bound to a missing source', argv: ['gbrain', 'auth', 'revoke-client', 'c1', '--yes-i-mean-it'], needsUser: true }], timeoutSec: 60 }); } }));
     expect(orchestratorBlocked.code).toBe(1);
     const orchestratorProgressing = await run(['--resume', '--json'], fakeApi({ resumeGraduation: async () => { throw drainTimeoutError({ blockers: [{ kind: 'request', id: 'r', detail: 'running', needsUser: false }], timeoutSec: 60 }); } }));
     expect(orchestratorProgressing.code).toBe(11);

@@ -182,7 +182,7 @@ describeE2E('serve-http multi-agent E2E (cathedral-6)', () => {
     for (const id of registeredClientIds) {
       try {
         execSync(`bun run src/cli.ts auth revoke-client "${id}" --yes-i-mean-it`, {
-          { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } });
+          cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } });
       } catch (e: any) {
         // eslint-disable-next-line no-console
         console.error(`[afterAll] revoke-client cleanup failed for ${id}: ${e.message}`);
