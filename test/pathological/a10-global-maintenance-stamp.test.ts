@@ -352,7 +352,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       expect((await stalledCheck()).status).toBe('ok');
       const queue = new MinionQueue(engine);
       for (let i = 0; i < 5; i++) {
-        const job = await queue.add('autopilot-global-maintenance', {}, { idempotency_key: `stalled-${i}` });
+        const job = await queue.add('autopilot-global-maintenance', {}, { idempotency_key: `stalled-${i}` }, { allowProtectedSubmit: true });
         await engine.executeRaw(`UPDATE minion_jobs SET status = 'dead', error_text = 'SYNTH_PHASE_FAIL synthesize postprocess refused',
           finished_at = now() - make_interval(mins => $1::int) WHERE id = $2`, [60 - i, job.id]);
       }
