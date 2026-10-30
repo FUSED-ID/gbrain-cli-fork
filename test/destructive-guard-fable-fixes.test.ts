@@ -122,6 +122,7 @@ describe('R4 cycle purge consent', () => {
     const hours: number[] = [];
     const engine = {
       executeRaw: async () => [{ enabled: false }],
+      getConfig: async () => null,
       purgeDeletedPages: async (cutoff: number) => {
         hours.push(cutoff);
         return { count: 0, slugs: [], pages: [] };

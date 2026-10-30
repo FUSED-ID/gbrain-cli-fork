@@ -63,14 +63,21 @@ describe('autopilot-global-maintenance resumes across jobs (#4578)', () => {
 
   test('a phase that was running when an earlier job died is skipped for the pass; later phases still run', async () => {
     await engine.setConfig(GLOBAL_MAINTENANCE_PROGRESS_KEY, JSON.stringify({ running_phase: 'orphans', running_job: '6999:0', next_phase: 'orphans' }));
-    const result = await run({});
+    const result = await run({ data: { phases: ['orphans', 'drift'], repoPath } });
     expect(result.report.phases.find((p: { phase: string }) => p.phase === 'orphans'))
       .toMatchObject({ status: 'skipped', details: { reason: 'timed_out_previous_job', recovery: 'gbrain dream --phase orphans' } });
     expect(result.report.phases.find((p: { phase: string }) => p.phase === 'purge')?.status).not.toBe('skipped');
+    expect(result.report.phases.find((p: { phase: string }) => p.phase === 'drift')).toBeDefined();
     expect(await engine.getConfig(LAST_GLOBAL_AT_KEY)).toBeNull();
     const progress = await readGlobalMaintenanceProgress(engine);
     expect(progress.timeouts?.orphans?.count).toBe(1);
     expect(progress.running_phase).toBeUndefined();
+  }, 60_000);
+
+  test('purge without consent is recorded as skipped for the pass, never swept', async () => {
+    const result = await run({ data: { phases: ['purge'], repoPath } });
+    expect(result.report.phases.find((p: { phase: string }) => p.phase === 'purge'))
+      .toMatchObject({ status: 'skipped', details: { reason: 'missing_purge_consent', required_flag: '--yes-i-mean-it' } });
   }, 60_000);
 
   test('the job deadline follows env > config > the autopilot default', async () => {
