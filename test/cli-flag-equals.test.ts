@@ -306,6 +306,7 @@ describe('#7619 split rules', () => {
       'src/commands/import.ts': ['import'],
       'src/commands/integrity.ts': ['integrity check'],
       'src/commands/jobs/shared.ts': ['jobs supervisor', 'jobs work'],
+      'src/commands/jobs/supervisor.ts': ['jobs supervisor'], // --job-isolation= via shared.ts; --only= refused at supervisor.ts:64
       'src/commands/jobs/watch.ts': ['jobs watch'],
       'src/commands/lint.ts': ['lint'],
       'src/commands/migrate-graduation.ts': ['migrate'],
@@ -332,6 +333,7 @@ describe('#7619 split rules', () => {
       'src/commands/trust-claim.ts': ['trust claim-sources'],
       'src/core/bounded-listing-cli.ts': ['orphans', 'sources status', 'sync status'],
       'src/core/consent.ts': ['book-mirror', 'decide enable', 'doctor', 'embed', 'features', 'jobs submit', 'migrate', 'reindex', 'reindex-code', 'reinit-pglite'],
+      'src/core/destructive-guard.ts': 'consent gate takes the flag name before = (allowedPrefixes --pace admits --pace= and --pace-max-concurrency=). Callers are own parsers or exact-token commands (migrate embeddings, auth revoke-client, files redirect, files clean), so no EQUALS_READERS key',
       'src/core/stable-channel.ts': ['upgrade'],
       'src/eval/decide-eval-flags.ts': ['eval retrieval-quality'], // also eval brainbench (exempt) and eval longmemeval (own)
 
