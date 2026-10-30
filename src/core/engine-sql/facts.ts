@@ -75,7 +75,9 @@ async function pageFloor(
     );
     return rows[0] ?? null;
   } catch {
-    return null;
+    // An unread page is not proof that the page is public. No slug and no
+    // page row still return null and apply no page floor.
+    return { frontmatter: { visibility: 'private' } };
   }
 }
 
