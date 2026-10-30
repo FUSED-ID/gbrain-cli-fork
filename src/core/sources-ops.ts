@@ -941,12 +941,26 @@ export async function removeSource(
 
   await assertUnmanagedCanonicalWriter(engine, 'sources remove');
 
+  const factRows = await engine.executeRaw<{ n: number }>(
+    `SELECT COUNT(*)::int AS n FROM facts WHERE source_id = $1`,
+    [opts.id],
+  );
+  const factCount = factRows[0]?.n ?? 0;
+  const chunkRows = await engine.executeRaw<{ n: number }>(
+    `SELECT COUNT(*)::int AS n
+       FROM content_chunks
+       JOIN pages ON pages.id = content_chunks.page_id
+      WHERE pages.source_id = $1`,
+    [opts.id],
+  );
+  const chunkCount = chunkRows[0]?.n ?? 0;
+
   // Confirmation gate (caller should usually have already shown the impact
   // preview from destructive-guard.ts).
-  if (pageCount > 0 && !opts.confirmDestructive && !opts.yes) {
+  if ((pageCount > 0 || factCount > 0 || chunkCount > 0) && !opts.confirmDestructive && !opts.yes) {
     throw new SourceOpError(
       'protected_id', // closest existing code; caller can frame as "needs confirm"
-      `Refusing to remove source "${opts.id}" with ${pageCount} pages without --confirm-destructive or --yes.`,
+      `Refusing to remove source "${opts.id}" with ${pageCount} pages, ${factCount} facts, and ${chunkCount} chunks without --confirm-destructive or --yes.`,
     );
   }
 
