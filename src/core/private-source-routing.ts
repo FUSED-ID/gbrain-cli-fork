@@ -173,7 +173,6 @@ function policyFromSource(
   const database = databasePolicyFromSource(source);
   const disk = diskPolicyFromSource(source);
   if (database && source.local_path) {
-    if (!existsSync(source.local_path)) return database;
     const mismatch = !disk
       || database.excludedPeople !== disk.excludedPeople
       || database.filingRules !== disk.filingRules;
