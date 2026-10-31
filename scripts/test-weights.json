@@ -3205,6 +3205,7 @@
   "test/scripts/postgres-lane-coverage.test.ts": 5952,
   "test/scripts/postgres-unit-arms.test.ts": 4709,
   "test/scripts/postinstall-standalone.test.ts": 5,
+  "test/scripts/postinstall-path-gbrain.test.ts": 5,
   "test/scripts/pregate-remote-gate.test.ts": 194,
   "test/scripts/regen-all.test.ts": 6,
   "test/scripts/release-gate.test.ts": 10,

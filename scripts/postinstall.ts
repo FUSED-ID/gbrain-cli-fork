@@ -20,6 +20,8 @@
 // to quote). It NEVER fails the install: every path exits 0.
 
 import { which } from 'bun';
+import { realpathSync } from 'node:fs';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 // Repo modules load dynamically inside try/catch: a static import of a file
 // that is not on disk (a Docker dependency layer, a partial checkout) would
@@ -61,6 +63,32 @@ const bin = which('gbrain');
 if (!bin) {
   // Fresh clone / global install where gbrain isn't on PATH yet: skip cleanly.
   console.error(HINT);
+  process.exit(0);
+}
+
+// Refuse a gbrain that does not run from this install tree. On this estate
+// /opt/homebrew/bin/gbrain is a wrapper that execs the live tree against
+// production, so installing in a scratch or candidate tree used to migrate
+// production. The gbrain found on PATH must resolve (after symlinks) inside the
+// tree that holds this script, or the operator must opt in explicitly.
+const TRUST_PATH_GBRAIN = process.env.GBRAIN_POSTINSTALL_TRUST_PATH_GBRAIN === '1';
+
+function resolvesInsideInstallTree(binPath: string): boolean {
+  try {
+    const root = realpathSync(resolve(import.meta.dir, '..'));
+    const rel = relative(root, realpathSync(binPath));
+    return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+  } catch {
+    return false;
+  }
+}
+
+if (!TRUST_PATH_GBRAIN && !resolvesInsideInstallTree(bin)) {
+  console.error(
+    `[gbrain] postinstall skipped: the gbrain on PATH (${bin}) does not run from this install tree. ` +
+      'Migrations run only through a gbrain inside the tree being installed. ' +
+      'Set GBRAIN_POSTINSTALL_TRUST_PATH_GBRAIN=1 to allow a gbrain from elsewhere.',
+  );
   process.exit(0);
 }
 
