@@ -306,7 +306,7 @@ describe('#7619 split rules', () => {
       'src/commands/import.ts': ['import'],
       'src/commands/integrity.ts': ['integrity check'],
       'src/commands/jobs/shared.ts': ['jobs supervisor', 'jobs work'],
-      'src/commands/jobs/supervisor.ts': ['jobs supervisor'], // --job-isolation= via shared.ts; --only= refused at supervisor.ts:64
+      'src/commands/jobs/supervisor.ts': 'refusal-only reader: supervisor.ts:64 reads --only= so it can refuse it and never applies it, so no key (--job-isolation= is read via shared.ts, the jobs supervisor owner)',
       'src/commands/jobs/watch.ts': ['jobs watch'],
       'src/commands/lint.ts': ['lint'],
       'src/commands/migrate-graduation.ts': ['migrate'],
