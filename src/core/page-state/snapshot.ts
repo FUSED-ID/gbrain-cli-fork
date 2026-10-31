@@ -53,17 +53,21 @@ export async function overlayCanonicalBodies(query: ReadQuery, body: string, tim
 
 /**
  * Whether a page contracts its world cells to private: a derivation-private page, or one whose source is not
- * world-federated (the same literal `federated: true` rule resolveSourceVisibility applies). Reads the source row,
- * so callers ask only for a page that has withdrawals.
+ * world-federated (the same literal `federated: true` rule resolveSourceVisibility applies). `config` is the
+ * sources.config value read inside the snapshot statement (null when that source row is absent). A missing or
+ * unreadable config contracts. Callers pass it only for a page that has withdrawals.
  */
-export async function pageContractsWorld(query: ReadQuery, page: { source_id: string; type?: string | null; frontmatter?: unknown }): Promise<boolean> {
+export function pageContractsWorld(page: { type?: string | null; frontmatter?: unknown }, config: unknown): boolean {
   if (isDerivationPrivate(page)) return true;
-  const [source] = await query<{ config: unknown }>('SELECT config FROM sources WHERE id=$1', [page.source_id]);
-  return parseSourceConfig(source?.config).federated !== true;
+  try {
+    return parseSourceConfig(config).federated !== true;
+  } catch {
+    return true;
+  }
 }
 
 /**
- * One MVCC statement binds content, tags, identity and withdrawals to one revision.
+ * One MVCC statement binds content, tags, identity, source config and withdrawals to one revision.
  * The normalized body and timeline fingerprints feed only the withdrawal overlay,
  * so the statement computes them only for a page with withdrawals (as the batch
  * reader in page-snapshot-batch.ts does): per-line regexp over the whole body
@@ -114,6 +118,7 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
     ORDER BY (p.slug=$1) DESC, (p.source_id=$${params.length}) DESC, p.source_id ASC LIMIT 1
   ) SELECT p.*,
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
+    (SELECT s.config FROM sources s WHERE s.id=p.source_id) AS source_config,
     COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags,
     wd.snapshot_withdrawals, wd.snapshot_global_purges,
     CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)
@@ -140,7 +145,7 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
   const withdrawals = [...row.snapshot_withdrawals as PageWithdrawal[], ...await resolveGlobalPurges(query, page.source_id, globalPurges,
     [String(row.fingerprint_body ?? ''), String(row.fingerprint_timeline ?? '')])];
   if (!isSegmentedPage(page)) {
-    const contracts = withdrawals.length ? await pageContractsWorld(query, page) : true;
+    const contracts = withdrawals.length ? pageContractsWorld(page, row.source_config) : true;
     page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, String(row.fingerprint_body ?? ''), withdrawals, contracts);
     page.timeline = overlayWithdrawalBody(page.timeline, String(row.fingerprint_timeline ?? ''), withdrawals, contracts);
   }
