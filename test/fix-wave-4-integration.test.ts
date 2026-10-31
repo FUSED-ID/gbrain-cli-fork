@@ -110,7 +110,7 @@ const people = (list: () => Array<Record<string, unknown>>) => async (url: strin
   if (url.includes('/settings/sendAs')) return json({ sendAs: [] });
   return json({ connections: new URL(url).searchParams.has('syncToken') ? [] : list(), nextSyncToken: 'contacts-stable' });
 };
-const googleContacts = { kind: 'google', g_account: 'owner@example.invalid', g_services: 'contacts', g_access: 'env', g_token_env: 'CONNECTOR_TEST_TOKEN' };
+const googleContacts = { kind: 'google', g_account: 'owner@example.invalid', g_services: 'contacts', g_access: 'env', g_token_env: 'CONNECTOR_TEST_TOKEN', federated: true };
 
 test('X4: the v0.32.2 facts adoption on a connector page publishes above the timeline; connector re-renders carry the fence without a refusal and converge', async () => withEnv(env, async () => {
   for (const engine of engines) {
