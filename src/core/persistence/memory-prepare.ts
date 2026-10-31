@@ -80,10 +80,14 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const observedRevision = snapshot?.revision ?? null;
   const excludePrivate = await resolveExcludePrivatePages(engine, row.authority.remote === true);
   await assertFactNotWithdrawn(engine, row.source_id, input, { excludePrivate });
-  // astra-7: the requested identity, when a floor contracted it, survives through the intent.
-  if (typeof p.requested_visibility === 'string' && p.requested_visibility !== input.visibility) {
+  // astra-7: the admitted identity, when a floor contracted it, survives through publication.
+  // Admission stores requested_visibility only when it applied the floor itself. A world
+  // request admitted on a public page has none, so the admitted visibility is the one on
+  // the intent, or world when the caller left it unset.
+  const admittedVisibility = (typeof p.requested_visibility === 'string' ? p.requested_visibility : (p.visibility ?? 'world')) as SingleFactIntent['visibility'];
+  if (admittedVisibility !== input.visibility) {
     await assertFactNotWithdrawn(engine, row.source_id,
-      { ...input, visibility: p.requested_visibility as SingleFactIntent['visibility'] }, { excludePrivate });
+      { ...input, visibility: admittedVisibility }, { excludePrivate });
   }
   signal?.throwIfAborted();
   const embeddingConfigSql = "SELECT key,value FROM config WHERE key IN ('embedding_model','embedding_dimensions') ORDER BY key";
@@ -118,9 +122,9 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const contestedOld = contested ? decision.candidate! : lexicalOld;
   const validate = async (tx: BrainEngine) => {
     await assertFactNotWithdrawn(tx, row.source_id, input, { excludePrivate });
-    if (typeof p.requested_visibility === 'string' && p.requested_visibility !== input.visibility) {
+    if (admittedVisibility !== input.visibility) {
       await assertFactNotWithdrawn(tx, row.source_id,
-        { ...input, visibility: p.requested_visibility as SingleFactIntent['visibility'] }, { excludePrivate });
+        { ...input, visibility: admittedVisibility }, { excludePrivate });
     }
     if (embedding && JSON.stringify(await tx.executeRaw(`${embeddingConfigSql} FOR SHARE`)) !== observedEmbeddingConfig) conflict(row);
     const current = await decide(tx, true);

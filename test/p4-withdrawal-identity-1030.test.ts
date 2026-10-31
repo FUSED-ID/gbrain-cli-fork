@@ -194,4 +194,50 @@ describe('P4 withdrawal identity when a floor forces world to private', () => {
       installFaultHook(undefined);
     }
   }, 60_000);
+
+  test('g a world remember admitted on a public federated page, the page then turned private, then a world withdrawal, refuses at publication', async () => {
+    const slug = 'notes/p4b-admitted-then-private';
+    const fact = 'the launch date moved to 2026-11-21';
+    await putPage(slug, 'world');
+    installFaultHook(async (point, detail) => {
+      if (point !== 'consumer:preparing' || detail.operation !== 'remember' || detail.sourceId !== SOURCE) return;
+      await putPage(slug, 'private');
+      await engine.executeRaw(
+        `INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash)
+         VALUES($1,'world',$2,gbrain_fact_fingerprint($3)) ON CONFLICT DO NOTHING`,
+        [SOURCE, slug, fact],
+      );
+    });
+    try {
+      const error = await remember(slug, fact).then(() => null, (caught: unknown) => caught);
+      expect(error).toMatchObject({ code: 'invalid_params', message: FACT_WITHDRAWN_MESSAGE });
+      expect(await active(fact)).toEqual([]);
+    } finally {
+      installFaultHook(undefined);
+    }
+  }, 60_000);
+
+  test('h a defaulted world remember contracted by a floor after admission refuses a world purge', async () => {
+    const slug = 'notes/p4b-defaulted-contracted-purge';
+    const fact = 'the launch review moved to 2026-12-09';
+    await engine.setConfig('facts.default_visibility', 'world');
+    await putPage(slug, 'world');
+    installFaultHook(async (point, detail) => {
+      if (point !== 'consumer:preparing' || detail.operation !== 'remember' || detail.sourceId !== SOURCE) return;
+      await putPage(slug, 'private');
+      await engine.executeRaw(
+        `INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,actor,reason)
+         VALUES($1,'world',$2,gbrain_fact_fingerprint($3),'fixture','regression') ON CONFLICT DO NOTHING`,
+        [SOURCE, slug, fact],
+      );
+    });
+    try {
+      const error = await rememberDefaulted(slug, fact).then(() => null, (caught: unknown) => caught);
+      expect(error).toMatchObject({ code: 'purged_content' });
+      expect(error instanceof Error && error.message.includes('purged_content')).toBe(true);
+      expect(await active(fact)).toEqual([]);
+    } finally {
+      installFaultHook(undefined);
+    }
+  }, 60_000);
 });
