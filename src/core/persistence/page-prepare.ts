@@ -523,6 +523,19 @@ async function assertStillSyncExcluded(tx: BrainEngine, row: WriteRequest, exclu
     `${excludedPath} was excluded from sync when the purge of ${row.slug} was prepared and is not any more, so nothing was purged. Run the purge again; it re-reads the exclusion.`, pageFix(row.source_id, row.slug));
 }
 
+/**
+ * Intent key for the one put_page path that tombstones the routed-away default
+ * copy of the same slug. delete_page's parameter schema does not declare it,
+ * and the delete_page handler drops it before admission. A remote authority
+ * never takes the branch.
+ */
+export const ROUTED_DEFAULT_TOMBSTONE_KEY = 'routed_default_tombstone';
+
+/** Params for that internal tombstone. Server code only; not an operation parameter. */
+export function routedDefaultTombstoneParams(slug: string, sourceId: string, expectedRevision: string): Record<string, unknown> {
+  return { slug, source_id: sourceId, expected_revision: expectedRevision, [ROUTED_DEFAULT_TOMBSTONE_KEY]: true };
+}
+
 /** The `delete_page` preparation: soft delete, or purge with its journal sweep (#6511) run under the preparation budget. */
 async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest, snapshot: PageSnapshot | null,
   options: { activePack?: ParseOpts['activePack']; clock?: ClaimPhaseClock; allowMissingFile?: boolean }): Promise<PreparedMutation> {
@@ -576,7 +589,13 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
       // #7311: the tombstone forgets the survivor's file, as an origin_twin page has, so its purge writes no deletion marker for it.
       if (preparedPurge && sharedRetention) return purgePageInTransaction(tx, row, { ...snapshot, page: { ...snapshot.page, source_path: null, source_uri: null } }, preparedPurge);
       if (preparedPurge) return purgePageInTransaction(tx, row, snapshot, preparedPurge);
-      if (!noop) { await tx.createVersion(row.slug, source); await tx.softDeletePage(row.slug, source); }
+      if (!noop) {
+        // No version row on the routed default-copy tombstone. createVersion is a content
+        // write and runs the private routing check, which refuses this default source.
+        // softDeletePage only sets deleted_at. This publication already runs inside the coordinator.
+        if (!(row.authority.remote === false && p[ROUTED_DEFAULT_TOMBSTONE_KEY] === true)) await tx.createVersion(row.slug, source);
+        await tx.softDeletePage(row.slug, source);
+      }
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop,
         recoverable_until: 'now + 72h via restore_page (remove immediately instead: gbrain delete <slug> --purge, local CLI only)' };
     } };

@@ -388,7 +388,16 @@ const put_page: Operation = {
     const result = await submitPageMutation(ctx, { operation: 'put_page', params: p })
       .then(funnelPassThrough('save'))
       .catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
-    if (route.routedFromSourceId) await ctx.engine.softDeletePage(p.slug as string, { sourceId: route.routedFromSourceId });
+    if (route.routedFromSourceId && typeof p.slug === 'string') {
+      const existing = await ctx.engine.readPageSnapshot(p.slug, { sourceId: route.routedFromSourceId, includeDeleted: true });
+      if (existing && existing.page.deleted_at == null) {
+        const { routedDefaultTombstoneParams } = await import('../persistence/page-prepare.ts');
+        await submitPageMutation(ctx, {
+          operation: 'delete_page',
+          params: routedDefaultTombstoneParams(p.slug, route.routedFromSourceId, existing.revision),
+        });
+      }
+    }
     return result;
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
@@ -452,6 +461,8 @@ const delete_page: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     const { pageMutationSource, submitPageMutation, validateMutationSlug } = await pageMutations();
+    const { ROUTED_DEFAULT_TOMBSTONE_KEY } = await import('../persistence/page-prepare.ts');
+    if (Object.hasOwn(p, ROUTED_DEFAULT_TOMBSTONE_KEY)) delete p[ROUTED_DEFAULT_TOMBSTONE_KEY];
     const sourceId = pageMutationSource(ctx, p, 'delete_page');
     assertPurgeParams(p, ctx.remote);
     if (ctx.dryRun) {
