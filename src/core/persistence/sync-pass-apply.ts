@@ -62,6 +62,7 @@ import { originConflictHold } from './sync-screen.ts';
 import { readSyncFile } from './sync-discovery.ts';
 import { frontmatterIdentity } from '../sync-rename-identity.ts';
 import { applyHeldDeletions, newHeldDeletionState, type HeldDeletionState } from './sync-held-deletions.ts';
+import { assertPrivateSourceStamp } from '../private-source-routing.ts';
 
 /** Legacy pages the sweep screens per pass after the incarnation's first full round (design §2.7, [estimated]). */
 export const PASS_LEGACY_SWEEP_MAX = 500;
@@ -390,12 +391,13 @@ async function passOriginConflict(engine: BrainEngine, level: ShadowLevel, entry
 interface RecordWrite { pageId: number; revision: string; record: Omit<SyncImportProvenance, 'recorded_at' | 'validated'> }
 
 /** The batched, fenced record write: a page whose revision moved since the round read it is left alone. Returns the pages written. */
-async function writeRecords(engine: BrainEngine, level: ShadowLevel, writes: RecordWrite[], recorded: Set<number>): Promise<Set<number>> {
+async function writeRecords(engine: BrainEngine, level: ShadowLevel, writes: RecordWrite[], recorded: Set<number>, privateSourceStamp?: string): Promise<Set<number>> {
   if (!writes.length) return new Set();
   // Noted before the transaction: a commit whose acknowledgement is lost still names the pass as the records' writer.
   for (const write of writes) recorded.add(write.pageId);
   return engine.transaction(async tx => {
     await assertDrainLease(tx, level.sourceId);
+    if (privateSourceStamp) await assertPrivateSourceStamp(tx, privateSourceStamp);
     const rows = await tx.executeRaw<{ id: number | string; revision: string }>('SELECT id, knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id=ANY($2::int[]) FOR SHARE',
       [level.sourceId, writes.map(write => write.pageId)]);
     const current = new Map(rows.map(row => [Number(row.id), row.revision]));
@@ -476,7 +478,7 @@ async function sweepSlice(engine: BrainEngine, level: ShadowLevel, slice: Shadow
       blob_oid: entry.state.level!, disk_blob_oid: entry.state.diskOid ?? entry.state.level!, revision: entry.revision!, parser: syncImportParserFor(path, level.pack), gbrain_version: VERSION,
       working: level.mode === 'working' } }];
   });
-  const written = await writeRecords(engine, level, writes, state.recorded);
+  const written = await writeRecords(engine, level, writes, state.recorded, verdicts.privateSourceStamp);
   state.swept.recorded += written.size;
   for (const entry of same) if (written.has(entry.pageId!)) settleAs(entry, { cls: 'matched', settled: true, action: 'none', classAction: 'none' });
 }

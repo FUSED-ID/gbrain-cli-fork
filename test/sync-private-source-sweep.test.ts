@@ -7,6 +7,10 @@ import { getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { withRegisteredLocalWriter } from '../src/core/persistence/identity.ts';
 import { readOnlySameContentScreen } from '../src/core/persistence/sync-convergence.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { sweepLegacy, newPassApplyState } from '../src/core/persistence/sync-pass-apply.ts';
+import { withDrainLease } from '../src/core/persistence/sync-lease.ts';
+import { readSyncImportProvenance } from '../src/core/persistence/sync-holds.ts';
+import { sha256 } from '../src/core/persistence/digest.ts';
 import type { ManagedSyncContext } from '../src/core/persistence/sync-discovery.ts';
 import type { ShadowLevel, ShadowPath } from '../src/core/persistence/sync-pass.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
@@ -17,47 +21,56 @@ const filing = '# filing rules\n';
 const page = '---\ntype: concept\ntitle: notes/alice\n---\n\nThe same body.\n';
 
 describe('private-source inventory during a legacy sweep slice', () => {
-  test('a policy change before screen preparation does not produce a shared-source match', async () => {
+  test('unchanged policy matches, but a policy flip before record publication does not match', async () => {
     await managedBrain(async ({ engine, root }) => {
       await performManagedSync(engine, { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true });
       const snapshot = await engine.readPageSnapshot('notes/alice', { sourceId: 'default' });
       expect(snapshot).not.toBeNull();
       const binding = await getWorktreeBinding(engine, 'default');
+      const sourceRoot = binding!.local_path ?? root;
       const [source] = await engine.executeRaw<{ incarnation: string; last_commit: string | null; config: Record<string, unknown> }>(
         'SELECT incarnation::text AS incarnation,last_commit,config FROM sources WHERE id=$1', ['default']);
-      const context: ManagedSyncContext = { binding: binding!, root, gitRoot: root, sourceId: 'default', incarnation: source!.incarnation,
+      const context: ManagedSyncContext = { binding: binding!, root: sourceRoot, gitRoot: sourceRoot, sourceId: 'default', incarnation: source!.incarnation,
         source: { last_commit: source!.last_commit, config: source!.config } };
       const entry = {
         path: 'notes/alice.md', slug: 'notes/alice', pageId: snapshot!.page.id, revision: snapshot!.revision,
-        state: { mode: 'working', level: 'working-level', present: true, dirty: null, diskOid: null, levelSha256: null, page: { live: true, revision: snapshot!.revision, originMatches: true } },
+        state: { mode: 'working', level: 'working-level', present: true, dirty: null, diskOid: null, levelSha256: sha256(Buffer.from(page)), page: { live: true, revision: snapshot!.revision, originMatches: true } },
         result: { cls: 'legacy_unverified', settled: false, action: 'import', classAction: 'owner' },
       } as unknown as ShadowPath;
-      const level = { sourceId: 'default', incarnation: source!.incarnation, root, gitRoot: root, mode: 'working', scope: '', slugMode: 'git-root',
+      const level = { sourceId: 'default', incarnation: source!.incarnation, root: sourceRoot, gitRoot: sourceRoot, mode: 'working', scope: '', slugMode: 'git-root',
         baselineCommit: null, head: 'working', kind: 'full', kindBlockers: [], full: true, paths: [entry] } as unknown as ShadowLevel;
-      let snapshotRead = false, flipped = false;
+      await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', ['sync-import-provenance', `default:${source!.incarnation}:${snapshot!.page.id}`]);
+      let flipped = false;
       const flip = async () => {
         if (flipped) return;
         flipped = true;
         writeFileSync(join(root, '..', 'private', '_excluded-people.md'), rules('notes/alice'));
         await engine.executeRaw('UPDATE sources SET config=jsonb_set(config,\'{private_routing,excluded_people_markdown}\',$2::jsonb) WHERE id=$1', ['lg-private', JSON.stringify(rules('notes/alice'))]);
       };
-      const wrapped = new Proxy(engine, { get(target, key) {
-        if (key === 'listAllSources') return async (...args: Parameters<NonNullable<BrainEngine['listAllSources']>>) => { const result = await target.listAllSources!(...args); snapshotRead = true; return result; };
-        if (key === 'getConfig') return async (...args: Parameters<BrainEngine['getConfig']>) => { const result = await target.getConfig(...args); if (snapshotRead) await flip(); return result; };
-        if (key === 'executeRaw') return async (...args: Parameters<BrainEngine['executeRaw']>) => {
-          const result = await target.executeRaw(...args);
-          if (typeof args[0] === 'string' && args[0].includes('SELECT id, config, local_path FROM sources ORDER BY')) snapshotRead = true;
-          return result;
-        };
-        const value = Reflect.get(target, key, target);
-        return typeof value === 'function' ? value.bind(target) : value;
-      } }) as BrainEngine;
-      const verdicts = await withRegisteredLocalWriter(engine, 'cli', async () => {
-        const screen = readOnlySameContentScreen(wrapped, context, { noEmbed: true, noExtract: true, noSchemaPack: true });
-        return screen(level, [entry]);
+      const screen = readOnlySameContentScreen(engine, context, { noEmbed: true, noExtract: true, noSchemaPack: true });
+      const unchanged = await withRegisteredLocalWriter(engine, 'cli', () => screen(level, [entry]));
+      expect(unchanged.get(entry.path)).toBe('same');
+
+      const flipAfterScreen = async (screenLevel: ShadowLevel, paths: ShadowPath[]) => {
+        const verdicts = await withRegisteredLocalWriter(engine, 'cli', () => screen(screenLevel, paths));
+        await flip();
+        return verdicts;
+      };
+      const state = newPassApplyState();
+      let refusal: unknown = null;
+      await withDrainLease(engine, 'default', { holder: { kind: 'cli', id: null } }, async () => {
+        try {
+          await sweepLegacy(engine, level, { passId: 'test-private-source-fence', observedAt: new Date().toISOString(), remote: false,
+            admission: 'normal', fullRound: true, obligations: {}, context, processingOptions: { noEmbed: true, noExtract: true, noSchemaPack: true },
+            screen: flipAfterScreen }, state);
+        } catch (error) {
+          refusal = error;
+        }
+        return {} as never;
       });
       expect(flipped).toBe(true);
-      expect(verdicts.get(entry.path)).toBe('unknown');
+      expect(await readSyncImportProvenance(engine, 'default', source!.incarnation, snapshot!.page.id)).toBeNull();
+      if (refusal) expect(refusal).toMatchObject({ message: 'private source inventory changed since screen; refusing publication' });
     }, { setup: async ({ engine, root }) => {
       const privateRoot = join(root, '..', 'private');
       mkdirSync(privateRoot, { recursive: true });

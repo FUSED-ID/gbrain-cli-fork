@@ -43,7 +43,8 @@ export const SCREEN_CAP = 200;
 export type ConvergenceClassKey = SyncClass | 'in_flight' | 'keep_db_pending' | 'deletes_withheld';
 export interface ConvergenceSample { path: string; slug?: string; reason: string; action: SyncClassAction }
 /** Screens drift paths: `same` (the import would change nothing), `differs`, or `unknown` (it could not run). */
-export type ConvergenceScreen = (level: ShadowLevel, paths: ShadowPath[]) => Promise<Map<string, 'same' | 'differs' | 'unknown'>>;
+export type ConvergenceVerdicts = Map<string, 'same' | 'differs' | 'unknown'> & { privateSourceStamp?: string };
+export type ConvergenceScreen = (level: ShadowLevel, paths: ShadowPath[]) => Promise<ConvergenceVerdicts>;
 
 export interface ConvergenceReceipt {
   schema: 'convergence/1'; dry_run: true; source_id: string; pass_id: null; kind: ShadowLevel['kind']; kind_blockers: string[];
@@ -201,9 +202,10 @@ export function readOnlySameContentScreen(engine: BrainEngine, context: ManagedS
   // One run for all of the screen's calls, so they share its Git top level (sync-prepare.ts `syncGitTopLevel`), read once.
   const runId = randomUUID();
   return async (level, paths) => {
-    const verdicts = new Map<string, 'same' | 'differs' | 'unknown'>();
+    const verdicts = new Map<string, 'same' | 'differs' | 'unknown'>() as ConvergenceVerdicts;
     const authority = await managedSyncAuthority(engine, context.sourceId, context.incarnation, context.root);
     const privateSourceSnapshot = await readPrivateSourceSnapshot(engine);
+    verdicts.privateSourceStamp = privateSourceSnapshot.stamp;
     const committed = level.mode === 'committed' ? await readBlobs(level.gitRoot, [...new Set(paths.map(entry => entry.state.level!).filter(Boolean))], 8 * 1024 * 1024) : new Map<string, Buffer>();
     const pages = importGroupReads(engine, paths.flatMap(entry => entry.slug ? [{ slug: entry.slug, source_id: level.sourceId }] : []), { reread: true });
     const relative = (entry: ShadowPath) => level.scope ? entry.path.slice(level.scope.length + 1) : entry.path;
