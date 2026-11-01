@@ -2,7 +2,9 @@
 // scripts/postinstall.ts
 //
 // Postinstall hook: after `bun install`, apply any pending schema migrations so
-// a freshly-installed gbrain is immediately usable. Wired via package.json
+// a freshly-installed gbrain is immediately usable. It runs them only through a
+// gbrain that resolves inside this tree, and defers when
+// GBRAIN_UPGRADE_OWNS_MIGRATIONS=1. Wired via package.json
 // ("postinstall": "bun run scripts/postinstall.ts") as a real Bun script rather
 // than an inline `node -e` one-liner.
 //
