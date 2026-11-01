@@ -64,68 +64,69 @@ async function waiverFixture(engine: BrainEngine, root: string) {
   return { cursor, pending, config, flip, head, provenance };
 }
 
-describe('private-source inventory during a legacy sweep slice', () => {
-  test('unchanged policy matches, but a policy flip before record publication does not match', async () => {
-    await managedBrain(async ({ engine, root }) => {
-      await performManagedSync(engine, { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true });
-      const snapshot = await engine.readPageSnapshot('notes/alice', { sourceId: 'default' });
-      expect(snapshot).not.toBeNull();
-      const binding = await getWorktreeBinding(engine, 'default');
-      const sourceRoot = binding!.local_path ?? root;
-      const [source] = await engine.executeRaw<{ incarnation: string; last_commit: string | null; config: Record<string, unknown> }>(
-        'SELECT incarnation::text AS incarnation,last_commit,config FROM sources WHERE id=$1', ['default']);
-      const context: ManagedSyncContext = { binding: binding!, root: sourceRoot, gitRoot: sourceRoot, sourceId: 'default', incarnation: source!.incarnation,
-        source: { last_commit: source!.last_commit, config: source!.config } };
-      const entry = {
-        path: 'notes/alice.md', slug: 'notes/alice', pageId: snapshot!.page.id, revision: snapshot!.revision,
-        state: { mode: 'working', level: 'working-level', present: true, dirty: null, diskOid: null, levelSha256: sha256(Buffer.from(page)), page: { live: true, revision: snapshot!.revision, originMatches: true } },
-        result: { cls: 'legacy_unverified', settled: false, action: 'import', classAction: 'owner' },
-      } as unknown as ShadowPath;
-      const level = { sourceId: 'default', incarnation: source!.incarnation, root: sourceRoot, gitRoot: sourceRoot, mode: 'working', scope: '', slugMode: 'git-root',
-        baselineCommit: null, head: 'working', kind: 'full', kindBlockers: [], full: true, paths: [entry] } as unknown as ShadowLevel;
-      await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', ['sync-import-provenance', `default:${source!.incarnation}:${snapshot!.page.id}`]);
-      let flipped = false;
-      const flip = async () => {
-        if (flipped) return;
-        flipped = true;
-        writeFileSync(join(root, '..', 'private', '_excluded-people.md'), rules('notes/alice'));
-        await engine.executeRaw('UPDATE sources SET config=jsonb_set(config,\'{private_routing,excluded_people_markdown}\',$2::jsonb) WHERE id=$1', ['lg-private', JSON.stringify(rules('notes/alice'))]);
-      };
-      const screen = readOnlySameContentScreen(engine, context, { noEmbed: true, noExtract: true, noSchemaPack: true });
-      const unchanged = await withRegisteredLocalWriter(engine, 'cli', () => screen(level, [entry]));
-      expect(unchanged.get(entry.path)).toBe('same');
+async function legacySweepFixture(engine: BrainEngine, root: string) {
+  await performManagedSync(engine, { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true });
+  const snapshot = await engine.readPageSnapshot('notes/alice', { sourceId: 'default' });
+  if (!snapshot) throw new Error('legacy sweep fixture did not publish its page');
+  const binding = await getWorktreeBinding(engine, 'default');
+  const sourceRoot = binding!.local_path ?? root;
+  const [source] = await engine.executeRaw<{ incarnation: string; last_commit: string | null; config: Record<string, unknown> }>(
+    'SELECT incarnation::text AS incarnation,last_commit,config FROM sources WHERE id=$1', ['default']);
+  const context: ManagedSyncContext = { binding: binding!, root: sourceRoot, gitRoot: sourceRoot, sourceId: 'default', incarnation: source!.incarnation,
+    source: { last_commit: source!.last_commit, config: source!.config } };
+  const entry = {
+    path: 'notes/alice.md', slug: 'notes/alice', pageId: snapshot.page.id, revision: snapshot.revision,
+    state: { mode: 'working', level: 'working-level', present: true, dirty: null, diskOid: null, levelSha256: sha256(Buffer.from(page)), page: { live: true, revision: snapshot.revision, originMatches: true } },
+    result: { cls: 'legacy_unverified', settled: false, action: 'import', classAction: 'owner' },
+  } as unknown as ShadowPath;
+  const level = { sourceId: 'default', incarnation: source!.incarnation, root: sourceRoot, gitRoot: sourceRoot, mode: 'working', scope: '', slugMode: 'git-root',
+    baselineCommit: null, head: 'working', kind: 'full', kindBlockers: [], full: true, paths: [entry] } as unknown as ShadowLevel;
+  await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', ['sync-import-provenance', `default:${source!.incarnation}:${snapshot.page.id}`]);
+  const flip = async () => {
+    writeFileSync(join(root, '..', 'private', '_excluded-people.md'), rules('notes/alice'));
+    await engine.executeRaw('UPDATE sources SET config=jsonb_set(config,\'{private_routing,excluded_people_markdown}\',$2::jsonb) WHERE id=$1', ['lg-private', JSON.stringify(rules('notes/alice'))]);
+  };
+  return { context, entry, level, incarnation: source!.incarnation, pageId: snapshot.page.id, flip };
+}
 
-      const flipAfterScreen = async (screenLevel: ShadowLevel, paths: ShadowPath[]) => {
-        const verdicts = await withRegisteredLocalWriter(engine, 'cli', () => screen(screenLevel, paths));
-        await flip();
-        return verdicts;
-      };
+describe('private-source inventory during a legacy sweep slice', () => {
+  test('unchanged policy records provenance', async () => {
+    await managedBrain(async ({ engine, root }) => {
+      const f = await legacySweepFixture(engine, root);
       const state = newPassApplyState();
-      let refusal: unknown = null;
       await withDrainLease(engine, 'default', { holder: { kind: 'cli', id: null } }, async () => {
-        try {
-          await sweepLegacy(engine, level, { passId: 'test-private-source-fence', observedAt: new Date().toISOString(), remote: false,
-            admission: 'normal', fullRound: true, obligations: {}, context, processingOptions: { noEmbed: true, noExtract: true, noSchemaPack: true },
-            screen: flipAfterScreen }, state);
-        } catch (error) {
-          refusal = error;
-        }
+        await sweepLegacy(engine, f.level, { passId: 'test-private-source-fence-control', observedAt: new Date().toISOString(), remote: false,
+          admission: 'normal', fullRound: true, obligations: {}, context: f.context, processingOptions: { noEmbed: true, noExtract: true, noSchemaPack: true },
+          screen: readOnlySameContentScreen(engine, f.context, { noEmbed: true, noExtract: true, noSchemaPack: true }) }, state);
         return {} as never;
       });
-      expect(flipped).toBe(true);
-      expect(await readSyncImportProvenance(engine, 'default', source!.incarnation, snapshot!.page.id)).toBeNull();
-      if (refusal) expect(refusal).toMatchObject({ message: 'private source inventory changed since screen; refusing publication' });
-    }, { setup: async ({ engine, root }) => {
-      const privateRoot = join(root, '..', 'private');
-      mkdirSync(privateRoot, { recursive: true });
-      writeFileSync(join(privateRoot, '_excluded-people.md'), rules('people/bob'));
-      writeFileSync(join(privateRoot, '_brain-filing-rules.md'), filing);
-      mkdirSync(join(root, 'notes'), { recursive: true });
-      writeFileSync(join(root, 'notes/alice.md'), page);
-      git(root, 'init', '-q'); git(root, 'add', '-A'); git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'alice');
-      await engine.executeRaw(`UPDATE sources SET config=jsonb_set(jsonb_set(COALESCE(config,'{}'::jsonb),'{federated}','true'::jsonb),'{facts_visibility}','"world"'::jsonb) WHERE id='default'`);
-      await engine.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES('lg-private','LG private',NULL,jsonb_build_object('private_routing',jsonb_build_object('excluded_people_markdown',$1::text,'filing_rules_markdown',$2::text)))`, [rules('people/bob'), filing]);
-    } });
+      expect(await readSyncImportProvenance(engine, 'default', f.incarnation, f.pageId)).not.toBeNull();
+    }, { setup: async ({ engine, root }) => setupPrivateWaiver(engine, root) });
+  }, 180_000);
+
+  test('policy flip before record publication refuses without advancing sweep progress', async () => {
+    await managedBrain(async ({ engine, root }) => {
+      const f = await legacySweepFixture(engine, root);
+      const state = newPassApplyState();
+      const obligations = {};
+      let sweptProgress = 0;
+      const flipAfterScreen = async (screenLevel: ShadowLevel, paths: ShadowPath[]) => {
+        const verdicts = await withRegisteredLocalWriter(engine, 'cli', () => readOnlySameContentScreen(engine, f.context, { noEmbed: true, noExtract: true, noSchemaPack: true })(screenLevel, paths));
+        await f.flip();
+        return verdicts;
+      };
+      await withDrainLease(engine, 'default', { holder: { kind: 'cli', id: null } }, async () => {
+        await expect(sweepLegacy(engine, f.level, { passId: 'test-private-source-fence-refusal', observedAt: new Date().toISOString(), remote: false,
+          admission: 'normal', fullRound: true, obligations, context: f.context, processingOptions: { noEmbed: true, noExtract: true, noSchemaPack: true },
+          screen: flipAfterScreen, onSwept: async () => { sweptProgress++; } }, state))
+          .rejects.toThrow('private source inventory changed since screen; refusing publication');
+        return {} as never;
+      });
+      expect(await readSyncImportProvenance(engine, 'default', f.incarnation, f.pageId)).toBeNull();
+      expect(sweptProgress).toBe(0);
+      expect(obligations).toEqual({});
+      expect(state.swept.recorded).toBe(0);
+    }, { setup: async ({ engine, root }) => setupPrivateWaiver(engine, root) });
   }, 180_000);
 });
 

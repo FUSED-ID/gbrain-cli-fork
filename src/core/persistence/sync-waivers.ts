@@ -378,7 +378,7 @@ function softDeletedAt(snapshot: Awaited<ReturnType<BrainEngine['readPageSnapsho
  * nothing is waived, and a cancelled run propagates.
  */
 export async function unchangedSyncImport(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig, signal?: AbortSignal,
-  frozenSnapshot?: PageSnapshot | null): Promise<Pick<NoopWaiver, 'kernel' | 'provenance'> | null> {
+  frozenSnapshot?: PageSnapshot | null): Promise<Pick<NoopWaiver, 'kernel' | 'provenance' | 'privateSourceStamp'> | null> {
   const intent = pending.intent;
   if (intent.kind !== 'managed_sync_import' || intent.renameFrom || pending.pageId === null || typeof intent.path !== 'string' || typeof intent.content !== 'string') return null;
   // #6529: an image's preparation is provider work; its hash no-op is decided under the admitted request instead.
@@ -387,12 +387,14 @@ export async function unchangedSyncImport(engine: BrainEngine, cursor: WaiverCur
     const snapshot = frozenSnapshot !== undefined ? frozenSnapshot : await engine.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
     const row = screeningRequest({ source_id: cursor.sourceId, source_incarnation: cursor.incarnation, slug: pending.slug, page_id: pending.pageId,
       worktree_id: cursor.binding.worktree_id, authority: cursor.authority.writer, intent, request_id: pending.requestId });
-    const privateSourceSnapshot = await readPrivateSourceSnapshot(engine);
     // #6278 (1.4): the clock carries the budget, so the preparation's lock-prone reads end on the server at it (boundedReads).
     const budgetMs = await syncPreparationBudgetMs(engine);
     // GBRA-75 wave 9: the screen's bounded reads share one transaction (withBoundedReadSession), each still bounded on the server.
-    const prepared = await withBoundedReadSession(engine, session =>
-      raceSyncBudget(prepareManagedSyncMutation(session, row, config, startClaimPhase(Date.now(), undefined, budgetMs), { unsaved: true, privateSourceSnapshot }), budgetMs, signal));
+    const prepared = await withBoundedReadSession(engine, session => raceSyncBudget((async () => {
+      const clock = startClaimPhase(Date.now(), signal, budgetMs);
+      const privateSourceSnapshot = await readPrivateSourceSnapshot(session);
+      return prepareManagedSyncMutation(session, row, config, clock, { unsaved: true, privateSourceSnapshot });
+    })(), budgetMs, signal));
     if (prepared.file || prepared.target === 'skill_bundle') return null;
     const file = { root: cursor.root, path: join(cursor.root, intent.path), content: intent.content };
     const inspected = await inspectUnchanged(engine, { prepared: { ...prepared, target: 'page', file }, snapshot, sourcePath: intent.sourcePath, databaseOnly: false,
