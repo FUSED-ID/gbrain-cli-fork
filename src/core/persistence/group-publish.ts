@@ -83,6 +83,7 @@ import { withScreeningPaths } from './screening-paths.ts';
 import { publicationBeliefOptions, withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { PAGE_CHANGED_DURING_PREPARATION_MESSAGE } from './verb-errors.ts';
+import { assertPrivateSourceStamp } from '../private-source-routing.ts';
 
 /** A `put_pages` or managed import group publishes at most this many pages per transaction, so one commit stays a few seconds long. */
 export const PAGE_BATCH_GROUP_MAX = 8;
@@ -327,6 +328,12 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
       const keys = rows.flatMap((row, i) => [{ sourceId: row.source_id, slug: row.slug, incarnation: row.source_incarnation },
         ...(prepared[i]!.additionalPageKeys ?? []).map(key => key.sourceId === row.source_id ? { ...key, incarnation: row.source_incarnation } : key)]);
       const ready = pipelined(tx, [
+        () => {
+          const stamps = [...new Set(prepared.map(member => member.privateSourceStamp).filter((stamp): stamp is string => !!stamp))];
+          return stamps.length ? assertPrivateSourceStamp(tx, stamps[0]!).then(() => {
+            if (stamps.length > 1 && stamps.some(stamp => stamp !== stamps[0])) throw new Error('group carries different private source inventories');
+          }) : Promise.resolve();
+        },
         () => declarePublication(tx, opened),
         () => guardOwnership(tx, head, hostId),
         // A published file needs recovery even if this transaction rolls back; claims are verified first.

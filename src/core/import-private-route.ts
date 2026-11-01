@@ -2,7 +2,7 @@ import type { BrainEngine } from './engine.ts';
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
 import { sanitizeText } from './batch-rows.ts';
 import type { ParsedMarkdown } from './markdown.ts';
-import { resolvePrivateWriteSource } from './private-source-routing.ts';
+import { resolvePrivateWriteSource, type PrivateSourceSnapshot } from './private-source-routing.ts';
 import { assertPageWriteThroughReady } from './write-through.ts';
 
 export async function routeMarkdownImport(
@@ -12,7 +12,8 @@ export async function routeMarkdownImport(
   content: string,
   slug: string,
   sourceId: string | undefined,
-): Promise<{ sourceId: string | undefined; routedFromSourceId: string | null }> {
+  sourceSnapshot?: PrivateSourceSnapshot,
+): Promise<{ sourceId: string | undefined; routedFromSourceId: string | null; privateSourceStamp?: string }> {
   if (!prepare) await assertUnmanagedCanonicalWriter(engine, 'direct content import', { sourceId: sourceId ?? 'default' });
   // Canonicalize only free-prose fields before protected-fence parsing, hidden
   // row merging, hashing and indexing. Frontmatter identities stay untouched.
@@ -27,7 +28,7 @@ export async function routeMarkdownImport(
     content,
     entityType: parsed.type,
     entityName: parsed.title,
-  });
+  }, { sourceSnapshot });
   const routedFromSourceId = route.routed && route.sourceId !== requestedSourceId
     ? requestedSourceId
     : null;
@@ -35,5 +36,5 @@ export async function routeMarkdownImport(
   if (routedFromSourceId && sourceId) {
     await assertPageWriteThroughReady(engine, slug, sourceId);
   }
-  return { sourceId, routedFromSourceId };
+  return { sourceId, routedFromSourceId, ...(sourceSnapshot ? { privateSourceStamp: sourceSnapshot.stamp } : {}) };
 }

@@ -21,6 +21,8 @@ export interface PreparedContentImport {
   slug: string;
   parsedPage: ParsedPage;
   observedRevision: string | null;
+  /** Source inventory stamp captured by the read-only sync screen. */
+  privateSourceStamp?: string;
   noop: boolean;
   /** The imported content hash, when apply writes the page (`coordinated` callers verify their read-back against it). */
   contentHash?: string;

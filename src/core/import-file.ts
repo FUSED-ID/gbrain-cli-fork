@@ -1,5 +1,6 @@
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
 import { routeMarkdownImport } from './import-private-route.ts';
+import type { PrivateSourceSnapshot } from './private-source-routing.ts';
 import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
 import { maintenanceBeliefTransaction } from './belief/writers.ts';
 import { withUnmanagedBeliefs } from './belief/projection-point.ts';
@@ -348,6 +349,8 @@ export async function importFromContent(
     writeGate?: WriteGateInput;
     beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>;
     onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void;
+    /** One per-slice source inventory used by the read-only convergence screen. */
+    privateSourceSnapshot?: PrivateSourceSnapshot;
   } & ImportFenceOptions = {},
 ): Promise<ImportResult> {
   // Normalize BEFORE any tx write: putPage lowercases via validateSlug but
@@ -371,9 +374,12 @@ export async function importFromContent(
   }
   const parsed = (screen as { parsed: ParsedMarkdown }).parsed;
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct content import', { sourceId: sourceId ?? 'default' });
-  const routedImport = await routeMarkdownImport(engine, opts.prepare, parsed, content, slug, sourceId);
+  const routedImport = await routeMarkdownImport(engine, opts.prepare, parsed, content, slug, sourceId, opts.privateSourceSnapshot);
   sourceId = routedImport.sourceId;
   const routedFromSourceId = routedImport.routedFromSourceId;
+  const prepareWithStamp = opts.prepare && routedImport.privateSourceStamp
+    ? (value: import('./persistence/prepared-import.ts').PreparedContentImport) => opts.prepare!({ ...value, privateSourceStamp: routedImport.privateSourceStamp })
+    : opts.prepare;
   // Body fields are sanitized here, where this file already owns the reviewed reader. The router only needs the title.
   parsed.compiled_truth = sanitizeText(parsed.compiled_truth);
   parsed.timeline = sanitizeText(parsed.timeline);
@@ -573,7 +579,7 @@ export async function importFromContent(
     const reseal = await projectionBelowSafeFence(engine, existing.id);
     if (opts.prepare) {
       const result: ImportResult = { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...fences.fields };
-      return opts.prepare({ slug, parsedPage, observedRevision: (existing as typeof existing & { knowledge_revision?: string }).knowledge_revision ?? null,
+      return prepareWithStamp!({ slug, parsedPage, observedRevision: (existing as typeof existing & { knowledge_revision?: string }).knowledge_revision ?? null,
         noop: true, result, validate: async () => {},
         apply: async tx => { if (reseal) await queuePageProjection(tx, sourceId ?? 'default', slug, 'safe_chunk_reseal'); } });
     }
@@ -607,7 +613,7 @@ export async function importFromContent(
   if (identity.kind === 'duplicate') {
     if (opts.prepare) {
       const result: ImportResult = { slug: identity.dupSlug, status: 'skipped', chunks: 0, parsedPage, ...fences.fields };
-      return opts.prepare({ slug: identity.dupSlug, parsedPage, observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
+      return prepareWithStamp!({ slug: identity.dupSlug, parsedPage, observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
         noop: true, result, validate: async () => {}, apply: async () => {} });
     }
     process.stderr.write(
@@ -887,7 +893,7 @@ export async function importFromContent(
     if (deferChunks) return { pageId, sealed: false, projectionPending: true as const };
     return { pageId, sealed: !opts.coordinated && !opts.beforeCommit, ...(deferSeal ? { chunkerSeal: MARKDOWN_CHUNKER_VERSION } : {}) };
   };
-  if (opts.prepare) return opts.prepare({
+  if (opts.prepare) return prepareWithStamp!({
     slug, parsedPage, observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
     noop: false, contentHash: hash, result: { slug, status: 'imported', chunks: segmented ? segmented.prepared.rows.chunks : chunks.length, parsedPage,
       ...(pageQuarantined ? { quarantined: true } : {}), ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}), ...(disposition.gate ? { gate: disposition.gate } : {}), ...fences.fields },

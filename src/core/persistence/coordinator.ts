@@ -58,6 +58,8 @@ import { commitThroughDoor, doorCommitLanded, doorMarker, replayAfterDoorCommit,
 import { assertNoPrivateCommit, declareStrictPublication } from './git-declared.ts';
 
 interface PreparedMutationBase {
+  /** Source inventory stamp captured by the read-only sync screen. */
+  privateSourceStamp?: string;
   sourceExclusive?: boolean;
   /** Always-loaded core writes: source rows locked FOR UPDATE in id order (core-guard.ts lockCoreSources). */
   exclusiveSources?: readonly string[];

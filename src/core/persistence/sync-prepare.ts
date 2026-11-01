@@ -13,6 +13,7 @@ import type { RegistryCode } from '../error-registry.ts';
 import { ownerGateInput, ownerImportTrust, ownerPageTrust } from '../trust/channel.ts';
 import { matchTrustAllowRule, type TrustAllowRule } from '../trust/allow-rules.ts';
 import { importFromContent, importCodeFile, verifyPageReadable } from '../import-file.ts';
+import type { PrivateSourceSnapshot } from '../private-source-routing.ts';
 import { screenImportContent, screenNormalized, type ContentRefusal, type ImportScreenResult, type ImportSanityConfig } from '../import-screen.ts';
 import { ContentSanityBlockError } from '../content-sanity.ts';
 import { parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, type ParseOpts } from '../markdown.ts';
@@ -655,7 +656,7 @@ export type SyncPreparedMutation = PreparedMutation & { importProvenance?: SyncI
  * it into its own publication (`foldPassCheckpoint`).
  */
 export async function prepareManagedSyncMutation(unbounded: BrainEngine, row: WriteRequest, config: GBrainConfig, clock?: ClaimPhaseClock,
-  screening?: { unsaved: true }): Promise<SyncPreparedMutation> {
+  screening?: { unsaved: true; privateSourceSnapshot?: PrivateSourceSnapshot }): Promise<SyncPreparedMutation> {
   const at: { root?: string } = {};
   const prepared = await prepareSyncMutation(unbounded, row, config, clock, screening, at);
   const p = row.intent as SyncIntent | null;
@@ -669,7 +670,7 @@ async function syncWriteState(tx: BrainEngine, row: WriteRequest, page: Paramete
 }
 
 async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _config: GBrainConfig, clock: ClaimPhaseClock | undefined,
-  screening: { unsaved: true } | undefined, at: { root?: string }): Promise<SyncPreparedMutation> {
+  screening: { unsaved: true; privateSourceSnapshot?: PrivateSourceSnapshot } | undefined, at: { root?: string }): Promise<SyncPreparedMutation> {
   const engine = boundedReads(unbounded, clock);
   const p = row.intent as SyncIntent | null;
   if (!p || !['managed_sync_import', 'managed_sync_delete', 'managed_sync_checkpoint'].includes(p.kind)) throw syncPublicationRefusal('invalid_params', 'Unsupported internal sync intent.', row, p,
@@ -861,6 +862,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
   enterClaimStep(clock, 'import_content', undefined, 'db');
   // #6188: the import reuses this screen's fence verdict for the same bytes (one fence scan per file at prepare).
   const importOptions = { ...source, noEmbed: true, remote: row.authority.remote, preserveGateMarkers: true, activePack, coordinated: true, fences: 'coordinated' as const, boundedChunkWrites: true as const, writeGate: await ownerGateInput(engine, row, parsedInput.frontmatter, p.sourcePath),
+    ...(screening?.privateSourceSnapshot ? { privateSourceSnapshot: screening.privateSourceSnapshot } : {}),
     ...(importContent === p.content && screen.status === 'importable' ? { fenceScreen: screen.fences ?? null } : {}),
     filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true,
     segmentedOwner: { kind: 'sync' as const, principalKind: row.principal_kind, principalId: row.principal_id, baseRevision: base?.revision ?? null } };
@@ -907,6 +909,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
   // afterCommit follows the import that published: a rename publishes its re-preparation at the new slug.
   let published = ready;
   const preparedImport: SyncPreparedMutation = { observedRevision: snapshot?.revision ?? null, trust: await ownerImportTrust(engine, row, ready.parsedPage.frontmatter, p.sourcePath), importProvenance,
+    ...(ready.privateSourceStamp ? { privateSourceStamp: ready.privateSourceStamp } : {}),
     // Tells the #5470 screen the content is unchanged; publication still queues its effects.
     contentUnchanged: ready.noop && !moved && !writeback,
     pageUnchanged: ready.noop && !moved,

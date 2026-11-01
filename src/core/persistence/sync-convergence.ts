@@ -33,6 +33,7 @@ import { importGroupReads, sliceReads } from './import-reads.ts';
 import { PAGE_PURGE_TOMBSTONES_SQL } from './page-purge.ts';
 import { WORKTREE_BINDING_SQL } from './ownership.ts';
 import { SOURCE_TRUST_CONFIG_SQL } from '../trust/channel.ts';
+import { readPrivateSourceSnapshot } from '../private-source-routing.ts';
 
 /** keep_db DB-wins writes one pass admits (design v3.2 §4, [estimated]); the rest are `keep_db_pending`. */
 export const KEEP_DB_PASS_CAP = 200;
@@ -202,6 +203,7 @@ export function readOnlySameContentScreen(engine: BrainEngine, context: ManagedS
   return async (level, paths) => {
     const verdicts = new Map<string, 'same' | 'differs' | 'unknown'>();
     const authority = await managedSyncAuthority(engine, context.sourceId, context.incarnation, context.root);
+    const privateSourceSnapshot = await readPrivateSourceSnapshot(engine);
     const committed = level.mode === 'committed' ? await readBlobs(level.gitRoot, [...new Set(paths.map(entry => entry.state.level!).filter(Boolean))], 8 * 1024 * 1024) : new Map<string, Buffer>();
     const pages = importGroupReads(engine, paths.flatMap(entry => entry.slug ? [{ slug: entry.slug, source_id: level.sourceId }] : []), { reread: true });
     const relative = (entry: ShadowPath) => level.scope ? entry.path.slice(level.scope.length + 1) : entry.path;
@@ -224,7 +226,7 @@ export function readOnlySameContentScreen(engine: BrainEngine, context: ManagedS
           processingOptions, ownerEpoch: String(context.binding.owner_epoch), syncAuthority: authority, cursorKey: `convergence-shadow:${level.sourceId}`, runId,
           slugMode: level.slugMode, index: 0, total: 1, from: level.baselineCommit, target: level.head, working: level.mode === 'working' };
         const prepared = await prepareManagedSyncMutation(reads, screeningRequest({ source_id: level.sourceId, source_incarnation: level.incarnation, slug: entry.slug,
-          page_id: entry.pageId, worktree_id: context.binding.worktree_id, authority: authority.writer, intent }), { engine: engine.kind } as never, undefined, { unsaved: true });
+          page_id: entry.pageId, worktree_id: context.binding.worktree_id, authority: authority.writer, intent }), { engine: engine.kind } as never, undefined, { unsaved: true, privateSourceSnapshot });
         verdicts.set(entry.path, (prepared.contentUnchanged === true || prepared.noop === true) && !prepared.file && prepared.observedRevision === entry.revision ? 'same' : 'differs');
       } catch {
         verdicts.set(entry.path, 'unknown');

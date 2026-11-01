@@ -11,6 +11,7 @@ import type { BrainEngine } from './engine.ts';
 import { gbrainPath } from './config.ts';
 import { parseSourceConfig } from './sources-load.ts';
 import { isPersonSlug } from './slug-namespace.ts';
+import { digest } from './persistence/digest.ts';
 
 const DEFAULT_SOURCE_ID = 'default';
 const PRIVATE_SOURCE_ID = 'lg-private';
@@ -26,6 +27,9 @@ export interface PrivateWriteRouteInput {
   entityName?: string;
   entityType?: string;
 }
+
+export interface PrivateSourceRow { id: string; config: unknown; local_path: string | null }
+export interface PrivateSourceSnapshot { sources: PrivateSourceRow[]; stamp: string }
 
 export interface PrivateWriteRoute {
   sourceId: string;
@@ -202,7 +206,7 @@ async function configuredPrivateSource(engine: BrainEngine): Promise<string | nu
   return null;
 }
 
-async function listSources(engine: BrainEngine): Promise<Array<{ id: string; config: unknown; local_path: string | null }>> {
+async function listSources(engine: BrainEngine): Promise<PrivateSourceRow[]> {
   if (typeof engine.listAllSources === 'function') {
     const listed = await engine.listAllSources({ includeArchived: true });
     if (Array.isArray(listed)) return listed;
@@ -217,9 +221,7 @@ async function listSources(engine: BrainEngine): Promise<Array<{ id: string; con
   return fallback;
 }
 
-async function orderedSources(engine: BrainEngine): Promise<Array<{ id: string; config: unknown; local_path: string | null }>> {
-  const sources = await listSources(engine);
-  const configured = await configuredPrivateSource(engine);
+function orderSources(sources: PrivateSourceRow[], configured: string | null): PrivateSourceRow[] {
   return [
     ...(configured ? sources.filter(s => s.id === configured) : []),
     ...sources.filter(s => s.id === PRIVATE_SOURCE_ID),
@@ -227,8 +229,23 @@ async function orderedSources(engine: BrainEngine): Promise<Array<{ id: string; 
   ];
 }
 
-async function findPrivateSource(engine: BrainEngine): Promise<{ id: string; config: unknown; local_path: string | null } | null> {
-  const sources = await orderedSources(engine);
+function sourceInventoryStamp(sources: PrivateSourceRow[]): string {
+  return digest([...sources].sort((a, b) => a.id === 'default' ? -1 : b.id === 'default' ? 1 : a.id.localeCompare(b.id))
+    .map(source => ({ id: source.id, config: source.config, local_path: source.local_path })));
+}
+
+export async function readPrivateSourceSnapshot(engine: BrainEngine): Promise<PrivateSourceSnapshot> {
+  const sources = await listSources(engine);
+  const configured = await configuredPrivateSource(engine);
+  return { sources: orderSources(sources, configured), stamp: sourceInventoryStamp(sources) };
+}
+
+async function orderedSources(engine: BrainEngine): Promise<PrivateSourceRow[]> {
+  return (await readPrivateSourceSnapshot(engine)).sources;
+}
+
+async function findPrivateSource(engine: BrainEngine, snapshot?: PrivateSourceSnapshot): Promise<PrivateSourceRow | null> {
+  const sources = snapshot?.sources ?? await orderedSources(engine);
   return sources.find(source => policyFromSource(source)) ?? null;
 }
 
@@ -273,9 +290,9 @@ export async function assertPrivateRoutingArmed(engine: BrainEngine): Promise<{ 
   };
 }
 
-export async function resolvePrivateWriteSource(engine: BrainEngine, input: PrivateWriteRouteInput): Promise<PrivateWriteRoute> {
+export async function resolvePrivateWriteSource(engine: BrainEngine, input: PrivateWriteRouteInput, opts: { sourceSnapshot?: PrivateSourceSnapshot } = {}): Promise<PrivateWriteRoute> {
   const requested = input.requestedSourceId || DEFAULT_SOURCE_ID;
-  const source = await findPrivateSource(engine);
+  const source = await findPrivateSource(engine, opts.sourceSnapshot);
   if (!source || requested === source.id) return { sourceId: requested, routed: false, privateSourceId: source?.id };
   const policy = policyFromSource(source);
   if (!policy) return { sourceId: requested, routed: false, privateSourceId: source.id };
@@ -292,6 +309,13 @@ export async function resolvePrivateWriteSource(engine: BrainEngine, input: Priv
     }
   }
   return { sourceId: requested, routed: false, privateSourceId: source.id };
+}
+
+/** Recheck a screen's source inventory inside the publication transaction. */
+export async function assertPrivateSourceStamp(engine: BrainEngine, expected: string): Promise<void> {
+  await engine.executeRaw('LOCK TABLE sources IN SHARE MODE');
+  const actual = sourceInventoryStamp(await listSources(engine));
+  if (actual !== expected) throw new Error('private source inventory changed since screen; refusing publication');
 }
 
 export async function isPersonishPageWrite(
