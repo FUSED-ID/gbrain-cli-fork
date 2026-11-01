@@ -29,6 +29,7 @@ import { REVISION_BACKFILL_PENDING } from '../page-state/types.ts';
 import { withScreeningPaths } from './screening-paths.ts';
 import { withBoundedReadSession } from './bounded-reads.ts';
 import { isPassBatchKey, passBatchHead } from './sync-pass-batch.ts';
+import { assertPrivateSourceStamp, readPrivateSourceSnapshot } from '../private-source-routing.ts';
 
 /**
  * The cursor row a waiver commits beside, locked FOR UPDATE (the fixed order: the page guard, then the cursor). #6712 PR 4b:
@@ -45,7 +46,7 @@ export interface WaiverCursor { sourceId: string; incarnation: string; root: str
   binding: { worktree_id: string }; authority: SyncAuthority; runId: string; index: number }
 export interface WaiverEntry { requestId: string; slug: string; pageId: number | null; intent: SyncIntent }
 /** `provenance` (a Markdown import): what the waiver records as the page's import provenance, as its publication would have. */
-export interface NoopWaiver { kind: 'import' | 'delete'; kernel: NoopKernelWaiver[]; provenance?: SyncImportProvenanceBase }
+export interface NoopWaiver { kind: 'import' | 'delete'; kernel: NoopKernelWaiver[]; provenance?: SyncImportProvenanceBase; privateSourceStamp?: string }
 
 /** `persistence.sync_preparation_ms` (preparation-budget.ts validates it): the budget a managed sync member's preparation gets; default 120 s. */
 export const SYNC_PREPARATION_MS_KEY = 'persistence.sync_preparation_ms';
@@ -128,6 +129,7 @@ export async function waiveNoopEntry<C extends WaiverCursor>(engine: BrainEngine
   const waived = await screenWaiver(engine, cursor, pending, config, signal);
   if (!waived) return null;
   const intent = pending.intent;
+  await faultPoint('sync:before_waiver_entry', { sourceId: cursor.sourceId });
   return engine.transaction(async tx => {
     await tx.lockPageKeys([{ sourceId: cursor.sourceId, slug: pending.slug }]);
     const held = await heldCursorHead(tx, key, cursor.sourceId);
@@ -142,6 +144,7 @@ export async function waiveNoopEntry<C extends WaiverCursor>(engine: BrainEngine
     if (unfinished.length) return null;
     const provenance = waivedProvenance(cursor, pending, waived, snapshot!.revision);
     if (provenance === false) return null;
+    if (waived.privateSourceStamp) await assertPrivateSourceStamp(tx, waived.privateSourceStamp);
     await recordSyncImportProvenances(tx, provenance ? [provenance] : []);
     return advance(tx, waived);
   });
@@ -242,6 +245,9 @@ export async function waiveNoopRun<C extends WaiverCursor>(engine: BrainEngine, 
         }
       }
       if (!valid) return null;
+      for (const stamp of new Set(run.flatMap(entry => entry.waived.privateSourceStamp ? [entry.waived.privateSourceStamp] : []))) {
+        await assertPrivateSourceStamp(tx, stamp);
+      }
       await recordSyncImportProvenances(tx, provenances);
       return { cursor: await advance(tx, run.slice(0, valid)), waived: valid, ...(valid < run.length ? { next: run[valid]!.pending } : {}) };
     });
@@ -381,11 +387,12 @@ export async function unchangedSyncImport(engine: BrainEngine, cursor: WaiverCur
     const snapshot = frozenSnapshot !== undefined ? frozenSnapshot : await engine.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
     const row = screeningRequest({ source_id: cursor.sourceId, source_incarnation: cursor.incarnation, slug: pending.slug, page_id: pending.pageId,
       worktree_id: cursor.binding.worktree_id, authority: cursor.authority.writer, intent, request_id: pending.requestId });
+    const privateSourceSnapshot = await readPrivateSourceSnapshot(engine);
     // #6278 (1.4): the clock carries the budget, so the preparation's lock-prone reads end on the server at it (boundedReads).
     const budgetMs = await syncPreparationBudgetMs(engine);
     // GBRA-75 wave 9: the screen's bounded reads share one transaction (withBoundedReadSession), each still bounded on the server.
     const prepared = await withBoundedReadSession(engine, session =>
-      raceSyncBudget(prepareManagedSyncMutation(session, row, config, startClaimPhase(Date.now(), undefined, budgetMs), { unsaved: true }), budgetMs, signal));
+      raceSyncBudget(prepareManagedSyncMutation(session, row, config, startClaimPhase(Date.now(), undefined, budgetMs), { unsaved: true, privateSourceSnapshot }), budgetMs, signal));
     if (prepared.file || prepared.target === 'skill_bundle') return null;
     const file = { root: cursor.root, path: join(cursor.root, intent.path), content: intent.content };
     const inspected = await inspectUnchanged(engine, { prepared: { ...prepared, target: 'page', file }, snapshot, sourcePath: intent.sourcePath, databaseOnly: false,
@@ -394,7 +401,8 @@ export async function unchangedSyncImport(engine: BrainEngine, cursor: WaiverCur
     if (inspected.admitReason) return null;
     await prepared.validate?.(engine);
     // #6712 PR 1: a #5751 waiver records no provenance, since the prescreen would skip the file where the kernel admits it.
-    return { kernel: inspected.waived ?? [], ...(prepared.importProvenance && !inspected.waived?.length ? { provenance: prepared.importProvenance } : {}) };
+    return { kernel: inspected.waived ?? [], ...(prepared.importProvenance && !inspected.waived?.length ? { provenance: prepared.importProvenance } : {}),
+      ...(prepared.privateSourceStamp ? { privateSourceStamp: prepared.privateSourceStamp } : {}) };
   } catch (error) {
     rethrowAbort(error, signal);
     return null;

@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { BrainEngine } from '../src/core/engine.ts';
+import type { GBrainConfig } from '../src/core/config.ts';
 import { getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { withRegisteredLocalWriter } from '../src/core/persistence/identity.ts';
 import { readOnlySameContentScreen } from '../src/core/persistence/sync-convergence.ts';
@@ -10,6 +11,9 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { sweepLegacy, newPassApplyState } from '../src/core/persistence/sync-pass-apply.ts';
 import { withDrainLease } from '../src/core/persistence/sync-lease.ts';
 import { readSyncImportProvenance } from '../src/core/persistence/sync-holds.ts';
+import { managedSyncAuthority } from '../src/core/persistence/sync-authority.ts';
+import { screenWaiver, waiveNoopEntry, waiveNoopRun, type WaiverCursor, type WaiverEntry, type WaiverRunEntry } from '../src/core/persistence/sync-waivers.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
 import type { ManagedSyncContext } from '../src/core/persistence/sync-discovery.ts';
 import type { ShadowLevel, ShadowPath } from '../src/core/persistence/sync-pass.ts';
@@ -19,6 +23,46 @@ const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root
 const rules = (slug: string) => `# people\n\n## Family deny-list\n\n| slug | name |\n| --- | --- |\n| \`${slug}\` | Alice Example |\n`;
 const filing = '# filing rules\n';
 const page = '---\ntype: concept\ntitle: notes/alice\n---\n\nThe same body.\n';
+
+async function setupPrivateWaiver(engine: BrainEngine, root: string) {
+  const privateRoot = join(root, '..', 'private');
+  mkdirSync(privateRoot, { recursive: true });
+  writeFileSync(join(privateRoot, '_excluded-people.md'), rules('people/bob'));
+  writeFileSync(join(privateRoot, '_brain-filing-rules.md'), filing);
+  mkdirSync(join(root, 'notes'), { recursive: true });
+  writeFileSync(join(root, 'notes/alice.md'), page);
+  git(root, 'init', '-q'); git(root, 'add', '-A'); git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'alice');
+  await engine.executeRaw(`UPDATE sources SET config=jsonb_set(jsonb_set(COALESCE(config,'{}'::jsonb),'{federated}','true'::jsonb),'{facts_visibility}','"world"'::jsonb) WHERE id='default'`);
+  await engine.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES('lg-private','LG private',NULL,jsonb_build_object('private_routing',jsonb_build_object('excluded_people_markdown',$1::text,'filing_rules_markdown',$2::text)))`, [rules('people/bob'), filing]);
+}
+
+async function waiverFixture(engine: BrainEngine, root: string) {
+  await performManagedSync(engine, { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true });
+  const snapshot = await engine.readPageSnapshot('notes/alice', { sourceId: 'default' });
+  const binding = await getWorktreeBinding(engine, 'default');
+  const sourceRoot = binding!.local_path ?? root;
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', ['default']);
+  const [request] = await engine.executeRaw<{ request_id: string; intent: Record<string, unknown> }>(
+    `SELECT request_id,intent FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY created_at DESC LIMIT 1`, ['default']);
+  if (!snapshot || !binding || !source || !request) throw new Error('waiver fixture did not publish its page');
+  await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', ['sync-import-provenance', `default:${source.incarnation}:${snapshot.page.id}`]);
+  const authority = await withRegisteredLocalWriter(engine, 'cli', () => managedSyncAuthority(engine, 'default', source.incarnation, sourceRoot));
+  const cursor: WaiverCursor = { sourceId: 'default', incarnation: source.incarnation, root: sourceRoot, gitRoot: sourceRoot, slugMode: 'git-root', binding,
+    authority, runId: 'waiver-run', index: 0 };
+  const pending: WaiverEntry = { requestId: request.request_id, slug: 'notes/alice', pageId: snapshot.page.id,
+    intent: { ...request.intent, expected_revision: snapshot.revision, working: true } as never };
+  const config = { engine: engine.kind, embedding_disabled: true } as GBrainConfig;
+  const flip = async () => {
+    writeFileSync(join(root, '..', 'private', '_excluded-people.md'), rules('notes/alice'));
+    await engine.executeRaw('UPDATE sources SET config=jsonb_set(config,\'{private_routing,excluded_people_markdown}\',$2::jsonb) WHERE id=$1', ['lg-private', JSON.stringify(rules('notes/alice'))]);
+  };
+  const head = async (key: string, requestId: string | null) => {
+    await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-sync',$1,$2::jsonb)`,
+      [key, JSON.stringify([{ runId: cursor.runId, index: cursor.index, pending: requestId ? { requestId } : null }])]);
+  };
+  const provenance = () => readSyncImportProvenance(engine, 'default', source.incarnation, snapshot.page.id);
+  return { cursor, pending, config, flip, head, provenance };
+}
 
 describe('private-source inventory during a legacy sweep slice', () => {
   test('unchanged policy matches, but a policy flip before record publication does not match', async () => {
@@ -82,5 +126,52 @@ describe('private-source inventory during a legacy sweep slice', () => {
       await engine.executeRaw(`UPDATE sources SET config=jsonb_set(jsonb_set(COALESCE(config,'{}'::jsonb),'{federated}','true'::jsonb),'{facts_visibility}','"world"'::jsonb) WHERE id='default'`);
       await engine.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES('lg-private','LG private',NULL,jsonb_build_object('private_routing',jsonb_build_object('excluded_people_markdown',$1::text,'filing_rules_markdown',$2::text)))`, [rules('people/bob'), filing]);
     } });
+  }, 180_000);
+});
+
+describe('private-source inventory during waiver publication', () => {
+  test('waiveNoopEntry records provenance when policy is unchanged', async () => {
+    await managedBrain(async ({ engine, root }) => {
+      const f = await waiverFixture(engine, root);
+      await f.head('waiver-entry-control', f.pending.requestId);
+      const waived = await waiveNoopEntry(engine, f.cursor, f.pending, f.config, 'waiver-entry-control', async (_tx) => f.cursor, async () => f.cursor);
+      expect(waived).not.toBeNull();
+      expect(await f.provenance()).not.toBeNull();
+    }, { setup: ({ engine, root }) => setupPrivateWaiver(engine, root) });
+  }, 180_000);
+
+  test('waiveNoopEntry refuses publication after a policy flip', async () => {
+    await managedBrain(async ({ engine, root }) => {
+      const f = await waiverFixture(engine, root);
+      await f.head('waiver-entry-flip', f.pending.requestId);
+      installFaultHook(async point => { if (point === 'sync:before_waiver_entry') await f.flip(); });
+      try {
+        await expect(waiveNoopEntry(engine, f.cursor, f.pending, f.config, 'waiver-entry-flip', async (_tx) => f.cursor, async () => f.cursor))
+          .rejects.toThrow('private source inventory changed since screen; refusing publication');
+      } finally { installFaultHook(undefined); }
+      expect(await f.provenance()).toBeNull();
+    }, { setup: ({ engine, root }) => setupPrivateWaiver(engine, root) });
+  }, 180_000);
+
+  test('waiveNoopRun records provenance without a policy flip and refuses after one', async () => {
+    await managedBrain(async ({ engine, root }) => {
+      const f = await waiverFixture(engine, root);
+      const screened = await screenWaiver(engine, f.cursor, f.pending, f.config);
+      expect(screened?.privateSourceStamp).toBeString();
+      const run: WaiverRunEntry[] = [{ pending: f.pending, waived: screened! }];
+      await f.head('waiver-run-control', null);
+      const control = await waiveNoopRun(engine, f.cursor, run, 'waiver-run-control', async (_tx) => f.cursor, async () => f.cursor);
+      expect(control).toMatchObject({ waived: 1 });
+      expect(await f.provenance()).not.toBeNull();
+
+      await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', ['sync-import-provenance', `default:${f.cursor.incarnation}:${f.pending.pageId}`]);
+      const flippedScreen = await screenWaiver(engine, f.cursor, f.pending, f.config);
+      expect(flippedScreen?.privateSourceStamp).toBeString();
+      await f.flip();
+      await f.head('waiver-run-flip', null);
+      await expect(waiveNoopRun(engine, f.cursor, [{ pending: f.pending, waived: flippedScreen! }], 'waiver-run-flip', async (_tx) => f.cursor, async () => f.cursor))
+        .rejects.toThrow('private source inventory changed since screen; refusing publication');
+      expect(await f.provenance()).toBeNull();
+    }, { setup: ({ engine, root }) => setupPrivateWaiver(engine, root) });
   }, 180_000);
 });

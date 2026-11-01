@@ -32,7 +32,7 @@ export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${Effect
   // another request or lane group meanwhile, while the requests it already holds run on.
   | 'consumer:claiming'
   // #6712 PR 0: after `freezeEntry` froze an import entry (its bytes are read) and before the request is admitted or published.
-  | 'sync:after_freeze'
+  | 'sync:after_freeze' | 'sync:before_waiver_entry'
   // #6712 PR 1 (L2): after the cursor step that holds a failed entry and settles its index commits (`holdUnderGate`), and after
   // the cursor step that defers an entry whose file changed after admission past the manifest end (`deferChangedEntry`).
   | 'sync:held_settled' | 'sync:retry_deferred'
