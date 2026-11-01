@@ -24,7 +24,7 @@ const rules = (slug: string) => `# people\n\n## Family deny-list\n\n| slug | nam
 const filing = '# filing rules\n';
 const page = '---\ntype: concept\ntitle: notes/alice\n---\n\nThe same body.\n';
 
-async function setupPrivateWaiver(engine: BrainEngine, root: string) {
+async function setupPrivateWaiver(engine: BrainEngine, root: string, opts: { localPath?: boolean } = {}) {
   const privateRoot = join(root, '..', 'private');
   mkdirSync(privateRoot, { recursive: true });
   writeFileSync(join(privateRoot, '_excluded-people.md'), rules('people/bob'));
@@ -33,7 +33,8 @@ async function setupPrivateWaiver(engine: BrainEngine, root: string) {
   writeFileSync(join(root, 'notes/alice.md'), page);
   git(root, 'init', '-q'); git(root, 'add', '-A'); git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'alice');
   await engine.executeRaw(`UPDATE sources SET config=jsonb_set(jsonb_set(COALESCE(config,'{}'::jsonb),'{federated}','true'::jsonb),'{facts_visibility}','"world"'::jsonb) WHERE id='default'`);
-  await engine.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES('lg-private','LG private',NULL,jsonb_build_object('private_routing',jsonb_build_object('excluded_people_markdown',$1::text,'filing_rules_markdown',$2::text)))`, [rules('people/bob'), filing]);
+  if (opts.localPath) await engine.setConfig('sync.write_through', 'false');
+  await engine.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES('lg-private','LG private',$3::text,jsonb_build_object('private_routing',jsonb_build_object('excluded_people_markdown',$1::text,'filing_rules_markdown',$2::text)))`, [rules('people/bob'), filing, opts.localPath ? privateRoot : null]);
 }
 
 async function waiverFixture(engine: BrainEngine, root: string) {
@@ -127,6 +128,70 @@ describe('private-source inventory during a legacy sweep slice', () => {
       expect(obligations).toEqual({});
       expect(state.swept.recorded).toBe(0);
     }, { setup: async ({ engine, root }) => setupPrivateWaiver(engine, root) });
+  }, 180_000);
+});
+
+describe('private-source routing stamp scope', () => {
+  test('an unrelated source config write does not refuse sweep or waiver publication', async () => {
+    await managedBrain(async ({ engine, root }) => {
+      const f = await legacySweepFixture(engine, root);
+      const state = newPassApplyState();
+      const screen = async (screenLevel: ShadowLevel, paths: ShadowPath[]) => {
+        const verdicts = await withRegisteredLocalWriter(engine, 'cli', () => readOnlySameContentScreen(engine, f.context, { noEmbed: true, noExtract: true, noSchemaPack: true })(screenLevel, paths));
+        await engine.updateSourceConfig('default', { last_extract_atoms_at: new Date().toISOString() });
+        return verdicts;
+      };
+      await withDrainLease(engine, 'default', { holder: { kind: 'cli', id: null } }, async () => {
+        await sweepLegacy(engine, f.level, { passId: 'test-private-source-fence-unrelated-config', observedAt: new Date().toISOString(), remote: false,
+          admission: 'normal', fullRound: true, obligations: {}, context: f.context, processingOptions: { noEmbed: true, noExtract: true, noSchemaPack: true },
+          screen, onSwept: async () => {} }, state);
+        return {} as never;
+      });
+      expect(await readSyncImportProvenance(engine, 'default', f.incarnation, f.pageId)).not.toBeNull();
+    }, { setup: async ({ engine, root }) => setupPrivateWaiver(engine, root) });
+
+    await managedBrain(async ({ engine, root }) => {
+      const f = await waiverFixture(engine, root);
+      await f.head('waiver-entry-unrelated-config', f.pending.requestId);
+      installFaultHook(async point => {
+        if (point === 'sync:before_waiver_entry') await engine.updateSourceConfig('default', { last_extract_atoms_at: new Date().toISOString() });
+      });
+      try {
+        const waived = await waiveNoopEntry(engine, f.cursor, f.pending, f.config, 'waiver-entry-unrelated-config', async (_tx) => f.cursor, async () => f.cursor);
+        expect(waived).not.toBeNull();
+      } finally { installFaultHook(undefined); }
+      expect(await f.provenance()).not.toBeNull();
+    }, { setup: ({ engine, root }) => setupPrivateWaiver(engine, root) });
+  }, 180_000);
+
+  test('a configured private source id change between screen and commit refuses publication', async () => {
+    await managedBrain(async ({ engine, root }) => {
+      const f = await waiverFixture(engine, root);
+      await f.head('waiver-entry-configured-source-flip', f.pending.requestId);
+      installFaultHook(async point => {
+        if (point === 'sync:before_waiver_entry') await engine.setConfig('privacy.private_source_id', 'lg-private');
+      });
+      try {
+        await expect(waiveNoopEntry(engine, f.cursor, f.pending, f.config, 'waiver-entry-configured-source-flip', async (_tx) => f.cursor, async () => f.cursor))
+          .rejects.toThrow('private source inventory changed since screen; refusing publication');
+      } finally { installFaultHook(undefined); }
+      expect(await f.provenance()).toBeNull();
+    }, { setup: ({ engine, root }) => setupPrivateWaiver(engine, root) });
+  }, 180_000);
+
+  test('editing a local private policy file between screen and commit refuses publication', async () => {
+    await managedBrain(async ({ engine, root }) => {
+      const f = await waiverFixture(engine, root);
+      await f.head('waiver-entry-disk-policy-flip', f.pending.requestId);
+      installFaultHook(async point => {
+        if (point === 'sync:before_waiver_entry') writeFileSync(join(root, '..', 'private', '_excluded-people.md'), rules('notes/alice'));
+      });
+      try {
+        await expect(waiveNoopEntry(engine, f.cursor, f.pending, f.config, 'waiver-entry-disk-policy-flip', async (_tx) => f.cursor, async () => f.cursor))
+          .rejects.toThrow('private source inventory changed since screen; refusing publication');
+      } finally { installFaultHook(undefined); }
+      expect(await f.provenance()).toBeNull();
+    }, { setup: ({ engine, root }) => setupPrivateWaiver(engine, root, { localPath: true }) });
   }, 180_000);
 });
 

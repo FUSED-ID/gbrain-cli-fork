@@ -11,7 +11,7 @@ import type { BrainEngine } from './engine.ts';
 import { gbrainPath } from './config.ts';
 import { parseSourceConfig } from './sources-load.ts';
 import { isPersonSlug } from './slug-namespace.ts';
-import { digest } from './persistence/digest.ts';
+import { digest, sha256 } from './persistence/digest.ts';
 
 const DEFAULT_SOURCE_ID = 'default';
 const PRIVATE_SOURCE_ID = 'lg-private';
@@ -229,15 +229,39 @@ function orderSources(sources: PrivateSourceRow[], configured: string | null): P
   ];
 }
 
-function sourceInventoryStamp(sources: PrivateSourceRow[]): string {
-  return digest([...sources].sort((a, b) => a.id === 'default' ? -1 : b.id === 'default' ? 1 : a.id.localeCompare(b.id))
-    .map(source => ({ id: source.id, config: source.config, local_path: source.local_path })));
+function sourceRoutingStampInput(source: PrivateSourceRow): Record<string, unknown> {
+  const config = parseSourceConfig(source.config);
+  const privateRouting = config[POLICY_KEY];
+  const routing = privateRouting && typeof privateRouting === 'object' && !Array.isArray(privateRouting)
+    ? privateRouting as Record<string, unknown> : null;
+  const disk = diskPolicyFromSource(source);
+  return {
+    id: source.id,
+    local_path: source.local_path,
+    // databasePolicyFromSource reads exactly these two keys; unrelated source
+    // config writes must not invalidate a private-routing screen.
+    private_routing: {
+      excluded_people_markdown: typeof routing?.excluded_people_markdown === 'string' ? routing.excluded_people_markdown : null,
+      filing_rules_markdown: typeof routing?.filing_rules_markdown === 'string' ? routing.filing_rules_markdown : null,
+    },
+    // diskPolicyFromSource reads both files whenever local_path is present.
+    disk_policy: disk ? {
+      excluded_people_sha256: sha256(disk.excludedPeople),
+      filing_rules_sha256: sha256(disk.filingRules),
+    } : null,
+  };
+}
+
+function sourceInventoryStamp(sources: PrivateSourceRow[], configured: string | null): string {
+  return digest({ configured_private_source_id: configured,
+    sources: [...sources].sort((a, b) => a.id === 'default' ? -1 : b.id === 'default' ? 1 : a.id.localeCompare(b.id))
+      .map(sourceRoutingStampInput) });
 }
 
 export async function readPrivateSourceSnapshot(engine: BrainEngine): Promise<PrivateSourceSnapshot> {
   const sources = await listSources(engine);
   const configured = await configuredPrivateSource(engine);
-  return { sources: orderSources(sources, configured), stamp: sourceInventoryStamp(sources) };
+  return { sources: orderSources(sources, configured), stamp: sourceInventoryStamp(sources, configured) };
 }
 
 async function orderedSources(engine: BrainEngine): Promise<PrivateSourceRow[]> {
@@ -313,8 +337,11 @@ export async function resolvePrivateWriteSource(engine: BrainEngine, input: Priv
 
 /** Recheck a screen's source inventory inside the publication transaction. */
 export async function assertPrivateSourceStamp(engine: BrainEngine, expected: string): Promise<void> {
+  await engine.executeRaw("SELECT set_config('lock_timeout','2s',true),set_config('statement_timeout','10s',true)");
   await engine.executeRaw('LOCK TABLE sources IN SHARE MODE');
-  const actual = sourceInventoryStamp(await listSources(engine));
+  const sources = await listSources(engine);
+  const configured = await configuredPrivateSource(engine);
+  const actual = sourceInventoryStamp(sources, configured);
   if (actual !== expected) throw new Error('private source inventory changed since screen; refusing publication');
 }
 

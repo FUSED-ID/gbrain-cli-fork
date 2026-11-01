@@ -130,24 +130,30 @@ export async function waiveNoopEntry<C extends WaiverCursor>(engine: BrainEngine
   if (!waived) return null;
   const intent = pending.intent;
   await faultPoint('sync:before_waiver_entry', { sourceId: cursor.sourceId });
-  return engine.transaction(async tx => {
-    await tx.lockPageKeys([{ sourceId: cursor.sourceId, slug: pending.slug }]);
-    const held = await heldCursorHead(tx, key, cursor.sourceId);
-    if (held?.run_id !== cursor.runId || Number(held.index) !== cursor.index || held.request_id !== pending.requestId) return reread(tx);
-    const snapshot = await tx.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
-    if (waived.kind === 'delete') {
-      if (!softDeletedAt(snapshot, pending) || waiverRead(cursor.root, intent.path!) !== null) return null;
-      try { await assertSyncPageOrigin(tx, cursor.sourceId, intent.sourcePath!, pending.pageId, true, syncOriginScope(cursor)); }
-      catch { return null; }
-    } else if (snapshot?.page.id !== pending.pageId || snapshot.page.deleted_at != null || snapshot.revision !== intent.expected_revision) return null;
-    const unfinished = await tx.executeRaw(UNFINISHED_PAGE_REQUEST_SQL, unfinishedPageRequestParams(cursor, pending));
-    if (unfinished.length) return null;
-    const provenance = waivedProvenance(cursor, pending, waived, snapshot!.revision);
-    if (provenance === false) return null;
-    if (waived.privateSourceStamp) await assertPrivateSourceStamp(tx, waived.privateSourceStamp);
-    await recordSyncImportProvenances(tx, provenance ? [provenance] : []);
-    return advance(tx, waived);
-  });
+  try {
+    return await engine.transaction(async tx => {
+      await tx.lockPageKeys([{ sourceId: cursor.sourceId, slug: pending.slug }]);
+      const held = await heldCursorHead(tx, key, cursor.sourceId);
+      if (held?.run_id !== cursor.runId || Number(held.index) !== cursor.index || held.request_id !== pending.requestId) return reread(tx);
+      const snapshot = await tx.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
+      if (waived.kind === 'delete') {
+        if (!softDeletedAt(snapshot, pending) || waiverRead(cursor.root, intent.path!) !== null) return null;
+        try { await assertSyncPageOrigin(tx, cursor.sourceId, intent.sourcePath!, pending.pageId, true, syncOriginScope(cursor)); }
+        catch { return null; }
+      } else if (snapshot?.page.id !== pending.pageId || snapshot.page.deleted_at != null || snapshot.revision !== intent.expected_revision) return null;
+      const unfinished = await tx.executeRaw(UNFINISHED_PAGE_REQUEST_SQL, unfinishedPageRequestParams(cursor, pending));
+      if (unfinished.length) return null;
+      const provenance = waivedProvenance(cursor, pending, waived, snapshot!.revision);
+      if (provenance === false) return null;
+      if (waived.privateSourceStamp) await assertPrivateSourceStamp(tx, waived.privateSourceStamp);
+      await recordSyncImportProvenances(tx, provenance ? [provenance] : []);
+      return advance(tx, waived);
+    });
+  } catch (error) {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (code === '55P03' || code === '57014') return null;
+    throw error;
+  }
 }
 
 /**

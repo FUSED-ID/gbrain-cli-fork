@@ -395,16 +395,25 @@ async function writeRecords(engine: BrainEngine, level: ShadowLevel, writes: Rec
   if (!writes.length) return new Set();
   // Noted before the transaction: a commit whose acknowledgement is lost still names the pass as the records' writer.
   for (const write of writes) recorded.add(write.pageId);
-  return engine.transaction(async tx => {
-    await assertDrainLease(tx, level.sourceId);
-    if (privateSourceStamp) await assertPrivateSourceStamp(tx, privateSourceStamp);
-    const rows = await tx.executeRaw<{ id: number | string; revision: string }>('SELECT id, knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id=ANY($2::int[]) FOR SHARE',
-      [level.sourceId, writes.map(write => write.pageId)]);
-    const current = new Map(rows.map(row => [Number(row.id), row.revision]));
-    const fenced = writes.filter(write => current.get(write.pageId) === write.revision);
-    await recordSyncImportProvenances(tx, fenced.map(write => write.record));
-    return new Set(fenced.map(write => write.pageId));
-  });
+  try {
+    return await engine.transaction(async tx => {
+      await assertDrainLease(tx, level.sourceId);
+      if (privateSourceStamp) await assertPrivateSourceStamp(tx, privateSourceStamp);
+      const rows = await tx.executeRaw<{ id: number | string; revision: string }>('SELECT id, knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id=ANY($2::int[]) FOR SHARE',
+        [level.sourceId, writes.map(write => write.pageId)]);
+      const current = new Map(rows.map(row => [Number(row.id), row.revision]));
+      const fenced = writes.filter(write => current.get(write.pageId) === write.revision);
+      await recordSyncImportProvenances(tx, fenced.map(write => write.record));
+      return new Set(fenced.map(write => write.pageId));
+    });
+  } catch (error) {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (privateSourceStamp && (code === '55P03' || code === '57014')) {
+      for (const write of writes) recorded.delete(write.pageId);
+      return new Set();
+    }
+    throw error;
+  }
 }
 
 /** Row 13: adopt the level into the page's record, keeping `r.parser` (arm 1: revision only, on `fileSame`). */
