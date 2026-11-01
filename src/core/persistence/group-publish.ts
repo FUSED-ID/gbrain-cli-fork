@@ -347,7 +347,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
         () => prepared.some(member => member.file && !member.noop) ? tx.executeRaw(HOST_BINDING_SQL, [head.worktree_id]) : Promise.resolve([]),
         ...storedAuthorizationReads(tx, rows, true),
       ]).then(results => {
-        const [, live, started, readOnly, strictNow] = results as [unknown, Awaited<ReturnType<typeof guardOwnership>>, unknown[], boolean, boolean];
+        const [, , live, started, readOnly, strictNow] = results as [unknown, unknown, Awaited<ReturnType<typeof guardOwnership>>, unknown[], boolean, boolean];
         if (String(live?.owner_epoch) !== String(binding.owner_epoch)) throw new OperationError('owner_unavailable', 'Owner epoch changed before publication.', 'Inspect the source owner with gbrain sources writer status; do not claim or transfer the source to push this write.');
         if (started.length !== members.length) throw new OperationError('write_claim_lost', 'Execution claim changed before publication.', 'Another worker holds the request; inspect it rather than resubmitting.');
         // A file target prepared before the source became a read-only mirror is never published (as in publishMutation, noop included).

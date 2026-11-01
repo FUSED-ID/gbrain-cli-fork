@@ -99,6 +99,27 @@ test('a lane group whose page lock times out reports lock_timeout, not the abort
   expect(states.every(s => s.state === 'running')).toBe(true);
 }), 120_000);
 
+test('a multi-member group without a private source stamp publishes with the live ownership result', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  if (!engine) return;
+  const f = await fixture(engine, 2);
+  await performSync(engine, { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, drain: true });
+  await disposePersistenceConsumer(engine);
+  const rows = await engine.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='running',execution_token=gen_random_uuid(),completed_at=NULL,published_at=NULL,
+    claim_expires_at=now()+interval '5 minutes' WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' RETURNING *`, [f.id]);
+  rows.sort((a, b) => Number(a.sequence) - Number(b.sequence));
+  const pages = new Map((await engine.executeRaw<{ slug: string; id: number; revision: string }>('SELECT slug,id,knowledge_revision::text AS revision FROM pages WHERE source_id=$1', [f.id]))
+    .map(p => [p.slug, p]));
+  for (const row of rows) row.page_id = Number(pages.get(row.slug)!.id);
+  const prepared: PreparedMutation[] = rows.map(row => ({ observedRevision: pages.get(row.slug)!.revision, validate: async () => {}, apply: async () => ({ status: 'skipped', slug: row.slug }) }));
+  let transactionError: unknown;
+  const result = await publishGroup(engine, rows, prepared, undefined, {}, null, async fn => {
+    try { return await engine!.transaction(fn); }
+    catch (error) { transactionError = error; throw error; }
+  });
+  expect({ members: rows.length, done: result.done?.length ?? 0, error_code: (transactionError as { code?: string } | undefined)?.code })
+    .toEqual({ members: 2, done: 2, error_code: undefined });
+}), 120_000);
+
 test('re-importing a page without a publisher preimage versions the page as it was before the write', async () => {
   if (!engine) return;
   const sourceId = `lane-apply-plain-${randomUUID().replace(/-/g, '').slice(0, 12)}`; sources.push(sourceId);
