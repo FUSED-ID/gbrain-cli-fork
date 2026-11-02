@@ -337,7 +337,6 @@ export async function resolvePrivateWriteSource(engine: BrainEngine, input: Priv
 
 /** Recheck a screen's source inventory inside the publication transaction. */
 export async function assertPrivateSourceStamp(engine: BrainEngine, expected: string): Promise<void> {
-  await engine.executeRaw("SELECT set_config('lock_timeout','2s',true),set_config('statement_timeout','10s',true)");
   await engine.executeRaw('LOCK TABLE sources IN SHARE MODE');
   const sources = await listSources(engine);
   const configured = await configuredPrivateSource(engine);

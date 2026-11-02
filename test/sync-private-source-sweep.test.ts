@@ -11,6 +11,7 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { sweepLegacy, newPassApplyState } from '../src/core/persistence/sync-pass-apply.ts';
 import { withDrainLease } from '../src/core/persistence/sync-lease.ts';
 import { readSyncImportProvenance } from '../src/core/persistence/sync-holds.ts';
+import { assertPrivateSourceStamp, readPrivateSourceSnapshot } from '../src/core/private-source-routing.ts';
 import { managedSyncAuthority } from '../src/core/persistence/sync-authority.ts';
 import { screenWaiver, waiveNoopEntry, waiveNoopRun, type WaiverCursor, type WaiverEntry, type WaiverRunEntry } from '../src/core/persistence/sync-waivers.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
@@ -91,6 +92,17 @@ async function legacySweepFixture(engine: BrainEngine, root: string) {
 }
 
 describe('private-source inventory during a legacy sweep slice', () => {
+  test('the group publication stamp check does not install a 10s statement timeout', async () => {
+    await managedBrain(async ({ engine }) => {
+      const { stamp } = await readPrivateSourceSnapshot(engine);
+      await engine.transaction(async tx => {
+        await assertPrivateSourceStamp(tx, stamp);
+        const [setting] = await tx.executeRaw<{ statement_timeout: string }>('SHOW statement_timeout');
+        expect(setting?.statement_timeout).not.toBe('10s');
+      });
+    }, { setup: async ({ engine, root }) => setupPrivateWaiver(engine, root) });
+  }, 180_000);
+
   test('unchanged policy records provenance', async () => {
     await managedBrain(async ({ engine, root }) => {
       const f = await legacySweepFixture(engine, root);
@@ -103,6 +115,31 @@ describe('private-source inventory during a legacy sweep slice', () => {
       });
       expect(await readSyncImportProvenance(engine, 'default', f.incarnation, f.pageId)).not.toBeNull();
     }, { setup: async ({ engine, root }) => setupPrivateWaiver(engine, root) });
+  }, 180_000);
+
+  test('disk-backed configured private source records provenance for both sweep and waiver', async () => {
+    await managedBrain(async ({ engine, root }) => {
+      await engine.setConfig('privacy.private_source_id', 'lg-private');
+      const f = await legacySweepFixture(engine, root);
+      const state = newPassApplyState();
+      await withDrainLease(engine, 'default', { holder: { kind: 'cli', id: null } }, async () => {
+        await sweepLegacy(engine, f.level, { passId: 'test-private-source-disk-control-sweep', observedAt: new Date().toISOString(), remote: false,
+          admission: 'normal', fullRound: true, obligations: {}, context: f.context, processingOptions: { noEmbed: true, noExtract: true, noSchemaPack: true },
+          screen: readOnlySameContentScreen(engine, f.context, { noEmbed: true, noExtract: true, noSchemaPack: true }) }, state);
+        return {} as never;
+      });
+      expect(state.swept.recorded).toBe(1);
+      expect(await readSyncImportProvenance(engine, 'default', f.incarnation, f.pageId)).not.toBeNull();
+    }, { setup: async ({ engine, root }) => setupPrivateWaiver(engine, root, { localPath: true }) });
+
+    await managedBrain(async ({ engine, root }) => {
+      await engine.setConfig('privacy.private_source_id', 'lg-private');
+      const f = await waiverFixture(engine, root);
+      await f.head('waiver-entry-disk-control', f.pending.requestId);
+      const waived = await waiveNoopEntry(engine, f.cursor, f.pending, f.config, 'waiver-entry-disk-control', async (_tx) => f.cursor, async () => f.cursor);
+      expect(waived).not.toBeNull();
+      expect(await f.provenance()).not.toBeNull();
+    }, { setup: ({ engine, root }) => setupPrivateWaiver(engine, root, { localPath: true }) });
   }, 180_000);
 
   test('policy flip before record publication refuses without advancing sweep progress', async () => {
@@ -127,6 +164,27 @@ describe('private-source inventory during a legacy sweep slice', () => {
       expect(sweptProgress).toBe(0);
       expect(obligations).toEqual({});
       expect(state.swept.recorded).toBe(0);
+    }, { setup: async ({ engine, root }) => setupPrivateWaiver(engine, root) });
+  }, 180_000);
+
+  test('a timed-out record write counts pages whose provenance was not recorded', async () => {
+    await managedBrain(async ({ engine, root }) => {
+      const f = await legacySweepFixture(engine, root);
+      const state = newPassApplyState();
+      const originalTransaction = engine.transaction;
+      const screen = async (screenLevel: ShadowLevel, paths: ShadowPath[]) => {
+        const verdicts = await readOnlySameContentScreen(engine, f.context, { noEmbed: true, noExtract: true, noSchemaPack: true })(screenLevel, paths);
+        engine.transaction = (async () => { throw Object.assign(new Error('lock timeout'), { code: '55P03' }); }) as BrainEngine['transaction'];
+        return verdicts;
+      };
+      try {
+        await withDrainLease(engine, 'default', { holder: { kind: 'cli', id: null } }, async () => {
+          await sweepLegacy(engine, f.level, { passId: 'test-private-source-timeout-counter', observedAt: new Date().toISOString(), remote: false,
+            admission: 'normal', fullRound: true, obligations: {}, context: f.context, processingOptions: { noEmbed: true, noExtract: true, noSchemaPack: true }, screen }, state);
+          return {} as never;
+        });
+      } finally { engine.transaction = originalTransaction; }
+      expect(state.swept.timed_out).toBe(1);
     }, { setup: async ({ engine, root }) => setupPrivateWaiver(engine, root) });
   }, 180_000);
 });
@@ -203,6 +261,18 @@ describe('private-source inventory during waiver publication', () => {
       const waived = await waiveNoopEntry(engine, f.cursor, f.pending, f.config, 'waiver-entry-control', async (_tx) => f.cursor, async () => f.cursor);
       expect(waived).not.toBeNull();
       expect(await f.provenance()).not.toBeNull();
+    }, { setup: ({ engine, root }) => setupPrivateWaiver(engine, root) });
+  }, 180_000);
+
+  test('waiveNoopEntry falls back on a deadlock', async () => {
+    await managedBrain(async ({ engine, root }) => {
+      const f = await waiverFixture(engine, root);
+      await f.head('waiver-entry-deadlock', f.pending.requestId);
+      const originalTransaction = engine.transaction;
+      try {
+        engine.transaction = (async () => { throw Object.assign(new Error('deadlock detected'), { code: '40P01' }); }) as BrainEngine['transaction'];
+        expect(await waiveNoopEntry(engine, f.cursor, f.pending, f.config, 'waiver-entry-deadlock', async (_tx) => f.cursor, async () => f.cursor)).toBeNull();
+      } finally { engine.transaction = originalTransaction; }
     }, { setup: ({ engine, root }) => setupPrivateWaiver(engine, root) });
   }, 180_000);
 

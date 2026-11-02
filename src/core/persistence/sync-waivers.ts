@@ -145,13 +145,16 @@ export async function waiveNoopEntry<C extends WaiverCursor>(engine: BrainEngine
       if (unfinished.length) return null;
       const provenance = waivedProvenance(cursor, pending, waived, snapshot!.revision);
       if (provenance === false) return null;
-      if (waived.privateSourceStamp) await assertPrivateSourceStamp(tx, waived.privateSourceStamp);
+      if (waived.privateSourceStamp) {
+        await tx.executeRaw("SELECT set_config('lock_timeout','2s',true),set_config('statement_timeout','10s',true)");
+        await assertPrivateSourceStamp(tx, waived.privateSourceStamp);
+      }
       await recordSyncImportProvenances(tx, provenance ? [provenance] : []);
       return advance(tx, waived);
     });
   } catch (error) {
     const code = (error as { code?: unknown } | null)?.code;
-    if (code === '55P03' || code === '57014') return null;
+    if (code === '55P03' || code === '57014' || code === '40P01') return null;
     throw error;
   }
 }

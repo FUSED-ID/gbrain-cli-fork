@@ -81,7 +81,7 @@ export interface PassApplyState {
   settleMismatch: string[];
   adopted: number;
   /** `paths`: what this pass screened, so a later round of the pass never screens a page again (#7189). */
-  swept: { screened: number; recorded: number; paths: Set<string> };
+  swept: { screened: number; recorded: number; timed_out: number; paths: Set<string> };
   /** The first full round of the incarnation swept every legacy page (the pass records it in `obligations.legacy_sweep`). */
   sweptAll: boolean;
   withheld: DeletesWithheld | null;
@@ -107,7 +107,7 @@ export interface PassApplyState {
 
 export function newPassApplyState(): PassApplyState {
   return { markersRetired: 0, holds: { file_gone: 0, tombstone_edited: 0, purged_differs: 0, settle_mismatch: 0, origin_conflict: 0, page_identity_changed: 0, uncommitted: 0 }, settleMismatch: [], adopted: 0,
-    swept: { screened: 0, recorded: 0, paths: new Set() }, sweptAll: false, withheld: null, withheldCount: 0, keepDb: { admitted: 0, pending: 0, paused: 0, refused: {} }, keepDbTaken: [], originHeld: new Set(), matchedSlugs: new Set(), classes: {}, summary: null, recorded: new Set(), heldDeletions: newHeldDeletionState() };
+    swept: { screened: 0, recorded: 0, timed_out: 0, paths: new Set() }, sweptAll: false, withheld: null, withheldCount: 0, keepDb: { admitted: 0, pending: 0, paused: 0, refused: {} }, keepDbTaken: [], originHeld: new Set(), matchedSlugs: new Set(), classes: {}, summary: null, recorded: new Set(), heldDeletions: newHeldDeletionState() };
 }
 
 export interface PassApplyInput {
@@ -391,14 +391,17 @@ async function passOriginConflict(engine: BrainEngine, level: ShadowLevel, entry
 interface RecordWrite { pageId: number; revision: string; record: Omit<SyncImportProvenance, 'recorded_at' | 'validated'> }
 
 /** The batched, fenced record write: a page whose revision moved since the round read it is left alone. Returns the pages written. */
-async function writeRecords(engine: BrainEngine, level: ShadowLevel, writes: RecordWrite[], recorded: Set<number>, privateSourceStamp?: string): Promise<Set<number>> {
+async function writeRecords(engine: BrainEngine, level: ShadowLevel, writes: RecordWrite[], recorded: Set<number>, privateSourceStamp?: string, timedOut?: { count: number }): Promise<Set<number>> {
   if (!writes.length) return new Set();
   // Noted before the transaction: a commit whose acknowledgement is lost still names the pass as the records' writer.
   for (const write of writes) recorded.add(write.pageId);
   try {
     return await engine.transaction(async tx => {
       await assertDrainLease(tx, level.sourceId);
-      if (privateSourceStamp) await assertPrivateSourceStamp(tx, privateSourceStamp);
+      if (privateSourceStamp) {
+        await tx.executeRaw("SELECT set_config('lock_timeout','2s',true),set_config('statement_timeout','10s',true)");
+        await assertPrivateSourceStamp(tx, privateSourceStamp);
+      }
       const rows = await tx.executeRaw<{ id: number | string; revision: string }>('SELECT id, knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id=ANY($2::int[]) FOR SHARE',
         [level.sourceId, writes.map(write => write.pageId)]);
       const current = new Map(rows.map(row => [Number(row.id), row.revision]));
@@ -409,6 +412,7 @@ async function writeRecords(engine: BrainEngine, level: ShadowLevel, writes: Rec
   } catch (error) {
     const code = (error as { code?: unknown } | null)?.code;
     if (privateSourceStamp && (code === '55P03' || code === '57014')) {
+      if (timedOut) timedOut.count += writes.length;
       for (const write of writes) recorded.delete(write.pageId);
       return new Set();
     }
@@ -487,8 +491,13 @@ async function sweepSlice(engine: BrainEngine, level: ShadowLevel, slice: Shadow
       blob_oid: entry.state.level!, disk_blob_oid: entry.state.diskOid ?? entry.state.level!, revision: entry.revision!, parser: syncImportParserFor(path, level.pack), gbrain_version: VERSION,
       working: level.mode === 'working' } }];
   });
-  const written = await writeRecords(engine, level, writes, state.recorded, verdicts.privateSourceStamp);
+  const timeout = { count: 0 };
+  const written = await writeRecords(engine, level, writes, state.recorded, verdicts.privateSourceStamp, timeout);
   state.swept.recorded += written.size;
+  if (timeout.count) {
+    state.swept.timed_out += timeout.count;
+    process.stderr.write(`[sync] legacy sweep provenance not recorded pages=${timeout.count}\n`);
+  }
   for (const entry of same) if (written.has(entry.pageId!)) settleAs(entry, { cls: 'matched', settled: true, action: 'none', classAction: 'none' });
 }
 
@@ -573,6 +582,6 @@ export function passApplyCounts(state: PassApplyState): Record<string, number> {
   const refused = Object.values(state.keepDb.refused).reduce((a, b) => a + b, 0);
   return { markers_retired: state.markersRetired, holds_file_gone: state.holds.file_gone, holds_tombstone_edited: state.holds.tombstone_edited,
     holds_purged_differs: state.holds.purged_differs, holds_settle_mismatch: state.holds.settle_mismatch, holds_origin_conflict: state.holds.origin_conflict, holds_page_identity_changed: state.holds.page_identity_changed, holds_uncommitted: state.holds.uncommitted, adopted: state.adopted, legacy_swept: state.swept.screened,
-    legacy_recorded: state.swept.recorded, deletes_withheld: state.withheldCount, keep_db_admitted: state.keepDb.admitted, keep_db_pending: state.keepDb.pending,
+    legacy_recorded: state.swept.recorded, legacy_timed_out: state.swept.timed_out, deletes_withheld: state.withheldCount, keep_db_admitted: state.keepDb.admitted, keep_db_pending: state.keepDb.pending,
     paused_keep_db: state.keepDb.paused, keep_db_refused: refused, held_deletions_applied: state.heldDeletions.applied, held_deletions_refused: state.heldDeletions.refused };
 }
