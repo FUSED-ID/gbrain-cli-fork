@@ -156,13 +156,8 @@ const get_page: Operation = {
       };
     let snapshot = await readSnapshot(slug, { includeDeleted, excludePrivate, ...sourceOpts, resolveAlias: true });
     let page = snapshot?.page ?? null;
-<<<<<<< HEAD
     if (page && excludePrivate && isPrivatePageForCaller(page)) page = null;
-    let resolved_slug: string | undefined = page && page.slug !== slug ? page.slug : undefined;
-=======
-    if (page && excludePrivate && isPrivatePage(page)) page = null;
     let resolved_slug: string | undefined = namespaceResolved ?? (page && page.slug !== slug ? page.slug : undefined);
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 
     if (!page && fuzzy) {
       const fallback = await ctx.engine.transaction(async tx => {
@@ -391,10 +386,7 @@ const put_page: Operation = {
       return { dry_run: true, action: 'put_page', slug: p.slug };
     }
     if (ctx.remote !== false && typeof p.slug === 'string') await assertLargePageAdmission(ctx.engine, p.slug, sourceId, p);
-<<<<<<< HEAD
     (await import('../persistence/page-visibility.ts')).assertSubmittedReaders(ctx.remote, p.slug, p.content);
-    return submitPageMutation(ctx, { operation: 'put_page', params: p }).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
-=======
     const { preflightPutPagePrivateWrite } = await import('./pages-private-preflight.ts');
     const route = await preflightPutPagePrivateWrite(ctx, sourceId, p);
     if (route.routedFromSourceId) p.source_id = route.sourceId;
@@ -412,7 +404,6 @@ const put_page: Operation = {
       }
     }
     return result;
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
