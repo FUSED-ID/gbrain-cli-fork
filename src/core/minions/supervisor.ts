@@ -78,8 +78,6 @@ export interface SupervisorOpts {
   concurrency: number;
   /** Queue name (passed to child). Default: 'default'. */
   queue: string;
-  /** Optional worker allow-list passed to the spawned jobs work process. */
-  onlyNames?: string[];
   /** PID file path. Default: `<gbrain home>/supervisor-<brain-id>.pid`, GBRAIN_HOME honoured (parent dir auto-created). */
   pidFile: string;
   /** Max consecutive crashes before giving up. Default: 10. */
@@ -198,9 +196,6 @@ export function buildWorkerArgs(
     '--concurrency', String(opts.concurrency),
     '--queue', opts.queue,
   ];
-  if (opts.onlyNames && opts.onlyNames.length > 0) {
-    args.push('--only', opts.onlyNames.join(','));
-  }
   if (opts.maxRssMb > 0) {
     args.push('--max-rss', String(opts.maxRssMb));
   }
@@ -880,10 +875,7 @@ export class MinionSupervisor {
    * started — no timers, no DB) and reading `registeredNames`. Zero duplication vs
    * a hand-maintained constant, and it auto-tracks every future handler (Codex
    * #16). Lazy-imported to avoid the supervisor.ts ↔ jobs.ts / worker.ts import
-   * cycle. The effective selection matches `buildWorkerArgs()`: a validated
-   * `opts.onlyNames` wins (child argv is built from it), otherwise fall back to
-   * GBRAIN_WORKER_ONLY_NAMES; with neither, the full registered set is claimable.
-   * On any failure the watchdog stays inert (empty names → waiting_claimable
+   * cycle. On any failure the watchdog stays inert (empty names → waiting_claimable
    * is always 0 → no restart) rather than risk a misscoped kill — the worker's own
    * DB probe (fix #2) still covers the dead-pool case.
    */

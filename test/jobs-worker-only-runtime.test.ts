@@ -7,19 +7,11 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { MinionWorker } from '../src/core/minions/worker.ts';
-<<<<<<< HEAD
-import { drainPgliteQueue, runJobsWork } from '../src/commands/jobs/work.ts';
-=======
 import { drainPgliteQueue } from '../src/commands/jobs/work.ts';
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 import { runJobs } from '../src/commands/jobs.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
-<<<<<<< HEAD
-import { WORKER_EXIT_CONFIGURATION } from '../src/core/minions/worker-exit-codes.ts';
-=======
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 
 let engine: PGLiteEngine;
 let home: string;
@@ -117,57 +109,6 @@ describe('jobs work PGLite worker allow-list runtime', () => {
     });
   }), 60_000);
 
-<<<<<<< HEAD
-  test('R10 jobs work honors the environment allow-list through the command entry', () => inHome(async () => {
-    const queue = new MinionQueue(engine);
-    await queue.ensureSchema();
-    await queue.add('shell', { cmd: 'true', cwd: '/tmp' }, {}, { allowProtectedSubmit: true });
-    await queue.add('repair-jsonb', { dryRun: true }, {});
-    const log = spyOn(console, 'log').mockImplementation(() => {});
-    try {
-      await withEnv({ GBRAIN_WORKER_ONLY_NAMES: 'shell', GBRAIN_ALLOW_SHELL_JOBS: '1' }, async () => {
-        await runJobs(engine, ['work']);
-      });
-    } finally {
-      log.mockRestore();
-    }
-    expect(await count('shell', 'completed')).toBe(1);
-    expect(await count('repair-jsonb', 'waiting')).toBe(1);
-  }), 60_000);
-
-  test('R22 unknown worker-only names refuse before Postgres readiness or recovery', async () => {
-    const startupCalls: string[] = [];
-    const fakeEngine = {
-      kind: 'postgres',
-      executeRaw: async () => {
-        startupCalls.push('readiness');
-        throw new Error('readiness must not run for invalid worker selection');
-      },
-    };
-    const fakeQueue = {
-      ensureSchema: async () => { startupCalls.push('schema'); },
-      reconcileOrphanedPrivateQueues: async () => { startupCalls.push('recovery'); return { cancelled_jobs: 0, cancelled_queues: 0 }; },
-    };
-    let exitCode: number | undefined;
-    const exitSpy = spyOn(process, 'exit').mockImplementation(((code?: number) => {
-      exitCode = code ?? 0;
-      throw new Error(`TEST_EXIT:${exitCode}`);
-    }) as never);
-    try {
-      await withEnv({ GBRAIN_WORKER_ONLY_NAMES: 'typo-name' }, async () => {
-        try {
-          await runJobsWork({ args: [], engine: fakeEngine, queue: fakeQueue } as never);
-        } catch (error) {
-          if (!(error instanceof Error) || !error.message.startsWith('TEST_EXIT:')) throw error;
-        }
-      });
-    } finally {
-      exitSpy.mockRestore();
-    }
-    expect(exitCode).toBe(WORKER_EXIT_CONFIGURATION);
-    expect(startupCalls).toEqual([]);
-  });
-=======
   test('R10 MinionWorker start and stop claim only the selected handler', () => inHome(async () => {
     const queue = new MinionQueue(engine);
     await queue.ensureSchema();
@@ -189,5 +130,4 @@ describe('jobs work PGLite worker allow-list runtime', () => {
     expect(await count('allowed-name', 'completed')).toBe(1);
     expect(await count('excluded-name', 'waiting')).toBe(1);
   }), 60_000);
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 });

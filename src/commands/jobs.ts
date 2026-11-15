@@ -4,7 +4,6 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
-import type { GBrainConfig } from '../core/config.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { MinionWorker } from '../core/minions/worker.ts';
 import { withFactsAbsorbHaltCooldown } from '../core/minions/llm-halt-cooldown.ts';
@@ -71,31 +70,6 @@ export {
 } from './jobs/shared.ts';
 export { maybeRunWorkerStartupRecovery } from './jobs/work.ts';
 export { parseWorkerOnlyNames } from './jobs-worker-flags.ts';
-
-/** Parse the optional worker-only allow-list from CLI args or the environment. */
-export function parseWorkerOnlyNames(
-  args: string[],
-  env: Record<string, string | undefined>,
-): string[] | undefined {
-  const flagIndex = args.findIndex(arg => arg === '--only' || arg.startsWith('--only='));
-  let raw: string | undefined;
-  if (flagIndex < 0) {
-    raw = env.GBRAIN_WORKER_ONLY_NAMES;
-  } else if (args[flagIndex].startsWith('--only=')) {
-    raw = args[flagIndex].slice('--only='.length);
-  } else {
-    raw = args[flagIndex + 1];
-    if (!raw || raw.startsWith('--')) {
-      throw new Error('--only requires a comma-separated list of worker names');
-    }
-  }
-  if (raw === undefined) return undefined;
-  const names = [...new Set(raw.split(',').map(name => name.trim()).filter(Boolean))];
-  if (names.length === 0) {
-    throw new Error('--only must contain at least one worker job name');
-  }
-  return names;
-}
 
 /**
  * Long-lived workers outlive operator config changes. Re-stamp the AI gateway
@@ -208,15 +182,8 @@ USAGE
                      explicit --queue; use \`gbrain doctor\` to discover them)
   gbrain jobs smoke [--sigkill-rescue] [--wedge-rescue]
   gbrain jobs watch [--json] [--follow] [--refresh-ms=N]
-  gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB] [--only NAMES]
+  gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
                    [--health-interval MS] [--nice N]
-<<<<<<< HEAD
-                   [--job-isolation inline|process]
-    --only NAMES   Claim only these job names
-                   Env fallback: GBRAIN_WORKER_ONLY_NAMES. An explicit
-                   --only flag takes precedence over the environment.
-                   Use --only=NAMES for a comma-separated list; unknown job names are rejected.
-=======
                    [--job-isolation inline|process] [--only NAMES]
     --only NAMES   Claim only these job names (comma-separated); every other
                    queued job is left for another worker. Use --only=NAMES as
@@ -224,7 +191,6 @@ USAGE
                    is rejected, and unknown job names are rejected.
                    Env fallback: GBRAIN_WORKER_ONLY_NAMES. An explicit
                    --only flag takes precedence over the environment.
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
   gbrain jobs supervisor [start] [--detach] [--json]
                          [--concurrency N] [--queue Q] [--pid-file PATH]
                          [--max-crashes N] [--health-interval N]
@@ -310,8 +276,6 @@ USAGE
 
 OPTIONS
   --queue Q            Queue to claim from (default: default)
-  --only NAMES         Claim only these worker job names. Env fallback:
-                       GBRAIN_WORKER_ONLY_NAMES. The flag takes precedence over the environment.
   --allow-shell-jobs   Enable the shell handler on this worker. Equivalent to
                        exporting GBRAIN_ALLOW_SHELL_JOBS=1 from your shell; a
                        .env in the working directory cannot set it.
@@ -577,7 +541,7 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
 export async function registerBuiltinHandlers(
   worker: MinionWorker,
   engine: BrainEngine,
-  opts?: { quiet?: boolean; config?: GBrainConfig },
+  opts?: { quiet?: boolean },
 ): Promise<void> {
   // `quiet` suppresses the informational startup stderr lines. The supervisor
   // (issue #1801) runs this against a throwaway worker purely to read
@@ -640,7 +604,7 @@ export async function registerBuiltinHandlers(
   // cost-ceremony env flag needed.
   const { makeSubagentHandler } = await import('../core/minions/handlers/subagent.ts');
   const { subagentAggregatorHandler } = await import('../core/minions/handlers/subagent-aggregator.ts');
-  worker.register('subagent', makeSubagentHandler({ engine, ...(opts?.config ? { config: opts.config } : {}) }));
+  worker.register('subagent', makeSubagentHandler({ engine }));
   worker.register('subagent_aggregator', subagentAggregatorHandler);
   process.stderr.write('[minion worker] subagent handlers enabled\n');
 
