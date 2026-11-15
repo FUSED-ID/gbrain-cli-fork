@@ -161,6 +161,29 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
     }
   }
 
+  // R22: refuse unknown `--only` names before any Postgres readiness, schema,
+  // or recovery work. A throwaway probe worker (no timers, no claims) reads the
+  // real handler registry; keepOnly below still enforces the same list.
+  if (onlyNames) {
+    const probe = new MinionWorker(engine, { queue: queueName, healthCheckInterval: 0 });
+    try {
+      await registerBuiltinHandlers(probe, engine, { quiet: true });
+    } catch (error) {
+      if (!isLocalConfigurationError(error)) throw error;
+      reportWorkerConfiguration(error);
+      process.exit(WORKER_EXIT_CONFIGURATION);
+    }
+    const registered = new Set(probe.registeredNames);
+    const unknownNames = onlyNames.filter(name => !registered.has(name));
+    if (unknownNames.length > 0) {
+      console.error(
+        `Error: unknown worker name(s) for --only: ${unknownNames.join(', ')}. ` +
+        `Registered: ${probe.registeredNames.join(', ')}`,
+      );
+      process.exit(WORKER_EXIT_CONFIGURATION);
+    }
+  }
+
   let childIdentity: Awaited<ReturnType<typeof checkWorkerStartup>>;
   try {
     childIdentity = await checkWorkerStartup(engine, childCliInvocation, childTiniPath);
