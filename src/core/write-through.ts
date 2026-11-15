@@ -22,11 +22,7 @@ import { hasSourceFilesystemLock, withSourceFilesystemLock, assertSourceFilesyst
  * only does "row exists + repo is a real dir → render + atomic write".
  */
 
-<<<<<<< HEAD
-import { existsSync, statSync, mkdirSync, unlinkSync, readdirSync, readFileSync, renameSync, rmSync } from 'fs';
-=======
-import { accessSync, constants as fsConstants, existsSync, statSync, mkdirSync, unlinkSync, readdirSync, readFileSync } from 'fs';
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
+import { accessSync, constants as fsConstants, existsSync, statSync, mkdirSync, unlinkSync, readdirSync, readFileSync, renameSync, rmSync } from 'fs';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'path';
 import { atomicStagingPath, atomicWriteFileSync } from './atomic-write.ts';
 import { flushDirectory } from './fs-durable.ts';
