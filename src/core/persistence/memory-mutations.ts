@@ -146,18 +146,12 @@ type PageLabel = { type?: string | null; frontmatter?: unknown; source_id: strin
 
 /** The visibility a remember saves into `page`: the caller's own, or the resolved default that never widens a private target. */
 async function rememberVisibility(ctx: OperationContext, call: RememberCall, page: PageLabel | null | undefined): Promise<'world' | 'private'> {
-<<<<<<< HEAD
-  if (!call.visibilityDefaulted) return call.p.visibility === 'private' ? 'private' : 'world';
-  const { resolveRememberVisibility } = await import('../facts/visibility.ts');
-  return resolveRememberVisibility(ctx.engine, page && await withFolderRestricted(ctx.engine, page));
-=======
   const { resolveRememberVisibility, resolveSourceVisibility, tightenToPage } = await import('../facts/visibility.ts');
   const requested = call.visibilityDefaulted
-    ? await resolveRememberVisibility(ctx.engine, page)
+    ? await resolveRememberVisibility(ctx.engine, page && await withFolderRestricted(ctx.engine, page))
     : call.p.visibility === 'private' ? 'private' : 'world';
   const sourceId = typeof call.p.source_id === 'string' ? call.p.source_id : ctx.sourceId ?? 'default';
   return tightenToPage(await resolveSourceVisibility(ctx.engine, sourceId, requested), page);
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 }
 
 async function rememberCarry(ctx: OperationContext, call: RememberCall, page: PageLabel): Promise<RememberCarry> {
@@ -220,9 +214,6 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const visibility = call.visibilityDefaulted && p.replaces !== undefined && p.replaces !== null
     ? await replacementVisibility(ctx.engine, sourceId, Number(p.replaces), defaultedVisibility, { remote: ctx.remote !== false })
     : defaultedVisibility;
-<<<<<<< HEAD
-  const factIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never, visibility, entity_slug: entitySlug, ...(memberPage ? { page_slug: memberPage } : {}) };
-=======
   // astra-7: the floor above may have contracted the requested domain. Keep the pre-floor
   // identity so a world withdrawal or purge still refuses this claim forced private.
   // A defaulted request keeps the brain default from before the source floor and the page floor,
@@ -231,8 +222,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const preFloor = call.visibilityDefaulted ? await resolveRememberVisibility(ctx.engine, null) : null;
   const requestedVisibility = preFloor !== null && preFloor !== visibility ? preFloor : (call.visibilityDefaulted ? null : (p.visibility ?? null));
   const floorTightened = requestedVisibility !== null && requestedVisibility !== visibility;
-  const factIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never, visibility, entity_slug: entitySlug };
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
+  const factIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never, visibility, entity_slug: entitySlug, ...(memberPage ? { page_slug: memberPage } : {}) };
   // Fail fast on an invalid target or a withdrawn claim; the coordinator re-checks both under its locks before publishing.
   if (p.replaces !== undefined && p.replaces !== null) {
     // Fail fast on an invalid target; the coordinator re-checks it under the row lock before publishing.
@@ -250,12 +240,8 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
     // The transport's session (MCP `_meta.session_id`) is recorded on the fact, as extract_facts records
     // it, so recall's session_id filter finds single facts too. Identity only — never a trust surface.
     intent: { ...callerIntent, entity_slug: entitySlug, fence, valid_from: typeof p.valid_from === 'string' ? new Date(p.valid_from).toISOString() : new Date().toISOString(), valid_until: validUntil?.toISOString() ?? null,
-<<<<<<< HEAD
       visibility, ...(call.visibilityDefaulted ? { visibility_defaulted: true } : {}), ...(memberPage ? { member_page: true } : {}),
-=======
-      visibility, ...(call.visibilityDefaulted ? { visibility_defaulted: true } : {}),
       ...(floorTightened ? { requested_visibility: requestedVisibility } : {}),
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
       ...(linked ? { entity_inferred: linked.via } : {}), ...(inference && 'warning' in inference ? { entity_warning: inference.warning } : {}),
       session_id: ctx.sessionId ?? null },
     authority, worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null });
