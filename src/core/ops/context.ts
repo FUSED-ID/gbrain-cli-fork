@@ -25,10 +25,8 @@ import { stampEvidence } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
 import type { SearchResult, HybridSearchMeta, PageReadScope, PageReadPolicy } from '../types.ts';
 import { resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
-<<<<<<< HEAD
 import { assertMemberPageWriter } from '../access/member-facts.ts';
 import { pageNotVisibleError, remoteTargetHidden } from '../persistence/page-visibility.ts';
-=======
 import {
   assertPrivateRoutingArmed,
   isPersonishPageWrite,
@@ -37,7 +35,6 @@ import {
   type PrivateWriteRoute,
   type PrivateWriteRouteInput,
 } from '../private-source-routing.ts';
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 
 // --- Agent-contract fixes shared by the op error sites ---
 
