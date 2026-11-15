@@ -61,14 +61,7 @@ function assertKnownWorkerNames(names: string[], registeredNames: string[]): voi
 
 export async function runJobsWork({ args, engine, queue }: JobsCommandContext): Promise<void> {
   // Lazy: jobs.ts imports this module statically, so a static import back would be a cycle.
-  const { registerBuiltinHandlers, parseWorkerOnlyNames } = await import('../jobs.ts');
-  let onlyNames: string[] | undefined;
-  try {
-    onlyNames = parseWorkerOnlyNames(args, process.env);
-  } catch (error) {
-    console.error(`[gbrain jobs] Invalid worker selection: ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(args.some(arg => arg === '--only' || arg.startsWith('--only=')) ? 2 : WORKER_EXIT_CONFIGURATION);
-  }
+  const { registerBuiltinHandlers } = await import('../jobs.ts');
   // --allow-shell-jobs (supervisor pass-through, see buildWorkerArgs): the
   // startup cwd-.env quarantine drops GBRAIN_ALLOW_SHELL_JOBS when a .env
   // in this worker's cwd assigns it, so the flag re-asserts the operator's
@@ -415,28 +408,8 @@ export async function drainPgliteQueue(
 ): Promise<{ delayed: number }> {
   await queue.ensureSchema();
   const worker = new MinionWorker(engine, { queue: queueName, pollInterval: 200, healthCheckInterval: 0 });
-<<<<<<< HEAD
-  if (onlyNames === undefined) {
-    await registerHandlers(worker, engine);
-  } else {
-    // Selection path: register the builtins against a temporary registry
-    // worker, validate the requested names there, then copy only the
-    // selected handlers onto the worker that will actually claim jobs.
-    const registry = new MinionWorker(engine, { queue: queueName, healthCheckInterval: 0 });
-    await registerHandlers(registry, engine);
-    assertKnownWorkerNames(onlyNames, registry.registeredNames);
-    for (const name of onlyNames) {
-      const handler = registry.getHandler(name);
-      if (!handler) {
-        throw new Error(`unknown worker job name(s): ${name} (registered: ${registry.registeredNames.join(', ') || 'none'})`);
-      }
-      worker.register(name, handler);
-    }
-  }
-=======
   await registerHandlers(worker, engine);
   if (onlyNames) worker.keepOnly(onlyNames);
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
   const names = worker.registeredNames;
   const count = async (statuses: string[]): Promise<number> => {
     const [row] = await engine.executeRaw<{ n: number }>(
