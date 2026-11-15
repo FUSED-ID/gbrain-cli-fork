@@ -437,12 +437,9 @@ test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
-<<<<<<< HEAD
+test/postgres-engine-private-routing.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
-=======
-test/postgres-engine-private-routing.test.ts
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 test/purge-fact.test.ts
 test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
