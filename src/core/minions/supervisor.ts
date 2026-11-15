@@ -190,13 +190,8 @@ const DEFAULTS: Omit<SupervisorOpts, 'cliPath'> = {
  * niceness also inherits to the worker's own children automatically.
  */
 export function buildWorkerArgs(
-<<<<<<< HEAD
-  opts: Pick<SupervisorOpts, 'concurrency' | 'queue' | 'maxRssMb' | 'nice_requested' | 'jobIsolation'> &
-    Partial<Pick<SupervisorOpts, 'allowShellJobs'>> & { onlyNames?: string[] },
-=======
   opts: Pick<SupervisorOpts, 'concurrency' | 'queue' | 'maxRssMb' | 'nice_requested' | 'jobIsolation' | 'onlyNames'> &
     Partial<Pick<SupervisorOpts, 'allowShellJobs'>>,
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 ): string[] {
   const args = [
     'jobs', 'work',
@@ -906,22 +901,8 @@ export class MinionSupervisor {
       // gates execution), so registeredNames is a static set — `quiet` just
       // suppresses the informational startup lines during derivation.
       await registerBuiltinHandlers(probe, this.engine, { quiet: true });
-<<<<<<< HEAD
-      // Same precedence as buildWorkerArgs(): the options allow-list is the
-      // validated selection the child argv is built from, so it decides the
-      // claimable set whenever supplied. Only fall back to the environment
-      // when no options allow-list was passed.
-      const onlyNames = this.opts.onlyNames?.length
-        ? this.opts.onlyNames
-        : process.env.GBRAIN_WORKER_ONLY_NAMES
-          ?.split(',').map(name => name.trim()).filter(Boolean);
-      this.handlerNames = onlyNames?.length
-        ? probe.registeredNames.filter(name => onlyNames.includes(name))
-        : [...probe.registeredNames];
-=======
       if (this.opts.onlyNames) probe.keepOnly(this.opts.onlyNames);
       this.handlerNames = [...probe.registeredNames];
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
     } catch (e) {
       this.handlerNames = [];
       this.emit('health_warn', {
