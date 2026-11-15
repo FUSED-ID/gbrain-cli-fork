@@ -34,6 +34,38 @@ describe('supervisor worker allow-list propagation', () => {
       expect(internal.handlerNames).toEqual(['facts-absorb']);
     });
   }, 60_000);
+
+  test('R23 derives health names from options when the environment is unset', async () => {
+    await withEnv({ GBRAIN_WORKER_ONLY_NAMES: undefined }, async () => {
+      const supervisor = new MinionSupervisor({ kind: 'pglite' } as never, {
+        cliPath: '/bin/sh',
+        healthInterval: 0,
+        onlyNames: ['facts-absorb'],
+      } as never);
+      const internal = supervisor as unknown as {
+        deriveHandlerNames(): Promise<void>;
+        handlerNames: string[];
+      };
+      await internal.deriveHandlerNames();
+      expect(internal.handlerNames).toEqual(['facts-absorb']);
+    });
+  }, 60_000);
+
+  test('R24 options take precedence over a conflicting environment selection', async () => {
+    await withEnv({ GBRAIN_WORKER_ONLY_NAMES: 'shell' }, async () => {
+      const supervisor = new MinionSupervisor({ kind: 'pglite' } as never, {
+        cliPath: '/bin/sh',
+        healthInterval: 0,
+        onlyNames: ['facts-absorb'],
+      } as never);
+      const internal = supervisor as unknown as {
+        deriveHandlerNames(): Promise<void>;
+        handlerNames: string[];
+      };
+      await internal.deriveHandlerNames();
+      expect(internal.handlerNames).toEqual(['facts-absorb']);
+    });
+  }, 60_000);
 });
 
 /**
@@ -232,5 +264,31 @@ describe('jobs supervisor start refuses the worker-only CLI flag', () => {
     expect(result.stderr).not.toContain('does not support --only');
     expect(result.configLoaded).toBe('1');
     expect(result.exitCode).toBe(WORKER_EXIT_CONFIGURATION);
+  });
+
+  test('R21 the validated environment allow-list is passed to the actual child argv', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-supervisor-only-child-'));
+    let workerArgs: string[] | undefined;
+    const startSpy = spyOn(MinionSupervisor.prototype, 'start').mockImplementation(async function (this: MinionSupervisor) {
+      const opts = (this as unknown as { opts: Parameters<typeof buildWorkerArgs>[0] }).opts;
+      workerArgs = buildWorkerArgs(opts);
+    });
+    try {
+      await withEnv({
+        GBRAIN_HOME: home,
+        GBRAIN_DATABASE_URL: undefined,
+        DATABASE_URL: undefined,
+        BRAIN_PATH: undefined,
+        GBRAIN_WORKER_ONLY_NAMES: 'facts-absorb',
+      }, async () => {
+        await runJobs({ kind: 'postgres' } as never, [
+          'supervisor', 'start', '--cli-path', '/bin/true', '--pid-file', join(home, 'supervisor.pid'),
+        ]);
+      });
+    } finally {
+      startSpy.mockRestore();
+    }
+    expect(workerArgs).toContain('--only');
+    expect(workerArgs?.[workerArgs.indexOf('--only') + 1]).toBe('facts-absorb');
   });
 });
