@@ -1,10 +1,7 @@
 import { fenceClaimHashes, overlayWithdrawalBody } from '../facts/withdrawal-overlay.ts';
-<<<<<<< HEAD
 import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
-=======
 import { isDerivationPrivate, privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { parseSourceConfig } from '../sources-load.ts';
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 import type { ReadQuery } from '../search/read-enrichment.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { rowToPage } from '../utils.ts';
