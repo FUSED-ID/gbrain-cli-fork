@@ -21,6 +21,6 @@ export function parseWorkerOnlyNames(
   const raw = parseWorkerFlag(args, '--only') ?? env.GBRAIN_WORKER_ONLY_NAMES;
   if (raw === undefined) return undefined;
   const names = [...new Set(raw.split(',').map(name => name.trim()).filter(Boolean))];
-  if (names.length === 0) throw new Error('--only must contain at least one comma-separated job name');
+  if (names.length === 0) throw new Error('--only must contain at least one worker job name (comma-separated)');
   return names;
 }
