@@ -36,12 +36,9 @@ beforeAll(async () => {
   await engine.connect({});
   await engine.initSchema();
   sourceId = await newSource(engine);
-<<<<<<< HEAD
   // The facts block (on by default) takes every budgeted query; this suite tests the arm it replaces.
   await engine.setConfig(QUERY_FACTS_BLOCK_KEY, 'false');
-=======
   await engine.executeRaw(`UPDATE sources SET config = COALESCE(config, '{}'::jsonb) || '{"federated":true,"facts_visibility":"world"}'::jsonb WHERE id = $1`, [sourceId]);
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
   for (let i = 0; i < 6; i++) {
     await putPage(engine, sourceId, `conversations/chat-${i}`, page('conversation', `chat ${i}`, `**User:** Notes on Forge part ${i}. By the way, the Forge offsite is booked in Santa Fe.\n\n**Assistant:** Noted.`, `date: 2025-07-0${i + 1}\n`));
   }
