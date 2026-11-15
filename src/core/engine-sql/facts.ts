@@ -29,14 +29,10 @@ import { sqlFragment, trustedSql } from './fragment.ts';
 import { compileRowNormalizer } from './normalize.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { FACT_WITHDRAWAL_STAMP_DEFERRED_SETTING } from '../facts/insert-guard-schema.ts';
-<<<<<<< HEAD
 import { privateProvenanceFilterUnderPolicy } from '../search/private-visibility.ts';
 import { factVisibilitySql, onMemberPageSql } from '../access/member-facts.ts';
-=======
-import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
 import { tightenToPage, tightenToSource } from '../facts/visibility.ts';
 import { isSourceFederated } from '../sources-load.ts';
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 import { storedTrustTier } from '../trust/tier.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 
