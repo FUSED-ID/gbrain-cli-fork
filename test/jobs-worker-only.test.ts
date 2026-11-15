@@ -58,4 +58,14 @@ describe('bounded worker job allow-list', () => {
     expect(() => worker.keepOnly(['facts-absorb', 'facts-absorbb', 'typo-name']))
       .toThrow(/facts-absorbb.*typo-name|typo-name.*facts-absorbb/);
   });
+
+  test('an empty environment allow-list is rejected', () => {
+    expect(() => parseWorkerOnlyNames([], { GBRAIN_WORKER_ONLY_NAMES: ' , ' }))
+      .toThrow('--only must contain at least one worker job name');
+  });
+
+  test('unknown syntactically valid names are preserved for handler validation', () => {
+    expect(parseWorkerOnlyNames(['--only', 'facts-absorb,typo-name'], {}))
+      .toEqual(['facts-absorb', 'typo-name']);
+  });
 });
