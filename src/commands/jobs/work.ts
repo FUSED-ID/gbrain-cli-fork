@@ -43,9 +43,31 @@ export async function maybeRunWorkerStartupRecovery(
   }
 }
 
+/**
+ * Reject selected worker job names that the builtin handler set does not
+ * provide. Replaces MinionWorker.keepOnly's validation while leaving both
+ * registration paths to select handlers explicitly.
+ */
+function assertKnownWorkerNames(names: string[], registeredNames: string[]): void {
+  const known = new Set(registeredNames);
+  const unknown = names.filter(name => !known.has(name));
+  if (unknown.length > 0) {
+    throw new Error(
+      `unknown worker job name(s): ${unknown.join(', ')} (registered: ${registeredNames.join(', ') || 'none'})`,
+    );
+  }
+}
+
 export async function runJobsWork({ args, engine, queue }: JobsCommandContext): Promise<void> {
   // Lazy: jobs.ts imports this module statically, so a static import back would be a cycle.
-  const { registerBuiltinHandlers } = await import('../jobs.ts');
+  const { registerBuiltinHandlers, parseWorkerOnlyNames } = await import('../jobs.ts');
+  let onlyNames: string[] | undefined;
+  try {
+    onlyNames = parseWorkerOnlyNames(args, process.env);
+  } catch (error) {
+    console.error(`[gbrain jobs] Invalid worker selection: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(args.some(arg => arg === '--only' || arg.startsWith('--only=')) ? 2 : WORKER_EXIT_CONFIGURATION);
+  }
   // --allow-shell-jobs (supervisor pass-through, see buildWorkerArgs): the
   // startup cwd-.env quarantine drops GBRAIN_ALLOW_SHELL_JOBS when a .env
   // in this worker's cwd assigns it, so the flag re-asserts the operator's
@@ -53,8 +75,18 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
   if (hasFlag(args, '--allow-shell-jobs')) process.env.GBRAIN_ALLOW_SHELL_JOBS = '1';
 
   const queueName = parseFlag(args, '--queue') ?? 'default';
+  if (engine.kind !== 'pglite' && onlyNames !== undefined) {
+    const probe = new MinionWorker(engine, { queue: queueName, healthCheckInterval: 0 });
+    await registerBuiltinHandlers(probe, engine, { quiet: true, config: { engine: engine.kind ?? 'postgres' } });
+    try {
+      assertKnownWorkerNames(onlyNames, probe.registeredNames);
+    } catch (error) {
+      console.error(`[gbrain jobs] Invalid worker selection: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(WORKER_EXIT_CONFIGURATION);
+    }
+  }
   if (engine.kind === 'pglite') {
-    await drainPgliteQueue(engine, queue, queueName, registerBuiltinHandlers);
+    await drainPgliteQueue(engine, queue, queueName, registerBuiltinHandlers, onlyNames);
     return;
   }
   const concurrency = resolveWorkerConcurrency(args);
@@ -201,7 +233,26 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
     ...(terminalHook ? { onJobSettled: terminalHookNotifier(engine, terminalHook).onJobSettled } : {}),
   });
   try {
-    await registerBuiltinHandlers(worker, engine);
+    if (onlyNames === undefined) {
+      await registerBuiltinHandlers(worker, engine);
+    } else {
+      // Selection path: register the builtins against a temporary registry
+      // worker, validate the requested names there, then copy only the
+      // selected handlers onto the worker that will actually claim jobs.
+      const registry = new MinionWorker(engine, { queue: queueName, healthCheckInterval: 0 });
+      // Full-config loading, same as the unrestricted worker registration above:
+      // the selected handlers run on the live worker, so they must not be
+      // built with the probe's synthetic engine-only config.
+      await registerBuiltinHandlers(registry, engine, { quiet: true });
+      assertKnownWorkerNames(onlyNames, registry.registeredNames);
+      for (const name of onlyNames) {
+        const handler = registry.getHandler(name);
+        if (!handler) {
+          throw new Error(`unknown worker job name(s): ${name} (registered: ${registry.registeredNames.join(', ') || 'none'})`);
+        }
+        worker.register(name, handler);
+      }
+    }
   } catch (error) {
     if (!isLocalConfigurationError(error)) throw error;
     reportWorkerConfiguration(error);
@@ -347,10 +398,27 @@ export async function drainPgliteQueue(
   queue: MinionQueue,
   queueName: string,
   registerHandlers: (worker: MinionWorker, engine: BrainEngine) => Promise<void>,
+  onlyNames?: string[],
 ): Promise<{ delayed: number }> {
   await queue.ensureSchema();
   const worker = new MinionWorker(engine, { queue: queueName, pollInterval: 200, healthCheckInterval: 0 });
-  await registerHandlers(worker, engine);
+  if (onlyNames === undefined) {
+    await registerHandlers(worker, engine);
+  } else {
+    // Selection path: register the builtins against a temporary registry
+    // worker, validate the requested names there, then copy only the
+    // selected handlers onto the worker that will actually claim jobs.
+    const registry = new MinionWorker(engine, { queue: queueName, healthCheckInterval: 0 });
+    await registerHandlers(registry, engine);
+    assertKnownWorkerNames(onlyNames, registry.registeredNames);
+    for (const name of onlyNames) {
+      const handler = registry.getHandler(name);
+      if (!handler) {
+        throw new Error(`unknown worker job name(s): ${name} (registered: ${registry.registeredNames.join(', ') || 'none'})`);
+      }
+      worker.register(name, handler);
+    }
+  }
   const names = worker.registeredNames;
   const count = async (statuses: string[]): Promise<number> => {
     const [row] = await engine.executeRaw<{ n: number }>(

@@ -37,6 +37,39 @@ export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsComm
     return;
   }
 
+  // The supervisor supports environment-only worker scoping, not a CLI --only
+  // flag. Validate this before loading configuration or creating a detached child.
+  let onlyNames: string[] | undefined;
+  if (isStartCmd) {
+    const refuseWorkerOnly = (message = 'The supervisor does not support --only. Use GBRAIN_WORKER_ONLY_NAMES for worker selection.') => process.exit(writeCliRefusal(
+      usageError(message,
+        'Example: GBRAIN_WORKER_ONLY_NAMES=facts-absorb gbrain jobs supervisor start --detach'),
+      'jobs', { json: jsonMode },
+    ));
+    if (args.slice(1).some(arg => arg === '--only' || arg.startsWith('--only='))) {
+      refuseWorkerOnly();
+    }
+    if (process.env.GBRAIN_WORKER_ONLY_NAMES !== undefined) {
+      try {
+        const { parseWorkerOnlyNames, registerBuiltinHandlers } = await import('../jobs.ts');
+        const { MinionWorker } = await import('../../core/minions/worker.ts');
+        onlyNames = parseWorkerOnlyNames([], process.env);
+        const probe = new MinionWorker(engine, { queue: parseFlag(args, '--queue') ?? 'default', healthCheckInterval: 0 });
+        await registerBuiltinHandlers(probe, engine, { quiet: true, config: { engine: engine.kind ?? 'postgres' } });
+        const registered = new Set(probe.registeredNames);
+        const unknown = (onlyNames ?? []).filter(name => !registered.has(name));
+        if (unknown.length > 0) {
+          throw new Error(
+            `Unknown worker job name${unknown.length === 1 ? '' : 's'}: ${unknown.join(', ')}. ` +
+            `Registered: ${probe.registeredNames.join(', ')}`,
+          );
+        }
+      } catch (error) {
+        refuseWorkerOnly(error instanceof Error ? error.message : String(error));
+      }
+    }
+  }
+
   // ----- start subcommand (default) -----
   // D2: refusals keep their stderr line; under --json the envelope is the stdout document
   // (written directly: the `jobs` record has no record-wide json contract, see runJobsSupervisor's detach branch).
@@ -159,6 +192,7 @@ export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsComm
     healthInterval,
     cliPath: workerInvocation.cmd,
     cliArgsPrefix: workerInvocation.argsPrefix,
+    onlyNames,
     allowShellJobs,
     json: jsonMode,
     maxRssMb,

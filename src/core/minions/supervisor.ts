@@ -77,6 +77,8 @@ export interface SupervisorOpts {
   concurrency: number;
   /** Queue name (passed to child). Default: 'default'. */
   queue: string;
+  /** Optional worker allow-list passed to the spawned jobs work process. */
+  onlyNames?: string[];
   /** PID file path. Default: `<gbrain home>/supervisor-<brain-id>.pid`, GBRAIN_HOME honoured (parent dir auto-created). */
   pidFile: string;
   /** Max consecutive crashes before giving up. Default: 10. */
@@ -186,13 +188,16 @@ const DEFAULTS: Omit<SupervisorOpts, 'cliPath'> = {
  */
 export function buildWorkerArgs(
   opts: Pick<SupervisorOpts, 'concurrency' | 'queue' | 'maxRssMb' | 'nice_requested' | 'jobIsolation'> &
-    Partial<Pick<SupervisorOpts, 'allowShellJobs'>>,
+    Partial<Pick<SupervisorOpts, 'allowShellJobs'>> & { onlyNames?: string[] },
 ): string[] {
   const args = [
     'jobs', 'work',
     '--concurrency', String(opts.concurrency),
     '--queue', opts.queue,
   ];
+  if (opts.onlyNames && opts.onlyNames.length > 0) {
+    args.push('--only', opts.onlyNames.join(','));
+  }
   if (opts.maxRssMb > 0) {
     args.push('--max-rss', String(opts.maxRssMb));
   }
@@ -868,7 +873,10 @@ export class MinionSupervisor {
    * started — no timers, no DB) and reading `registeredNames`. Zero duplication vs
    * a hand-maintained constant, and it auto-tracks every future handler (Codex
    * #16). Lazy-imported to avoid the supervisor.ts ↔ jobs.ts / worker.ts import
-   * cycle. On any failure the watchdog stays inert (empty names → waiting_claimable
+   * cycle. The effective selection matches `buildWorkerArgs()`: a validated
+   * `opts.onlyNames` wins (child argv is built from it), otherwise fall back to
+   * GBRAIN_WORKER_ONLY_NAMES; with neither, the full registered set is claimable.
+   * On any failure the watchdog stays inert (empty names → waiting_claimable
    * is always 0 → no restart) rather than risk a misscoped kill — the worker's own
    * DB probe (fix #2) still covers the dead-pool case.
    */
@@ -886,7 +894,17 @@ export class MinionSupervisor {
       // gates execution), so registeredNames is a static set — `quiet` just
       // suppresses the informational startup lines during derivation.
       await registerBuiltinHandlers(probe, this.engine, { quiet: true });
-      this.handlerNames = [...probe.registeredNames];
+      // Same precedence as buildWorkerArgs(): the options allow-list is the
+      // validated selection the child argv is built from, so it decides the
+      // claimable set whenever supplied. Only fall back to the environment
+      // when no options allow-list was passed.
+      const onlyNames = this.opts.onlyNames?.length
+        ? this.opts.onlyNames
+        : process.env.GBRAIN_WORKER_ONLY_NAMES
+          ?.split(',').map(name => name.trim()).filter(Boolean);
+      this.handlerNames = onlyNames?.length
+        ? probe.registeredNames.filter(name => onlyNames.includes(name))
+        : [...probe.registeredNames];
     } catch (e) {
       this.handlerNames = [];
       this.emit('health_warn', {
