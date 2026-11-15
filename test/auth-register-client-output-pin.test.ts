@@ -51,8 +51,8 @@ describe('auth register-client output pin (byte-identical product contract)', ()
       '  Write source:        default',
       '  Federated reads:     default',
       '',
-      'Save the client secret — it will not be shown again.',
-      'Revoke with: gbrain auth revoke-client "gbrain_cl_abc123"',
+      'Save the client secret \u2014 it will not be shown again.',
+      'Revoke with: gbrain auth revoke-client "gbrain_cl_abc123" --yes-i-mean-it',
     ]);
   });
 
@@ -80,10 +80,10 @@ describe('auth register-client output pin (byte-identical product contract)', ()
       redirectUris: ['https://a.example/cb'],
     };
     const lines = formatRegisterClientOutput('pub', r, parsed);
-    expect(lines).toContain('  Client Secret:       <public client — none issued>\n');
+    expect(lines).toContain('  Client Secret:       <public client \u2014 none issued>\n');
     expect(lines).toContain('  Redirect URIs:       https://a.example/cb');
-    expect(lines).toContain('Public client (PKCE-only) — no secret needed.');
-    // The e2e "public client" site scrapes ID only — must still match.
+    expect(lines).toContain('Public client (PKCE-only) \u2014 no secret needed.');
+    // The e2e "public client" site scrapes ID only \u2014 must still match.
     expect(lines.join('\n').match(E2E_ID_RE)?.[1]).toBe('gbrain_cl_abc123');
   });
 

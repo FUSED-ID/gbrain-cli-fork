@@ -2,8 +2,13 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
+<<<<<<< HEAD
     "stdoutBytes": 269760,
     "stdoutSha256": "dd3dc10529f90a617d4ddfde2eaffd90fe3892a5d23ffe0f6457aa9557e5babb",
+=======
+    "stdoutBytes": 264489,
+    "stdoutSha256": "6416fc799c6c995e1db20e2787e6252f7d65f93e3428555e9899a90463bd23cf",
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
     "toolNames": [
       "remember",
       "entity",
@@ -5643,7 +5648,7 @@
         "scope": "read"
       },
       {
-        "description": "Hard-remove a source (cascades pages/chunks/embeddings). Refuses to delete the auto-managed clone dir unless its resolved path is confined under $GBRAIN_HOME/clones/ (realpath+lstat — symlink-safe). For most workflows prefer the soft-delete path (`gbrain sources archive`). Confined to the caller's WRITE authority, not its read scope: an untrusted caller may remove only its own write source (a federated read grant naming a source does not make it removable); any other id answers not_found, indistinguishable from a nonexistent source. Only the trusted local CLI (`gbrain sources remove`) can remove any source.",
+        "description": "Hard-remove a source (cascades pages/facts/chunks/embeddings). Refuses to delete the auto-managed clone dir unless its resolved path is confined under $GBRAIN_HOME/clones/ (realpath+lstat — symlink-safe). For most workflows prefer the soft-delete path (`gbrain sources archive`). Confined to the caller's WRITE authority, not its read scope: an untrusted caller may remove only its own write source (a federated read grant naming a source does not make it removable); any other id answers not_found, indistinguishable from a nonexistent source. Only the trusted local CLI (`gbrain sources remove`) can remove any source.",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -5658,7 +5663,7 @@
         "schema": {
           "properties": {
             "confirm_destructive": {
-              "description": "Required when the source has data (pages, chunks). Without it the op refuses.",
+              "description": "Required when the source has data (pages, facts, or chunks). Without it the op refuses.",
               "type": "boolean"
             },
             "dry_run": {

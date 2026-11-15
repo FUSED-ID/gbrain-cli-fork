@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runCycle } from '../src/core/cycle.ts';
+import { readPurgeRetentionHours } from '../src/core/sync-reconcile.ts';
 import { timeContainedPhase } from '../src/core/cycle/phase-containment.ts';
 import { countDeadDreamSubmissions, resetDreamBreakerKey } from '../src/core/cycle/dream-breaker.ts';
 import { dreamPaidLoopCheck } from '../src/commands/doctor/checks/dream-breaker.ts';
@@ -107,11 +108,39 @@ test('runCycle: a refused synthesize_concepts no longer kills the job; the next 
       // managed maintenance preflight refuses before any model work.
       await engine.setConfig('sync.write_through', 'true');
       await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-      const report = await runCycle(engine, { brainDir: root, sourceId, phases: ['synthesize_concepts', 'purge'] });
+      const olderThanHours = await readPurgeRetentionHours(engine);
+      const report = await runCycle(engine, { brainDir: root, sourceId, phases: ['synthesize_concepts', 'purge'], purgeConsent: { olderThanHours } });
       const concepts = report.phases.find(p => p.phase === 'synthesize_concepts');
       expect(concepts).toMatchObject({ status: 'fail', details: { contained: true }, error: { code: 'owner_unavailable' } });
       expect(report.phases.find(p => p.phase === 'purge')?.status).toBe('ok');
       expect(report.status).toBe('partial');
+    });
+  } finally {
+    await disposePersistenceConsumer(engine);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await engine.setConfig('sync.write_through', 'true');
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('without purge consent the phase is skipped and nothing is deleted', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-containment-'));
+  const root = join(dir, 'brain'); mkdirSync(root);
+  const sourceId = `contain-${randomUUID().slice(0, 8)}`;
+  try {
+    await withEnv({ GBRAIN_HOME: join(dir, 'home'), GBRAIN_SCHEMA_PACK: 'gbrain-creator', OPENAI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined }, async () => {
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
+      await engine.setConfig('sync.write_through', 'false');
+      await submitPageMutation({ engine, sourceId, remote: false, config: { engine: 'pglite', embedding_disabled: true } as never,
+        dryRun: false, logger: { info() {}, warn() {}, error() {} } }, { operation: 'put_page', params: { slug: 'notes/expired',
+        request_id: randomUUID(), content: '---\ntitle: Expired\ntype: note\n---\nGone soon.' } });
+      await engine.executeRaw("UPDATE pages SET deleted_at=now() - interval '100 hours' WHERE source_id=$1 AND slug='notes/expired'", [sourceId]);
+      const report = await runCycle(engine, { brainDir: root, sourceId, phases: ['purge'] });
+      const phase = report.phases.find(p => p.phase === 'purge')!;
+      expect(phase.status).toBe('skipped');
+      expect(phase.details).toEqual({ reason: 'missing_purge_consent', required_flag: '--yes-i-mean-it' });
+      expect(await engine.executeRaw("SELECT 1 FROM pages WHERE source_id=$1 AND slug='notes/expired'", [sourceId])).toHaveLength(1);
     });
   } finally {
     await disposePersistenceConsumer(engine);

@@ -39,7 +39,7 @@ beforeAll(async () => {
   for (const engine of engines) {
     const sourceId = `withdrawal-file-race-${engine.kind}`;
     const root = mkdtempSync(join(tmpdir(), 'gbrain-withdrawal-file-')); roots.push(root);
-    await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
+    await engine.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{"federated":true,"facts_visibility":"world"}')`, [sourceId, root]);
     const binding = await claimWorktree(engine, sourceId, root, hostId);
     const page = await engine.putPage(slug, { type: 'note', title: 'Withdrawal file race', compiled_truth: 'Original body.' }, { sourceId });
     await engine.executeRaw('UPDATE pages SET source_path=$1 WHERE source_id=$2 AND slug=$3', [`${slug}.md`, sourceId, slug]);

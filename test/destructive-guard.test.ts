@@ -1,5 +1,5 @@
 /**
- * v0.26.5 — destructive-guard unit tests.
+ * v0.26.5 \u2014 destructive-guard unit tests.
  *
  * Source-level guard against accidental data loss. Three layers:
  *  1. Impact assessment (counts pages/chunks/embeddings/files for a source)
@@ -8,7 +8,7 @@
  *  3. Soft-delete with 72h TTL (column-based as of v0.26.5; JSONB shape was
  *     migrated in v33)
  *
- * Run against PGLite — the contract logic is identical on Postgres but
+ * Run against PGLite \u2014 the contract logic is identical on Postgres but
  * PGLite is fast + DATABASE_URL-free. Postgres-specific paths (CONCURRENTLY,
  * RLS) are covered separately by E2E tests.
  */
@@ -34,11 +34,11 @@ import {
   type DestructiveImpact,
 } from '../src/core/destructive-guard.ts';
 
-// Tier 3 opt-out — these tests need the cold-init schema path so the v33
+// Tier 3 opt-out \u2014 these tests need the cold-init schema path so the v33
 // migration columns exist on the brain under test. Unset for this file's
 // tests and restore afterwards: a CI shard runs hundreds of files in ONE bun
-// process (scripts/test-shard.sh), so a module-scope delete would cold-boot
-// every later engine in the shard (check:test-env-opt-ins pins this shape).
+// process, so a module-scope delete would cold-boot every later engine in the
+// shard (check:test-env-opt-ins pins this shape).
 let savedSnapshot: string | undefined;
 beforeAll(() => {
   savedSnapshot = process.env.GBRAIN_PGLITE_SNAPSHOT;
@@ -122,7 +122,7 @@ describe('assessDestructiveImpact', () => {
     expect(impact!.summary).toContain('permanently delete');
   });
 
-  test('source-scopes pages — multi-source isolation', async () => {
+  test('source-scopes pages \u2014 multi-source isolation', async () => {
     await seedSource(engine, 'aim-src-a', { withPages: 2 });
     await seedSource(engine, 'aim-src-b', { withPages: 5 });
     const a = await assessDestructiveImpact(engine, 'aim-src-a');
@@ -131,7 +131,7 @@ describe('assessDestructiveImpact', () => {
     expect(b!.pageCount).toBe(5);
   });
 
-  test('counts facts — a zero-page fact-holding source is data at risk, not "safe to remove"', async () => {
+  test('counts facts \u2014 a zero-page fact-holding source is data at risk, not "safe to remove"', async () => {
     // Revoked-agent-workspace shape: zero pages, facts present (the primary
     // agent write lane). Pre-fix the preview said "safe to remove" while the
     // delete would cascade the facts away.
@@ -221,7 +221,7 @@ describe('checkDestructiveConfirmation (gate truth table)', () => {
 });
 
 describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
-  // ONE engine for the whole describe — cold init runs ~29 migrations, ~3s.
+  // ONE engine for the whole describe \u2014 cold init runs ~29 migrations, ~3s.
   // Each test uses a unique source id so they don't cross-pollute.
   let engine: PGLiteEngine;
 
@@ -405,7 +405,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     expect(remainingPages[0].n).toBe(0);
   });
 
-  test('gbrain#5452 — epoch or missing archive timestamps are never purge-eligible and are reported', async () => {
+  test('gbrain#5452 \u2014 epoch or missing archive timestamps are never purge-eligible and are reported', async () => {
     const epochId = 'pe-epoch';
     const nullId = 'pe-null-expiry';
     await seedSource(engine, epochId, { withPages: 1 });
@@ -424,7 +424,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     expect(purged).not.toContain(epochId);
     expect(purged).not.toContain(nullId);
     expect(blocked.map((b) => b.id)).toEqual(expect.arrayContaining([epochId, nullId]));
-    // Both sources and their pages survive — full contents intact.
+    // Both sources and their pages survive \u2014 full contents intact.
     const intact = await engine.executeRaw<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM pages WHERE source_id IN ($1, $2)`,
       [epochId, nullId],
@@ -435,14 +435,14 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     await engine.executeRaw(`DELETE FROM sources WHERE id IN ($1, $2)`, [epochId, nullId]);
   });
 
-  test('gbrain#5452 — a missing/epoch archived_at refuses purge even with a normal past expiry', async () => {
+  test('gbrain#5452 \u2014 a missing/epoch archived_at refuses purge even with a normal past expiry', async () => {
     const epochArchId = 'pe-epoch-arch';
     const nullArchId = 'pe-null-arch';
     await seedSource(engine, epochArchId, { withPages: 1 });
     await seedSource(engine, nullArchId, { withPages: 1 });
     await softDeleteSource(engine, epochArchId);
     await softDeleteSource(engine, nullArchId);
-    // Past expiry is a perfectly normal value here — the refusal comes from
+    // Past expiry is a perfectly normal value here \u2014 the refusal comes from
     // archived_at, which can no longer prove the 72h window ever existed.
     await engine.executeRaw(
       `UPDATE sources SET archived_at = '1970-01-01T00:00:00Z', archive_expires_at = now() - INTERVAL '1 hour' WHERE id = $1`,
@@ -464,7 +464,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     await engine.executeRaw(`DELETE FROM sources WHERE id IN ($1, $2)`, [epochArchId, nullArchId]);
   });
 
-  test('gbrain#5452 — timestamps flipped to epoch/missing after candidate selection are refused at delete time', async () => {
+  test('gbrain#5452 \u2014 timestamps flipped to epoch/missing after candidate selection are refused at delete time', async () => {
     const flipExpiryId = 'pe-flip-expiry';
     const flipArchId = 'pe-flip-arch';
     await seedSource(engine, flipExpiryId, { withPages: 1 });
@@ -478,7 +478,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     );
     // The sweep reads candidates, then deletes one row at a time. Reproduce a
     // stamp flip landing in between: the moment the first DELETE arrives, both
-    // rows' stamps degrade to the refusal set — the DELETE itself must refuse.
+    // rows' stamps degrade to the refusal set \u2014 the DELETE itself must refuse.
     const orig = engine.executeRaw.bind(engine);
     let flipped = false;
     engine.executeRaw = (async (sql: string, params?: unknown[]) => {
@@ -509,7 +509,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     await engine.executeRaw(`DELETE FROM sources WHERE id IN ($1, $2)`, [flipExpiryId, flipArchId]);
   });
 
-  test('gbrain#4115 — an FK-blocked source is reported and skipped; the deletable one still purges', async () => {
+  test('gbrain#4115 \u2014 an FK-blocked source is reported and skipped; the deletable one still purges', async () => {
     const blockedId = 'pe-fk-blocked';
     const deletableId = 'pe-fk-deletable';
     await seedSource(engine, blockedId, { withPages: 1 });
@@ -521,7 +521,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
       [blockedId, deletableId],
     );
     // A revoked-but-retained oauth client (soft-deleted via deleted_at) under
-    // v64's ON DELETE RESTRICT — the exact production shape from the report.
+    // v64's ON DELETE RESTRICT \u2014 the exact production shape from the report.
     await engine.executeRaw(
       `INSERT INTO oauth_clients (client_id, client_name, source_id, deleted_at)
        VALUES ('cl-4115-test', 'test client', $1, now())`,
@@ -532,7 +532,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     expect(purged).not.toContain(blockedId);
     expect(blocked.map((b) => b.id)).toEqual([blockedId]);
     expect(blocked[0].reason).toContain('RESTRICT');
-    // The blocked source is untouched (still archived, still expired) — the
+    // The blocked source is untouched (still archived, still expired) \u2014 the
     // next sweep retries it after the operator clears the client.
     const still = await engine.executeRaw<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM sources WHERE id = $1 AND archived = true`,
@@ -561,14 +561,14 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
   // classified code and the manual purge, and the sweep continues; a run-scoped error (lost connection) still re-raises.
   const nonFkStub = (code: string, message: string) => ({
     async executeRaw(sql: string): Promise<Array<{ id: string }>> {
-      if (sql.includes('archive_expires_at IS NULL')) return []; // #5452 unverified-archive listing: none here
-      if (sql.includes('FROM persistence_brain')) return [{ enabled: false } as never]; // #6482: one well-formed unmanaged row
+      if (sql.includes('archive_expires_at IS NULL')) return [];
+      if (sql.includes('FROM persistence_brain')) return [{ enabled: false } as never];
       if (sql.trimStart().startsWith('SELECT')) return [{ id: 'boom' }];
-      throw Object.assign(new Error(message), { code }); // NOT the FK class
+      throw Object.assign(new Error(message), { code });
     },
   }) as never;
 
-  test('gbrain#4115 — a NON-FK error re-raises instead of reading as blocked (review gap G8)', async () => {
+  test('gbrain#4115 \u2014 a NON-FK error re-raises instead of reading as blocked (review gap G8)', async () => {
     await expect(purgeExpiredSources(nonFkStub('08006', 'Connection terminated unexpectedly'))).rejects.toThrow('Connection terminated');
     const { purged, blocked } = await purgeExpiredSources(nonFkStub('57014', 'canceling statement due to statement timeout'));
     expect(purged).toEqual([]);
@@ -577,13 +577,13 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     expect(blocked[0]!.reason).not.toContain('foreign key');
   });
 
-  test('gbrain#4115 — a source restored between SELECT and DELETE is neither purged nor blocked (review gap G8)', async () => {
+  test('gbrain#4115 \u2014 a source restored between SELECT and DELETE is neither purged nor blocked (review gap G8)', async () => {
     const stub = {
       async executeRaw(sql: string): Promise<Array<{ id: string }>> {
-        if (sql.includes('archive_expires_at IS NULL')) return []; // #5452 unverified-archive listing: none here
-        if (sql.includes('FROM persistence_brain')) return [{ enabled: false } as never]; // #6482: one well-formed unmanaged row
+        if (sql.includes('persistence_brain')) return [{ enabled: false } as never];
+        if (sql.includes('archive_expires_at IS NULL')) return [];
         if (sql.trimStart().startsWith('SELECT')) return [{ id: 'restored-mid-sweep' }];
-        return []; // per-id DELETE re-checks the expiry predicate → 0 rows
+        return [];
       },
     } as never;
     const { purged, blocked } = await purgeExpiredSources(stub);
@@ -597,7 +597,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
 // block BEFORE a hard delete instead of letting the raw FK violation escape.
 
 describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => {
-  // Own engine — the soft-delete describe's purge tests mutate every
+  // Own engine \u2014 the soft-delete describe's purge tests mutate every
   // archived row's expiry; don't cross-pollute.
   let engine: PGLiteEngine;
 
@@ -632,7 +632,7 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
     await seedClient('cl-no-src', null);
 
     // PHYSICAL semantics: the soft-deleted row still holds the FK, so it is
-    // returned too — tagged deleted:true, never silently dropped.
+    // returned too \u2014 tagged deleted:true, never silently dropped.
     const refs = await clientsReferencingSource(engine, 'fk-ref-a');
     expect(refs).toEqual([
       { clientId: 'cl-dead', clientName: 'cl-dead-name', deleted: true },
@@ -658,7 +658,7 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
     expect(block).toContain('Cannot delete source "fk-soft-only"');
     expect(block).toContain('Revoked-but-retained rows still block the FK');
     expect(block).toContain('hard-deletes them');
-    expect(block).toContain('gbrain auth revoke-client "cl-soft-only"');
+    expect(block).toContain('gbrain auth revoke-client "cl-soft-only" --yes-i-mean-it');
     // No live rows → no live-revoke section.
     expect(block).not.toContain('Revoke each live client first');
   });
@@ -685,7 +685,7 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
 
   test('purgeExpiredSources purges only the unreferenced expired source and reports the FK-held one as blocked', async () => {
     // Ported from #4238's string[]-contract version at merge: the sweep now
-    // returns {purged, blocked} (chennai #4115 fix) — the skipped id and its
+    // returns {purged, blocked} (chennai #4115 fix) \u2014 the skipped id and its
     // revoke guidance live in the structured result, not a stderr warn
     // (callers render it).
     await seedSource(engine, 'fk-purge-ref', { withPages: 1 });
@@ -742,10 +742,10 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
     expect(block).toContain('Agent Two (client-2)  [revoked, retained]');
     // Live rows get the hard-delete revoke guidance...
     expect(block).toContain('Revoke each live client first');
-    expect(block).toContain('gbrain auth revoke-client "client-1"');
+    expect(block).toContain('gbrain auth revoke-client "client-1" --yes-i-mean-it');
     // ...soft-deleted rows get the retained-rows-still-block guidance.
     expect(block).toContain('Revoked-but-retained rows still block the FK');
-    expect(block).toContain('gbrain auth revoke-client "client-2"');
+    expect(block).toContain('gbrain auth revoke-client "client-2" --yes-i-mean-it');
   });
 
   test('degrade ladder: missing oauth_clients table → [], missing deleted_at → all referents, other errors propagate', async () => {
@@ -759,7 +759,7 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
     expect(await clientsReferencingSource(noTable, 'x')).toEqual([]);
 
     // Pre-migration brain: deleted_at column missing → falls back to ALL
-    // referents (the 42703-retry idiom), tagged live (deleted:false — the
+    // referents (the 42703-retry idiom), tagged live (deleted:false \u2014 the
     // column that would say otherwise doesn't exist).
     const noColumn = {
       executeRaw: async (sql: string) => {
@@ -773,7 +773,7 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
       { clientId: 'c1', clientName: 'n1', deleted: false },
     ]);
 
-    // Anything else (e.g. a dropped connection) must PROPAGATE — a swallowed
+    // Anything else (e.g. a dropped connection) must PROPAGATE \u2014 a swallowed
     // error here would let a hard delete proceed past live referents.
     const broken = {
       executeRaw: async () => { throw new Error('connection reset'); },
@@ -791,14 +791,15 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
     expect(await clientsReferencingSource(noSourceId, 'x')).toEqual([]);
 
     // Same brain shape must not break the purge path either. The per-source
-    // sweep (chennai #4115) never queries oauth_clients at all — the FK, if
-    // present, surfaces as SQLSTATE 23503 on the DELETE — so a pre-v61 brain
+    // sweep (chennai #4115) never queries oauth_clients at all \u2014 the FK, if
+    // present, surfaces as SQLSTATE 23503 on the DELETE \u2014 so a pre-v61 brain
     // shape purges through the exact same code path.
     let sawOauthQuery = false;
     const purgeStub = {
       executeRaw: async (sql: string) => {
+        if (sql.includes('persistence_brain')) return [{ enabled: false }];
         if (sql.includes('oauth_clients')) sawOauthQuery = true;
-        return sql.includes('FROM persistence_brain') ? [{ enabled: false }] : []; // #6482: one well-formed unmanaged row
+        return [];
       },
     } as any;
     expect(await purgeExpiredSources(purgeStub)).toEqual({ purged: [], blocked: [] });
@@ -845,7 +846,7 @@ describe('formatters (display helpers)', () => {
   test('sources remove orders the row DELETE (in-tx) BEFORE external teardown (F1 structural pin)', () => {
     // A concurrent registration between the referents pre-check and the
     // DELETE must surface as the refusal, never as destroyed scaffolding
-    // with the row still present — so the tx'd DELETE precedes unharden.
+    // with the row still present \u2014 so the tx'd DELETE precedes unharden.
     const { readFileSync } = require('fs');
     const src = readFileSync(new URL('../src/commands/sources.ts', import.meta.url), 'utf-8');
     const removeStart = src.indexOf('async function runRemove');
@@ -881,11 +882,11 @@ describe('formatters (display helpers)', () => {
 // with local_path = the root would wipe every mirror), and only deletes the
 // exact defaultCloneDir('<id>-github') shape the creation path pins.
 
-describe('purgeExpiredSources — clone cleanup containment', () => {
+describe('purgeExpiredSources \u2014 clone cleanup containment', () => {
   function purgeStubFor(id: string, localPath: string) {
     return {
       executeRaw: async (sql: string) => {
-        if (sql.includes('FROM persistence_brain')) return [{ enabled: false }]; // #6482: one well-formed unmanaged row
+        if (sql.includes('persistence_brain')) return [{ enabled: false }];
         if (sql.trimStart().startsWith('SELECT')) {
           return [{ id, config: { kind: 'github', gh_managed: true }, local_path: localPath }];
         }

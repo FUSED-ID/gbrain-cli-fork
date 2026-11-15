@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { parseWorkerOnlyNames } from '../src/commands/jobs.ts';
+<<<<<<< HEAD
+=======
+import { MinionWorker } from '../src/core/minions/worker.ts';
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 
 describe('bounded worker job allow-list', () => {
   test('defaults to unrestricted when no flag or env is present', () => {
@@ -20,6 +24,7 @@ describe('bounded worker job allow-list', () => {
     })).toEqual(['facts-absorb', 'chronicle_extract']);
   });
 
+<<<<<<< HEAD
   test('an empty environment allow-list is rejected', () => {
     expect(() => parseWorkerOnlyNames([], { GBRAIN_WORKER_ONLY_NAMES: ' , ' }))
       .toThrow('--only must contain at least one worker job name');
@@ -30,10 +35,24 @@ describe('bounded worker job allow-list', () => {
       .toEqual(['facts-absorb', 'typo-name']);
   });
 
+=======
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
   test('rejects an empty allow-list', () => {
     expect(() => parseWorkerOnlyNames(['--only', ' , '], {})).toThrow('--only must contain');
   });
 
+<<<<<<< HEAD
+=======
+  test('keepOnly makes the claim set exact', () => {
+    const worker = new MinionWorker({} as never);
+    worker.register('facts-absorb', async () => ({}));
+    worker.register('chronicle_extract', async () => ({}));
+    worker.register('shell', async () => ({}));
+    worker.keepOnly(['facts-absorb', 'chronicle_extract']);
+    expect(worker.registeredNames).toEqual(['facts-absorb', 'chronicle_extract']);
+  });
+
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
   test('R1 rejects a bare --only flag', () => {
     expect(() => parseWorkerOnlyNames(['--only'], {})).toThrow('--only');
   });
@@ -52,4 +71,13 @@ describe('bounded worker job allow-list', () => {
     expect(() => parseWorkerOnlyNames(['--only', '--queue', 'x'], {})).toThrow('--only');
   });
 
+<<<<<<< HEAD
+=======
+  test('unknown allow-list names are named by keepOnly', () => {
+    const worker = new MinionWorker({} as never);
+    worker.register('facts-absorb', async () => ({}));
+    expect(() => worker.keepOnly(['facts-absorb', 'facts-absorbb', 'typo-name']))
+      .toThrow(/facts-absorbb.*typo-name|typo-name.*facts-absorbb/);
+  });
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 });

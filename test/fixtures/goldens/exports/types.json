@@ -4114,6 +4114,7 @@
           "expectedRevision?: string | null | undefined",
           "force?: boolean | undefined",
           "inline?: boolean | undefined",
+          "migrationWrite?: boolean | undefined",
           "sourceId?: string | undefined"
         ],
         "name": "PageWriteOptions"
@@ -6502,6 +6503,7 @@
           "eventNames: () => (string | symbol)[]",
           "getHandler: (name: string) => MinionHandler | undefined",
           "getMaxListeners: () => number",
+          "keepOnly: (names: string[]) => void",
           "listenerCount: <E extends string | symbol>(eventName: string | symbol, listener?: ((...args: any[]) => void) | undefined) => number",
           "listeners: <E extends string | symbol>(eventName: string | symbol) => ((...args: any[]) => void)[]",
           "off: <E extends string | symbol>(eventName: string | symbol, listener: (...args: any[]) => void) => MinionWorker",
@@ -6536,6 +6538,7 @@
           "private inFlight",
           "private jobsCompleted",
           "private launchJob",
+          "private onlyNames",
           "private opts",
           "private pausedByMarkerAnnounced",
           "private pendingClaim",

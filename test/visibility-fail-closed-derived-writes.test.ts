@@ -93,7 +93,7 @@ const ctxFor = (engine: BrainEngine, sourceId: string, remote: boolean) => ({ en
 async function source(engine: BrainEngine, managed: boolean) {
   const sourceId = `vis-${randomUUID().slice(0, 8)}`;
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-  await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+  await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES($1,$1,'{"federated":true,"facts_visibility":"world"}')`, [sourceId]);
   await registerLocalWriter(engine, 'cli');
   await engine.executeRaw('UPDATE persistence_brain SET enabled=$1 WHERE singleton=1', [managed]);
   const put = (slug: string, type: string, title: string, body: string, frontmatter: Record<string, unknown>) =>

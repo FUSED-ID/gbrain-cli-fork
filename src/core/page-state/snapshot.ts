@@ -1,5 +1,10 @@
 import { fenceClaimHashes, overlayWithdrawalBody } from '../facts/withdrawal-overlay.ts';
+<<<<<<< HEAD
 import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
+=======
+import { isDerivationPrivate, privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { parseSourceConfig } from '../sources-load.ts';
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 import type { ReadQuery } from '../search/read-enrichment.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { rowToPage } from '../utils.ts';
@@ -35,7 +40,7 @@ export async function resolveGlobalPurges(query: ReadQuery, sourceId: string, ma
  * snapshot's source and '*' purge marker, resolved against this text's fence rows (not the stored page's).
  */
 export async function overlayCanonicalBodies(query: ReadQuery, body: string, timeline: string, withdrawals: PageWithdrawal[],
-  global?: { sourceId: string; marker?: GlobalPurgeMarker }): Promise<{ compiled_truth: string; timeline: string }> {
+  global?: { sourceId: string; marker?: GlobalPurgeMarker }, contracts = true): Promise<{ compiled_truth: string; timeline: string }> {
   const pending = global?.marker && global.marker.count > 0 ? global : undefined;
   if (!withdrawals.length && !pending) return { compiled_truth: body, timeline };
   if (!body.includes('gbrain:facts:begin') && !timeline.includes('gbrain:facts:begin')) return { compiled_truth: body, timeline };
@@ -46,12 +51,27 @@ export async function overlayCanonicalBodies(query: ReadQuery, body: string, tim
       FROM unnest(string_to_array($2::text,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS timeline`, [body, timeline]);
   const resolved = pending ? await resolveGlobalPurges(query, pending.sourceId, pending.marker, [normalized.body ?? '', normalized.timeline ?? '']) : [];
   const all = resolved.length ? [...withdrawals, ...resolved] : withdrawals;
-  return { compiled_truth: overlayWithdrawalBody(body, normalized.body ?? '', all),
-    timeline: overlayWithdrawalBody(timeline, normalized.timeline ?? '', all) };
+  return { compiled_truth: overlayWithdrawalBody(body, normalized.body ?? '', all, contracts),
+    timeline: overlayWithdrawalBody(timeline, normalized.timeline ?? '', all, contracts) };
 }
 
 /**
- * One MVCC statement binds content, tags, identity and withdrawals to one revision.
+ * Whether a page contracts its world cells to private: a derivation-private page, or one whose source is not
+ * world-federated (the same literal `federated: true` rule resolveSourceVisibility applies). `config` is the
+ * sources.config value read inside the snapshot statement (null when that source row is absent). A missing or
+ * unreadable config contracts. Callers pass it only for a page that has withdrawals.
+ */
+export function pageContractsWorld(page: { type?: string | null; frontmatter?: unknown }, config: unknown): boolean {
+  if (isDerivationPrivate(page)) return true;
+  try {
+    return parseSourceConfig(config).federated !== true;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * One MVCC statement binds content, tags, identity, source config and withdrawals to one revision.
  * The normalized body and timeline fingerprints feed only the withdrawal overlay,
  * so the statement computes them only for a page with withdrawals (as the batch
  * reader in page-snapshot-batch.ts does): per-line regexp over the whole body
@@ -102,6 +122,7 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
     ORDER BY (p.slug=$1) DESC, (p.source_id=$${params.length}) DESC, p.source_id ASC LIMIT 1
   ) SELECT p.*,
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
+    (SELECT s.config FROM sources s WHERE s.id=p.source_id) AS source_config,
     COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags,
     wd.snapshot_withdrawals, wd.snapshot_global_purges,
     CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)
@@ -128,8 +149,9 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
   const withdrawals = [...row.snapshot_withdrawals as PageWithdrawal[], ...await resolveGlobalPurges(query, page.source_id, globalPurges,
     [String(row.fingerprint_body ?? ''), String(row.fingerprint_timeline ?? '')])];
   if (!isSegmentedPage(page)) {
-    page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, String(row.fingerprint_body ?? ''), withdrawals);
-    page.timeline = overlayWithdrawalBody(page.timeline, String(row.fingerprint_timeline ?? ''), withdrawals);
+    const contracts = withdrawals.length ? pageContractsWorld(page, row.source_config) : true;
+    page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, String(row.fingerprint_body ?? ''), withdrawals, contracts);
+    page.timeline = overlayWithdrawalBody(page.timeline, String(row.fingerprint_timeline ?? ''), withdrawals, contracts);
   }
   return { page, tags: row.snapshot_tags as string[], revision: row.knowledge_revision == null ? REVISION_BACKFILL_PENDING : String(row.knowledge_revision),
     sourceIncarnation: String(row.source_incarnation), withdrawals, ...(globalPurges.count > 0 ? { globalPurges } : {}),

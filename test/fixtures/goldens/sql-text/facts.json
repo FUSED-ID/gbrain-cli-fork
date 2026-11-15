@@ -254,6 +254,23 @@
         "default": [
           {
             "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT config FROM sources WHERE id = $1 AND archived IS NOT TRUE",
+            "textSha256": "2291444bc997d435078b348f768b07a8fec69c30d4c965a55ea04e2f7811793d"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
+            "textSha256": "4ac8824bb6a6a975075277bdd430f464ec25b7d30d34c875440d0219335704fc"
+          },
+          {
+            "lane": "pool",
             "params": [],
             "sql": "SELECT format_type(a.atttypid, a.atttypmod) AS formatted FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'facts' AND a.attname = 'embedding' AND NOT a.attisdropped",
             "textSha256": "9cea71d6d63540f4b7abfee9f1d378b2f67858d4f174299ebf3776835de960bf"
@@ -307,6 +324,14 @@
         "noEntity": [
           {
             "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT config FROM sources WHERE id = $1 AND archived IS NOT TRUE",
+            "textSha256": "2291444bc997d435078b348f768b07a8fec69c30d4c965a55ea04e2f7811793d"
+          },
+          {
+            "lane": "pool",
             "params": [],
             "sql": "SELECT format_type(a.atttypid, a.atttypmod) AS formatted FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'facts' AND a.attname = 'embedding' AND NOT a.attisdropped",
             "textSha256": "9cea71d6d63540f4b7abfee9f1d378b2f67858d4f174299ebf3776835de960bf"
@@ -349,6 +374,23 @@
           }
         ],
         "supersedeId+embedding": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT config FROM sources WHERE id = $1 AND archived IS NOT TRUE",
+            "textSha256": "2291444bc997d435078b348f768b07a8fec69c30d4c965a55ea04e2f7811793d"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
+            "textSha256": "4ac8824bb6a6a975075277bdd430f464ec25b7d30d34c875440d0219335704fc"
+          },
           {
             "lane": "pool",
             "params": [],
@@ -422,6 +464,23 @@
             "textSha256": "9cea71d6d63540f4b7abfee9f1d378b2f67858d4f174299ebf3776835de960bf"
           },
           {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT config FROM sources WHERE id = $1 AND archived IS NOT TRUE",
+            "textSha256": "2291444bc997d435078b348f768b07a8fec69c30d4c965a55ea04e2f7811793d"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
+            "textSha256": "4ac8824bb6a6a975075277bdd430f464ec25b7d30d34c875440d0219335704fc"
+          },
+          {
             "event": "begin",
             "lane": "tx"
           },
@@ -461,6 +520,23 @@
             "params": [],
             "sql": "SELECT format_type(a.atttypid, a.atttypmod) AS formatted FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'facts' AND a.attname = 'embedding' AND NOT a.attisdropped",
             "textSha256": "9cea71d6d63540f4b7abfee9f1d378b2f67858d4f174299ebf3776835de960bf"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT config FROM sources WHERE id = $1 AND archived IS NOT TRUE",
+            "textSha256": "2291444bc997d435078b348f768b07a8fec69c30d4c965a55ea04e2f7811793d"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
+            "textSha256": "4ac8824bb6a6a975075277bdd430f464ec25b7d30d34c875440d0219335704fc"
           },
           {
             "event": "begin",
@@ -671,12 +747,47 @@
           {
             "lane": "pool",
             "params": [
+              "boolean",
+              "boolean"
+            ],
+            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR local_path IS NOT NULL) ORDER BY (id = 'default') DESC, id",
+            "textSha256": "8f708b7f5bb279ea14ecc0f958457d31237d81a165a02fbc5f62339bba8b9291"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT config FROM sources WHERE id = $1 AND archived IS NOT TRUE",
+            "textSha256": "2291444bc997d435078b348f768b07a8fec69c30d4c965a55ea04e2f7811793d"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
+            "textSha256": "4ac8824bb6a6a975075277bdd430f464ec25b7d30d34c875440d0219335704fc"
+          },
+          {
+            "lane": "pool",
+            "params": [
               "string",
               "string",
               "string"
             ],
             "sql": "SELECT id, value_hash, valid_from FROM facts WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active') ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1",
             "textSha256": "544aef14bce5c7faa5738cf7462c2d860cdbc4227a890b12080729d99682a63f"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "boolean",
+              "boolean"
+            ],
+            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR local_path IS NOT NULL) ORDER BY (id = 'default') DESC, id",
+            "textSha256": "8f708b7f5bb279ea14ecc0f958457d31237d81a165a02fbc5f62339bba8b9291"
           },
           {
             "lane": "pool",
@@ -717,6 +828,32 @@
           {
             "lane": "pool",
             "params": [
+              "boolean",
+              "boolean"
+            ],
+            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR local_path IS NOT NULL) ORDER BY (id = 'default') DESC, id",
+            "textSha256": "8f708b7f5bb279ea14ecc0f958457d31237d81a165a02fbc5f62339bba8b9291"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT config FROM sources WHERE id = $1 AND archived IS NOT TRUE",
+            "textSha256": "2291444bc997d435078b348f768b07a8fec69c30d4c965a55ea04e2f7811793d"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
+            "textSha256": "4ac8824bb6a6a975075277bdd430f464ec25b7d30d34c875440d0219335704fc"
+          },
+          {
+            "lane": "pool",
+            "params": [
               "string",
               "string",
               "string"
@@ -749,6 +886,32 @@
           {
             "lane": "pool",
             "params": [
+              "boolean",
+              "boolean"
+            ],
+            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR local_path IS NOT NULL) ORDER BY (id = 'default') DESC, id",
+            "textSha256": "8f708b7f5bb279ea14ecc0f958457d31237d81a165a02fbc5f62339bba8b9291"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT config FROM sources WHERE id = $1 AND archived IS NOT TRUE",
+            "textSha256": "2291444bc997d435078b348f768b07a8fec69c30d4c965a55ea04e2f7811793d"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
+            "textSha256": "4ac8824bb6a6a975075277bdd430f464ec25b7d30d34c875440d0219335704fc"
+          },
+          {
+            "lane": "pool",
+            "params": [
               "string",
               "string",
               "string"
@@ -775,6 +938,15 @@
             ],
             "sql": "INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status, confidence, source, source_markdown_slug, valid_from, valid_until) VALUES ($1, $2, $3, 'fact', $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12::timestamptz, now()), $13) ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug, valid_from) WHERE dimension IS NOT NULL DO NOTHING RETURNING id",
             "textSha256": "e4dc11b7834659b03a715161d988838ae5f07aa3cdaa8bb1982a4545085ab9d4"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "boolean",
+              "boolean"
+            ],
+            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR local_path IS NOT NULL) ORDER BY (id = 'default') DESC, id",
+            "textSha256": "8f708b7f5bb279ea14ecc0f958457d31237d81a165a02fbc5f62339bba8b9291"
           },
           {
             "lane": "pool",

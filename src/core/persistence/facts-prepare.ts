@@ -34,6 +34,7 @@ import { derivationWriteTrust } from '../trust/page-write.ts';
 import { minTrust, type TaintInput, type WriteTrust } from '../trust/tier.ts';
 import { applyGateDecision, derivedGateConfig, derivedGateInput, emptyGateTally } from '../trust/derived-gate.ts';
 import { decideFactWrite, recordFlaggedRow, type GatedRowDecision } from '../write-gate-store.ts';
+import { floorFactRows } from '../engine-sql/facts.ts';
 
 const requestFix = (row: WriteRequest): Action => row.principal_kind === 'local_cli'
   ? readFix(`Reads fact request ${row.request_id}'s durable receipt: its state and recorded error, read-only.`, { argv: ['gbrain', 'write-request', '--', row.request_id] })
@@ -211,9 +212,11 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
       input: derivedGateInput(taint.trust, row.id), cfg: gateCfg! }) : undefined;
     if (gate && gate.action !== 'insert') { blocked.push(gate); continue; }
     const rowNum = fact.entity_slug !== null && !fallback(fact) ? nextRow++ : undefined;
+    // #1030: the fence cell must carry the same floored visibility the insert stores.
+    const flooredFact = rowNum === undefined ? fact : (await floorFactRows(engine, row.source_id, row.slug, [fact]))[0];
     // #6385 R12: an entity fence that does not parse cleanly refuses typed instead of losing the rows it skipped.
     if (rowNum !== undefined) refuseUnparsedRewrite(fenced, row.slug, row.source_id, () => fence.append({
-      rowNum, claim: fact.fact, kind: fact.kind, visibility: fact.visibility,
+      rowNum, claim: fact.fact, kind: fact.kind, visibility: flooredFact.visibility,
       confidence: fact.confidence ?? 1, notability: fact.notability ?? 'medium', source: fact.source, context: fact.context ?? undefined,
       validFrom: formatFenceDate(fact.valid_from!), validUntil: fact.valid_until ? formatFenceDate(fact.valid_until) : undefined,
       claimMetric: fact.claim_metric ?? undefined, claimValue: fact.claim_value ?? undefined,

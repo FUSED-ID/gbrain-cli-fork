@@ -148,12 +148,14 @@ export function partialFenceRuns(text: string, entryOpen: boolean): { head: numb
 }
 
 /** Apply hashes from DB-normalized companion text to the original Markdown. */
-export function overlayWithdrawalBody(body: string, normalizedBody: string, withdrawals: PageWithdrawal[]): string {
+export function overlayWithdrawalBody(body: string, normalizedBody: string, withdrawals: PageWithdrawal[], contracts = true): string {
   if (!withdrawals.length || !body.includes('gbrain:facts:begin')) return body;
-  const ledger = new Map<string, PageWithdrawal>();
+  const ledger = new Map<string, PageWithdrawal>(), privateByHash = new Map<string, PageWithdrawal>();
   for (const w of withdrawals) {
     const key = `${w.visibility}:${w.fact_hash}`;
     if (!ledger.get(key)?.purged) ledger.set(key, w);
+    // A world cell on a page that contracts world to private may stand for a stored private row (same claim, hash alone).
+    if (w.visibility === 'private' && !privateByHash.get(w.fact_hash)?.purged) privateByHash.set(w.fact_hash, w);
   }
   const blocks = withdrawalFenceBlocks(body), normalized = withdrawalFenceBlocks(normalizedBody);
   for (let i = blocks.length - 1; i >= 0; i--) {
@@ -165,8 +167,9 @@ export function overlayWithdrawalBody(body: string, normalizedBody: string, with
     const facts = block.parsed.facts.flatMap(f => {
       const claim = claims.get(f.rowNum);
       if (claim === undefined) return [f];
-      const entry = ledger.get(`${f.visibility}:${createHash('sha256').update(normalizeLoweredClaim(claim)).digest('hex')}`)
-        ?? ledger.get(`${f.visibility}:${createHash('sha256').update(claim).digest('hex')}`);
+      const [loweredHash, rawHash] = [normalizeLoweredClaim(claim), claim].map(text => createHash('sha256').update(text).digest('hex'));
+      const entry = ledger.get(`${f.visibility}:${loweredHash}`) ?? ledger.get(`${f.visibility}:${rawHash}`)
+        ?? (contracts && f.visibility === 'world' ? privateByHash.get(loweredHash) ?? privateByHash.get(rawHash) : undefined);
       if (!entry) return [f];
       changed = true;
       return entry.purged ? [] : [withdrawnFact(f, new Date(entry.withdrawn_at).toISOString().slice(0, 10))];

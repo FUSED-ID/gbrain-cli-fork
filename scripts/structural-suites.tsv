@@ -12,6 +12,7 @@ test/ai/silent-drop-regression.test.ts	(file-level)	3	source-surface-helper
 test/apply-migrations.test.ts	failed migration prints phase detail (#921)	1	readFileSync
 test/apply-migrations.test.ts	runApplyMigrations exit codes (v0.36.1.x #1062)	1	readFileSync
 test/archived-source-scoping.test.ts	#3880 structural pins — all-source local_path selections filter archived	2	readFileSync
+test/auth-revoke-client-consent-1030.test.ts	auth revoke-client consent pin (1030)	3	readFileSync
 test/auto-link-targeted-probe-2544.test.ts	#2544 — auto-link behavior through put_page (targeted probe)	6	readFileSync
 test/autopilot-auto-drain-wiring.test.ts	autopilot auto-drain wiring	8	source-surface-helper
 test/autopilot-cycle-failure-classification.test.ts	autopilot cycle-failure classification — only 'failed' trips the circuit breaker	2	source-surface-helper
@@ -115,7 +116,7 @@ test/derived-state-maintainers-7637.test.ts	owner behaviour is unchanged	6	readF
 test/destructive-guard.test.ts	FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)	9	readFileSync
 test/destructive-guard.test.ts	assessDestructiveImpact	5	readFileSync
 test/destructive-guard.test.ts	formatters (display helpers)	4	readFileSync
-test/destructive-guard.test.ts	purgeExpiredSources — clone cleanup containment	1	readFileSync
+test/destructive-guard.test.ts	purgeExpiredSources \u2014 clone cleanup containment	1	readFileSync
 test/detached-stderr.test.ts	jobs.ts detach branch (source pin, #4418)	2	source-surface-helper
 test/divergence-safe-pull-5429.serial.test.ts	--no-autostash (#5429, bug fix)	4	readFileSync
 test/docs-mcp-deploy.test.ts	DEPLOY.md documents the owner magic-link flow (#5007)	1	readFileSync,source-surface-helper
@@ -147,6 +148,7 @@ test/doctor.test.ts	v0.41.27.0 — sync_freshness git short-circuit	9	doctor-sou
 test/doctor.test.ts	v0.41.32.0 — commit-relative staleness	5	doctor-source-helper
 test/doctor.test.ts	v0.42 (#1699) — quarantined_pages + flagged_pages checks	1	doctor-source-helper
 test/drain-lease-key-share-7442.test.ts	#7442: the drain-lease fence lets the renewal through and still holds off a takeover	5	readFileSync
+test/dream-purge-consent-wiring.test.ts	dream purge consent wiring	1	readFileSync
 test/dry-fix.test.ts	autoFixDryViolations	12	readFileSync
 test/e2e/bootstrap-real-codex.serial.test.ts	bootstrap rendered protocol — ambient boundaries (always runs)	5	readFileSync
 test/e2e/codex-plugin-install-real.serial.test.ts	(file-level)	2	readFileSync

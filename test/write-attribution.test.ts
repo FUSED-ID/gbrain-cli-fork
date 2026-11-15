@@ -80,7 +80,7 @@ async function managedBrain(engine: BrainEngine, opts: { embedding?: boolean } =
   // Each brain's consumer starts under this brain's config, not an earlier test's (the consumer keeps its first config).
   await disposePersistenceConsumer(engine);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-  await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+  await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES($1,$1,'{"federated":true,"facts_visibility":"world"}')`, [sourceId]);
   await registerLocalWriter(engine, 'cli'); await registerLocalWriter(engine, 'stdio');
   const clientId = `client-${sourceId}`;
   await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_secret_hash,client_name,scope,source_id)

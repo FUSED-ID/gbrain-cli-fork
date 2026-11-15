@@ -126,7 +126,8 @@ export const EQUALS_READERS: Readonly<Record<string, readonly string[]>> = {
   'integrity check': ['--limit', '--type'],
   // core/consent.ts:126 via jobs/submit.ts:104 requireEmbedBackfillConsent, :128 requireReindexConsent, :294 authorizePaidSubmit (paid); submit's own parseFlag(--max-usd) (:286) reads only the separate `off`.
   'jobs submit': ['--max-usd', '--max-cost'],
-  // jobs/shared.ts:121 parseJobIsolationFlag via jobs/supervisor.ts:165.
+  // jobs/shared.ts:126 parseJobIsolationFlag (--job-isolation=) via supervisor.ts:210.
+  // supervisor.ts:64 reads --only= only to refuse the token (P1); the value is never applied, so it is no reader.
   'jobs supervisor': ['--job-isolation'],
   // jobs/shared.ts:121 parseJobIsolationFlag via jobs/work.ts:114.
   'jobs work': ['--job-isolation'],

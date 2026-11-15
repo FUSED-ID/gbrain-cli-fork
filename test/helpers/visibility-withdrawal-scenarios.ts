@@ -46,25 +46,41 @@ export async function unlinkedForgetKeepsHiddenCopies(engine: BrainEngine): Prom
   expect(hidden.body.status).toBe('inserted');
   const unlinked = await call(engine, 'remember', { fact: CLAIM, provenance: 'call notes', infer_entity: false });
   const id = unlinked.body.id;
+  // A private hidden copy no longer blocks the remote forget of the world unlinked copy: the forget goes through,
+  // and the hidden copy survives (still active) with no withdrawal written for it.
   const one = await call(engine, 'forget', { id: String(id) });
-  expect(one.isError).toBe(true);
-  expect(one.body.code).toBe('invalid_params');
-  expect(one.body.message).toBe(GENERIC_CLAIM_LINKED(id));
+  expect(one.isError).toBe(false);
   expect(JSON.stringify(one.body)).not.toContain('hidden-co');
   expect(JSON.stringify(one.body)).not.toContain(`#${hidden.body.id}`);
+  expect(await active(engine, Number(id))).toBe(false);
   expect(await active(engine, Number(hidden.body.id))).toBe(true);
-  expect(await withdrawals(engine)).toBe(0);
-  // Fail closed: a call that does not say it is local is treated as remote.
-  expect((await call(engine, 'forget', { id: String(id) }, 'unset')).body.message).toBe(GENERIC_CLAIM_LINKED(id));
-  // One fixed text whatever the number of hidden copies.
-  await call(engine, 'remember', { fact: CLAIM, entity: 'crm/hidden-two', provenance: 'meeting notes', visibility: 'world' }, 'local');
-  const two = await call(engine, 'forget', { id: String(id) });
-  expect(two.body.message).toBe(one.body.message);
-  expect(two.body.suggestion).toBe(one.body.suggestion);
-  // A local caller keeps the detailed refusal naming the linked facts.
+  expect(await withdrawals(engine)).toBe(1);
+}
+
+/**
+ * 1c: a local forget of an unlinked fact keeps the detailed claim_linked refusal naming a copy the caller can read.
+ * Here both copies are world on a federated public source, so the hidden-copy case of unlinkedForgetKeepsHiddenCopies
+ * (private rows, which no longer block) does not apply.
+ */
+export async function unlinkedForgetNamesReadableCopy(engine: BrainEngine): Promise<void> {
+  await seedPages(engine);
+  // The default source is federated, so a world copy filed on it is readable by remote callers.
+  const linked = await call(engine, 'remember', { fact: CLAIM, entity: 'crm/acme-example', provenance: 'meeting notes', visibility: 'world' }, 'local');
+  expect(linked.body.status).toBe('inserted');
+  const unlinked = await call(engine, 'remember', { fact: CLAIM, provenance: 'call notes', infer_entity: false, visibility: 'world' }, 'local');
+  const id = unlinked.body.id;
   const local = await call(engine, 'forget', { id: String(id) }, 'local');
-  expect(local.body.message).toStartWith(`claim_linked: fact #${id} was saved without an entity, and the same claim is active as #${hidden.body.id} (crm/hidden-co)`);
-  expect(await active(engine, Number(hidden.body.id))).toBe(true);
+  expect(local.isError).toBe(true);
+  expect(local.body.message).toStartWith(`claim_linked: fact #${id} was saved without an entity, and the same claim is active as #${linked.body.id} (crm/acme-example)`);
+  expect(await active(engine, Number(id))).toBe(true);
+  expect(await active(engine, Number(linked.body.id))).toBe(true);
+  expect(await withdrawals(engine)).toBe(0);
+  // The copy is readable by a remote caller too, so the remote and fail-closed unset callers get the same detailed refusal.
+  const detailed = `claim_linked: fact #${id} was saved without an entity, and the same claim is active as #${linked.body.id} (crm/acme-example)`;
+  expect((await call(engine, 'forget', { id: String(id) })).body.message).toStartWith(detailed);
+  expect((await call(engine, 'forget', { id: String(id) }, 'unset')).body.message).toStartWith(detailed);
+  expect(await active(engine, Number(id))).toBe(true);
+  expect(await withdrawals(engine)).toBe(0);
 }
 
 /** 1a: a remote forget of a linked fact never withdraws a copy about the same entity filed from a page the caller cannot read. */

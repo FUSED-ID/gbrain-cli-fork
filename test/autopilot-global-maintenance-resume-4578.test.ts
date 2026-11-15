@@ -63,14 +63,21 @@ describe('autopilot-global-maintenance resumes across jobs (#4578)', () => {
 
   test('a phase that was running when an earlier job died is skipped for the pass; later phases still run', async () => {
     await engine.setConfig(GLOBAL_MAINTENANCE_PROGRESS_KEY, JSON.stringify({ running_phase: 'orphans', running_job: '6999:0', next_phase: 'orphans' }));
-    const result = await run({});
+    const result = await run({ data: { phases: ['orphans', 'drift'], repoPath } });
     expect(result.report.phases.find((p: { phase: string }) => p.phase === 'orphans'))
       .toMatchObject({ status: 'skipped', details: { reason: 'timed_out_previous_job', recovery: 'gbrain dream --phase orphans' } });
     expect(result.report.phases.find((p: { phase: string }) => p.phase === 'purge')?.status).not.toBe('skipped');
+    expect(result.report.phases.find((p: { phase: string }) => p.phase === 'drift')).toBeDefined();
     expect(await engine.getConfig(LAST_GLOBAL_AT_KEY)).toBeNull();
     const progress = await readGlobalMaintenanceProgress(engine);
     expect(progress.timeouts?.orphans?.count).toBe(1);
     expect(progress.running_phase).toBeUndefined();
+  }, 60_000);
+
+  test('purge without consent is recorded as skipped for the pass, never swept', async () => {
+    const result = await run({ data: { phases: ['purge'], repoPath } });
+    expect(result.report.phases.find((p: { phase: string }) => p.phase === 'purge'))
+      .toMatchObject({ status: 'skipped', details: { reason: 'missing_purge_consent', required_flag: '--yes-i-mean-it' } });
   }, 60_000);
 
   test('the job deadline follows env > config > the autopilot default', async () => {
@@ -91,7 +98,7 @@ describe('global_maintenance_timeouts doctor check (#4578)', () => {
   async function deadJobs(n: number, error = 'timeout exceeded') {
     const queue = new MinionQueue(engine);
     for (let i = 0; i < n; i++) {
-      const job = await queue.add('autopilot-global-maintenance', {}, { idempotency_key: `dead-${error}-${i}` });
+      const job = await queue.add('autopilot-global-maintenance', {}, { idempotency_key: `dead-${error}-${i}` }, { allowProtectedSubmit: true });
       await engine.executeRaw(`UPDATE minion_jobs SET status = 'dead', error_text = $2, finished_at = now() + ($1 || ' seconds')::interval WHERE id = $3`,
         [String(i), error, job.id]);
     }
@@ -118,13 +125,13 @@ describe('global_maintenance_timeouts doctor check (#4578)', () => {
   test('a completed job after timeout deaths clears the warning', async () => {
     await deadJobs(3);
     expect((await globalMaintenanceTimeoutsCheck(engine)).status).toBe('warn');
-    const job = await new MinionQueue(engine).add('autopilot-global-maintenance', {}, { idempotency_key: 'completed-after' });
+    const job = await new MinionQueue(engine).add('autopilot-global-maintenance', {}, { idempotency_key: 'completed-after' }, { allowProtectedSubmit: true });
     await engine.executeRaw(`UPDATE minion_jobs SET status = 'completed', finished_at = now() + interval '1 hour' WHERE id = $1`, [job.id]);
     expect((await globalMaintenanceTimeoutsCheck(engine)).status).toBe('ok');
   });
   test('#6303: three dead patterns children at their own timeout warn while the jobs complete', async () => {
     const queue = new MinionQueue(engine);
-    const job = await queue.add('autopilot-global-maintenance', {}, { idempotency_key: 'completed-partial' });
+    const job = await queue.add('autopilot-global-maintenance', {}, { idempotency_key: 'completed-partial' }, { allowProtectedSubmit: true });
     await engine.executeRaw(`UPDATE minion_jobs SET status = 'completed', finished_at = now() WHERE id = $1`, [job.id]);
     const child = async (i: number, error: string, key = `dream:patterns:k${i}`) => {
       const sub = await queue.add('subagent', {}, { idempotency_key: key }, { allowProtectedSubmit: true });

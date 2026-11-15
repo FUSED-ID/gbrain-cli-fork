@@ -116,7 +116,7 @@ async function freshSource(mode: 'unmanaged' | 'managed') {
   const root = mkdtempSync(join(home, 'root-'));
   await disposePersistenceConsumer(engine);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-  await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, mode === 'managed' ? root : null]);
+  await engine.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{"federated":true,"facts_visibility":"world"}'::jsonb)`, [sourceId, mode === 'managed' ? root : null]);
   if (mode === 'managed') {
     await claimWorktree(engine, sourceId, root);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');

@@ -79,7 +79,7 @@ export async function openTwinBrain(kind: 'pglite' | 'postgres', inlineSlugs: re
   const setSwitch = (on: boolean) => engine.setConfig('pages.segmented_storage', on ? 'on' : 'off');
   const cli = await withEnv(env(), async () => {
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-    await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
+    await engine.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{"federated":true,"facts_visibility":"world"}')`, [sourceId, root]);
     await engine.setConfig('sync.write_through', 'true');
     await engine.setConfig('facts.extraction_enabled', 'true');
     await engine.setConfig('mentions.auto_link', 'off');

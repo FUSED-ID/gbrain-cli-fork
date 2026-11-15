@@ -179,7 +179,7 @@ describe('#7188: a cycle with one failed phase does not back off its source', ()
   /** Run `cycles` autopilot-cycle jobs for repo-phase through a worker whose handler does `handler`. */
   async function runCycles(cycles: number, handler: () => Promise<Record<string, unknown>>): Promise<MinionJob[]> {
     const jobs: MinionJob[] = [];
-    for (let i = 0; i < cycles; i++) jobs.push(await queue.add('autopilot-cycle', { source_id: 'repo-phase' }, { max_attempts: 1 }));
+    for (let i = 0; i < cycles; i++) jobs.push(await queue.add('autopilot-cycle', { source_id: 'repo-phase' }, { max_attempts: 1 }, { allowProtectedSubmit: true }));
     const worker = new MinionWorker(engine, { pollInterval: 25 });
     worker.register('autopilot-cycle', handler);
     const running = worker.start();

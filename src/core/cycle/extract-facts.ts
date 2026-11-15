@@ -80,6 +80,8 @@ import {
   type SupersessionChain,
 } from '../facts/supersede-resolve.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
+import { resolveSourceVisibility, tightenToPage } from '../facts/visibility.ts';
+import { enforcePrivateFactWrite } from '../private-source-routing.ts';
 import { fenceUnfencedFacts, planUnfencedFacts } from '../facts/unfenced-facts.ts';
 import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { factsFenceView } from '../facts-fence.ts';
@@ -372,7 +374,7 @@ async function listExistingFactsForPage(
 }
 
 /** The page a reconcile plans from: its body as strings, or a segmented page whose fences are read from its segments. */
-type PageFenceInput = { id?: number; slug?: string; source_id?: string; body_storage?: Page['body_storage']; compiled_truth: string | null; timeline: string | null;
+type PageFenceInput = { id?: number; slug?: string; source_id?: string; type?: string | null; frontmatter?: unknown; body_storage?: Page['body_storage']; compiled_truth: string | null; timeline: string | null;
   effective_date?: Date | string | null; effective_date_source?: string | null };
 
 interface FenceReconcilePlan {
@@ -436,8 +438,15 @@ async function planFenceReconcile(db: BrainEngine, page: PageFenceInput, slug: s
   const pageEffectiveDate = page.effective_date && FACT_DATE_SOURCES.has(page.effective_date_source ?? '') ? new Date(page.effective_date) : null;
   // #1781: duplicate ACTIVE rows (same claim and source) index once.
   const duplicates = duplicateActiveFenceRows(parsed.facts);
-  const extracted = extractFactsFromFenceText(parsed.facts, slug, sourceId, { pageEffectiveDate })
-    .filter(f => !duplicates.has(f.row_num));
+  const extracted = await Promise.all(extractFactsFromFenceText(parsed.facts, slug, sourceId, { pageEffectiveDate })
+    .filter(f => !duplicates.has(f.row_num))
+    .map(async f => ({
+      ...f,
+      visibility: tightenToPage(
+        await resolveSourceVisibility(db, sourceId, f.visibility),
+        page,
+      ),
+    })));
   // Reconcile by row number, the fence's own unique identity. A DB row whose
   // (row_num, claim) is still in the fence keeps its id and has its other
   // cells updated in place; a row whose number disappeared or whose claim
@@ -501,6 +510,7 @@ async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: stri
   const tally = emptyGateTally();
   // #5575 I2: the fence rows restate the page (no model), so every write here is at the page's tier, capped at operator_curated.
   const derivation = await deriveTrust(tx, [{ table: 'pages', sourceId, slug }], { channel: 'derive:facts_fence', projection: true });
+  const pageSnapshot = await tx.readPageSnapshot(slug, { sourceId });
   return withWriteTrust(tx, derivation.trust, async () => {
   for (const fact of writes.expireInPlace) {
     await tx.executeRaw('UPDATE facts SET expired_at = COALESCE(expired_at, now()) WHERE id = $1 AND source_id = $2', [fact.id, sourceId]);
@@ -513,6 +523,11 @@ async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: stri
     );
   }
   for (const f of plan.updates) {
+    const visibility = tightenToPage(
+      await resolveSourceVisibility(tx, sourceId, f.visibility ?? 'private'),
+      pageSnapshot?.page,
+    );
+    await enforcePrivateFactWrite(tx, { sourceId, pageSlug: slug, entitySlug: f.entity_slug, visibility });
     await tx.executeRaw(
       `UPDATE facts SET kind = $3, visibility = $4, notability = $5, context = $6,
           valid_from = COALESCE($7::timestamptz, valid_from),
@@ -521,7 +536,7 @@ async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: stri
           source = $11, confidence = $12,
           claim_metric = $13, claim_value = $14, claim_unit = $15, claim_period = $16
         WHERE id = $1 AND source_id = $2`,
-      [plan.matched.get(f.row_num)!.id, sourceId, f.kind ?? 'fact', f.visibility ?? 'private', f.notability ?? 'medium',
+      [plan.matched.get(f.row_num)!.id, sourceId, f.kind ?? 'fact', visibility, f.notability ?? 'medium',
         f.context ?? null, f.valid_from?.toISOString() ?? null, f.expired_at == null,
         f.valid_until?.toISOString() ?? null, f.expired_at?.toISOString() ?? null, f.source, f.confidence ?? 1.0,
         f.claim_metric ?? null, f.claim_value ?? null, f.claim_unit ?? null, f.claim_period ?? null],

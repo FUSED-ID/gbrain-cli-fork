@@ -30,7 +30,7 @@ beforeAll(async () => {
   await engine.initSchema();
   for (const id of ['aurora-workspace', 'proj-widget', 'nova-notes']) {
     await engine.executeRaw(
-      `INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING`, [id],
+      `INSERT INTO sources (id, name, config) VALUES ($1, $1, '{"federated":true,"facts_visibility":"world"}') ON CONFLICT (id) DO NOTHING`, [id],
     );
   }
   const remember = operationsByName['remember'];
@@ -163,7 +163,7 @@ describe('recall federated grants (D1b)', () => {
     // it away → empty response instead of the older world-visible row.
     // Own source so the earlier supersession test's rows can't take the slot.
     await engine.executeRaw(
-      `INSERT INTO sources (id, name) VALUES ('sup-limit', 'sup-limit') ON CONFLICT (id) DO NOTHING`,
+      `INSERT INTO sources (id, name, config) VALUES ('sup-limit', 'sup-limit', '{"federated":true,"facts_visibility":"world"}') ON CONFLICT (id) DO NOTHING`,
     );
     const remember = operationsByName['remember'];
     await remember.handler(

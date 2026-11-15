@@ -21,7 +21,7 @@
  * Postgres can bind the batch's sources for RLS (`engine.readPageSnapshotsBatch`).
  */
 import { overlayWithdrawalBody } from './facts/withdrawal-overlay.ts';
-import { readPageSnapshot, resolveGlobalPurges } from './page-state/snapshot.ts';
+import { pageContractsWorld, readPageSnapshot, resolveGlobalPurges } from './page-state/snapshot.ts';
 import type { GlobalPurgeMarker, PageSnapshot, PageWithdrawal } from './page-state/types.ts';
 import { REVISION_BACKFILL_PENDING } from './page-state/types.ts';
 import type { ReadQuery } from './search/read-enrichment.ts';
@@ -57,6 +57,7 @@ export async function readPageSnapshotsBatch(
     WHERE w.batch_n = 1 OR w.batch_prior_bytes < $3
   ) SELECT p.*,
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
+    (SELECT s.config FROM sources s WHERE s.id=p.source_id) AS source_config,
     COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags,
     wd.snapshot_withdrawals, wd.snapshot_global_purges,
     CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)
@@ -90,8 +91,9 @@ export async function readPageSnapshotsBatch(
     const withdrawals = [...row.snapshot_withdrawals as PageWithdrawal[], ...await resolveGlobalPurges(query, page.source_id, globalPurges,
       [String(row.fingerprint_body ?? ''), String(row.fingerprint_timeline ?? '')])];
     if (!isSegmentedPage(page)) {
-      page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, String(row.fingerprint_body ?? ''), withdrawals);
-      page.timeline = overlayWithdrawalBody(page.timeline, String(row.fingerprint_timeline ?? ''), withdrawals);
+      const contracts = withdrawals.length ? pageContractsWorld(page, row.source_config) : true;
+      page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, String(row.fingerprint_body ?? ''), withdrawals, contracts);
+      page.timeline = overlayWithdrawalBody(page.timeline, String(row.fingerprint_timeline ?? ''), withdrawals, contracts);
     }
     snapshots.set(key, { page, tags: row.snapshot_tags as string[], revision: row.knowledge_revision == null ? REVISION_BACKFILL_PENDING : String(row.knowledge_revision),
       sourceIncarnation: String(row.source_incarnation), withdrawals, ...(globalPurges.count > 0 ? { globalPurges } : {}),

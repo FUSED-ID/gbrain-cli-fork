@@ -25,7 +25,23 @@ import { __setPurgeRedactionFaultForTests } from '../src/core/belief/purge.ts';
 import { recordDerivationInputs } from '../src/core/facts/derivation-inputs.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
-import { beliefBrain, beliefEngineCase, beliefPage, openFileBeliefBrain, withFileBeliefBrain, type BeliefBrain, type FileBeliefBrain } from './helpers/belief-ledger.ts';
+import { beliefBrain as beliefBrainRaw, beliefEngineCase, beliefPage, openFileBeliefBrain, withFileBeliefBrain as withFileBeliefBrainRaw, type BeliefBrain, type FileBeliefBrain } from './helpers/belief-ledger.ts';
+
+async function beliefBrain(run: (brain: BeliefBrain) => Promise<void>, opts?: Parameters<typeof beliefBrainRaw>[1]): Promise<void> {
+  return beliefBrainRaw(async b => {
+    await b.engine.executeRaw(`UPDATE sources SET config = COALESCE(config, '{}'::jsonb) || '{"federated":true,"facts_visibility":"world"}'::jsonb WHERE id = $1 AND COALESCE(config->>'federated', '') <> 'true'`, [b.sourceId]);
+    await run(b);
+  }, opts);
+}
+
+async function withFileBeliefBrain(sourceId: string, run: (brain: FileBeliefBrain) => Promise<void>): Promise<void> {
+  return withFileBeliefBrainRaw(sourceId, async fb => {
+    await fb.open(async b => {
+      await b.engine.executeRaw(`UPDATE sources SET config = COALESCE(config, '{}'::jsonb) || '{"federated":true,"facts_visibility":"world"}'::jsonb WHERE id = $1`, [sourceId]);
+    });
+    await run(fb);
+  });
+}
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 

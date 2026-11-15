@@ -102,6 +102,10 @@ beforeEach(async () => {
       [src, `/tmp/${src}`],
     );
   }
+  // The remote caller reads srcalpha, so its public ontology control rides a federated srcalpha.
+  await engine.executeRaw(
+    `UPDATE sources SET config = config || '{"federated":true,"facts_visibility":"world"}'::jsonb WHERE id = 'srcalpha'`,
+  );
   // ── srcalpha pages ──
   await insertPage({ slug: 'meetings/alpha-sync', type: 'meeting', sourceId: 'srcalpha' });
   await insertPage({ slug: 'people/alpha-person', type: 'person', sourceId: 'srcalpha' });
@@ -197,7 +201,8 @@ beforeEach(async () => {
   if (updated.length !== 1) throw new Error(`CROSS fixture: expected 1 repointed row, got ${updated.length}`);
 
   // ── ontology (volunteer_chronicle arm): one diary-sourced, one public, both
-  // world-visible so only the diary rule can redact. ──
+  // world-visible so only the diary rule can redact. The public one rides a
+  // federated source: facts on a non-federated source are private to remote callers. ──
   await engine.mergeOntologyFact({
     entitySlug: 'people/alpha-person', dimension: 'affect', value: 'DIARYONLYVALUE',
     source: 'life/diary/2026-06-18', sourceId: 'srcalpha', visibility: 'world',

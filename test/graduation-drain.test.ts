@@ -81,7 +81,7 @@ for (const backend of testBackends()) {
           ]));
           if (engine.kind === 'pglite') {
             expect(blocked.blockers).toContainEqual(expect.objectContaining({ kind: 'dangling_reference', id: `oauth_clients.${fixture.oauthClientId}`,
-              argv: ['gbrain', 'auth', 'revoke-client', fixture.oauthClientId], needsUser: true }));
+              argv: ['gbrain', 'auth', 'revoke-client', fixture.oauthClientId, '--yes-i-mean-it'], needsUser: true }));
           }
 
           if (engine.kind === 'pglite') {

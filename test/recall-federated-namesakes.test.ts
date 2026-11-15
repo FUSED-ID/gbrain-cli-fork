@@ -22,7 +22,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('team', 'team', '{}')`);
+  await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('team', 'team', '{"federated":true,"facts_visibility":"world"}')`);
   for (const source of ['default', 'team']) {
     // Two different people who share a name and slug, one per source.
     await importFromContent(engine, 'people/sam-example',

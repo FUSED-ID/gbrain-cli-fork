@@ -302,6 +302,19 @@ describe('listSources', () => {
 // ---------------------------------------------------------------------------
 
 describe('removeSource — clone-cleanup', () => {
+  test('requires confirmation for a zero-page source that still has facts', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ($1, $2, '{}'::jsonb)`,
+      ['facts-only', 'Facts only'],
+    );
+    await engine.insertFact(
+      { fact: 'retained live fact', kind: 'fact', entity_slug: 'facts-only', source: 'test' },
+      { source_id: 'facts-only' },
+    );
+    await expect(removeSource(engine, { id: 'facts-only' })).rejects.toThrow(
+      /0 pages, 1 facts, and 0 chunks without --confirm-destructive/,
+    );
+  });
   test('counts soft-deleted pages for destructive removal while list/status show active pages', async () => {
     await withEnv2(async () => {
       await addSource(engine, { id: 'soft-only', localPath: '/tmp/soft-only-fixture' });

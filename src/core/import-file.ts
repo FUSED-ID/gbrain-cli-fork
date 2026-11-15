@@ -1,4 +1,5 @@
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
+import { routeMarkdownImport } from './import-private-route.ts';
 import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
 import { noncanonicalPrivateHold } from './persistence/visibility-request.ts';
 import { maintenanceBeliefTransaction } from './belief/writers.ts';
@@ -363,7 +364,7 @@ export async function importFromContent(
   // (source_id, slug) row. Pre-fix, putPage relied on the schema DEFAULT and
   // silently fabricated a duplicate at (default, slug) — causing later
   // bare-slug subqueries (getTags, deleteChunks, etc.) to crash with 21000.
-  const sourceId = opts.sourceId;
+  let sourceId = opts.sourceId;
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
@@ -373,9 +374,10 @@ export async function importFromContent(
   }
   const parsed = (screen as { parsed: ParsedMarkdown }).parsed;
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct content import', { sourceId: sourceId ?? 'default' });
-  // Canonicalize only free-prose fields before protected-fence parsing, hidden
-  // row merging, hashing and indexing. Frontmatter identities stay untouched.
-  parsed.title = sanitizeText(parsed.title);
+  const routedImport = await routeMarkdownImport(engine, opts.prepare, parsed, content, slug, sourceId);
+  sourceId = routedImport.sourceId;
+  const routedFromSourceId = routedImport.routedFromSourceId;
+  // Body fields are sanitized here, where this file already owns the reviewed reader. The router only needs the title.
   parsed.compiled_truth = sanitizeText(parsed.compiled_truth);
   parsed.timeline = sanitizeText(parsed.timeline);
 
@@ -896,7 +898,11 @@ export async function importFromContent(
     apply: applyPrepared, ...(segmented ? { afterCommit: async (target: BrainEngine) => { await segmented.afterCommit(target); }, segmented }
       : opts.boundedChunkWrites ? { afterCommit: async (target: BrainEngine) => { if (chunkReplacementDeferred) await continueDeferredProjection(target, txOpts.sourceId, slug); } } : {}),
   });
-  await withUnmanagedBeliefs(engine, txOpts.sourceId, [slug], 'import', run => maintenanceTransaction(engine, tx => run(tx, () => applyPrepared(tx)), writeTrustOfGate(opts.writeGate)).catch(async (err: unknown) => {
+  await withUnmanagedBeliefs(engine, txOpts.sourceId, [slug], 'import', run => maintenanceTransaction(engine, async tx => {
+    const applied = await run(tx, () => applyPrepared(tx));
+    if (routedFromSourceId) await tx.softDeletePage(slug, { sourceId: routedFromSourceId });
+    return applied;
+  }, writeTrustOfGate(opts.writeGate)).catch(async (err: unknown) => {
     await abortSegmentedStaging(engine, segmented?.prepared);
     // #4287: name the dimension-mismatch rollback instead of letting the bare
     // pgvector message ("expected N dimensions, not M") surface with no code,
@@ -914,7 +920,6 @@ export async function importFromContent(
     throw decorateEmbeddingDimError(err, slug, activeColName);
   }));
   const searchable = await segmented?.afterCommit(engine);
-
 
   if (postCommitEmbedding && !noEmbed && chunks.length > 0) {
     postCommitEmbedding(async () => {

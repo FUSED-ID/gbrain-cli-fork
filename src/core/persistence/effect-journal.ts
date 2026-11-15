@@ -11,7 +11,7 @@ import type { SqlEngine, WriteRequest } from './model.ts';
 import { recordChronicleDecision } from '../chronicle/ledger.ts';
 import { isFactsExtractionEnabled } from '../facts/extract.ts';
 import { loadConfig } from '../config.ts';
-import { resolveDefaultVisibility } from '../facts/visibility.ts';
+import { resolveSourceVisibility, tightenToPage } from '../facts/visibility.ts';
 import { declarePersistenceProtocol, isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { claimOwner, EXPIRED_PREPARING_CHARGE_SQL } from './claim-phase.ts';
 import { refreshFenceClear } from './worktree-refresh-schema.ts';
@@ -51,7 +51,7 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
     outcome.embedding_state = await embeddingDisabled(tx) ? 'disabled' : prepared?.deferEmbedding ? 'deferred' : prepared?.embeddingCurrent ? 'current' : 'queued';
     if ((outcome.facts_backstop as { queued?: boolean } | undefined)?.queued) {
       if (!(await isFactsExtractionEnabled(tx))) outcome.facts_backstop = { skipped: 'extraction_disabled' };
-      else queue('facts-backstop', { visibility: await resolveDefaultVisibility(tx) });
+      else queue('facts-backstop', { visibility: tightenToPage(await resolveSourceVisibility(tx, row.source_id), snapshot.page) });
     }
     // The links effect is inserted with the others, gated in SQL on auto_link and mcp.remote_auto_links.
     if (queuesMentionLinks(row, prepared)) queued.push({ kind: 'links', data: { ...data, ...(prepared?.mentionRange ? { range: prepared.mentionRange } : {}) }, gated: true });

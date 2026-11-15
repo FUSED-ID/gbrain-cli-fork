@@ -58,7 +58,7 @@ async function entity(engine: BrainEngine) {
   const root = mkdtempSync(join(tmpdir(), 'gbrain-withdrawal-followup-')); roots.push(root);
   const sourceId = `followup-${randomUUID()}`, slug = 'people/hazel-example';
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-  await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
+  await engine.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{"federated":true,"facts_visibility":"world"}')`, [sourceId, root]);
   const binding = await claimWorktree(engine, sourceId, root, hostId);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
   const snapshot = await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], async () => {

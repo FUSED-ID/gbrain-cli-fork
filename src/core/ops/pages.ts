@@ -39,6 +39,8 @@ import { WHERE_PARAM, whereOpParam } from './where-param.ts';
 import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
 import { isDatetimeInputError } from '../utils.ts';
 import { rethrowNamingRevisionSource } from './put-page-revision-source.ts';
+import { enforcePrivatePageWrite } from '../private-source-routing.ts';
+import { normalizeEntityPageWriteSlugWithConfig, normalizePageWriteSlugWithConfig } from '../slug-namespace.ts';
 import {
   assertExplicitSourceLive,
   enforceSubagentSlugFence,
@@ -112,7 +114,9 @@ const get_page: Operation = {
   },
   handler: async (ctx, p) => {
     if (p.known_as_of !== undefined) return getPageKnownAsOf(ctx, p);
-    const slug = p.slug as string;
+    const requestedSlug = p.slug as string;
+    const slug = typeof p.slug === 'string' ? await normalizePageWriteSlugWithConfig(ctx.engine, p.slug, ctx.logger) : requestedSlug;
+    const namespaceResolved = slug !== requestedSlug ? slug : undefined;
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
     // Large pages: resolve the body mode first, so a malformed selector fails before any read.
@@ -144,10 +148,21 @@ const get_page: Operation = {
     // oracle), composing with — not replacing — the source-grant scope above.
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
 
-    let snapshot = await ctx.engine.readPageSnapshot(slug, { includeDeleted, excludePrivate, ...sourceOpts, resolveAlias: true });
+    const readSnapshot: (candidateSlug: string, opts: Parameters<BrainEngine['readPageSnapshot']>[1]) => Promise<PageSnapshot | null> = typeof ctx.engine.readPageSnapshot === 'function'
+      ? ctx.engine.readPageSnapshot.bind(ctx.engine)
+      : async (candidateSlug, opts) => {
+        const legacyPage = await ctx.engine.getPage(candidateSlug, opts);
+        return legacyPage ? { page: legacyPage, tags: [], revision: '', sourceIncarnation: '', withdrawals: [] } : null;
+      };
+    let snapshot = await readSnapshot(slug, { includeDeleted, excludePrivate, ...sourceOpts, resolveAlias: true });
     let page = snapshot?.page ?? null;
+<<<<<<< HEAD
     if (page && excludePrivate && isPrivatePageForCaller(page)) page = null;
     let resolved_slug: string | undefined = page && page.slug !== slug ? page.slug : undefined;
+=======
+    if (page && excludePrivate && isPrivatePage(page)) page = null;
+    let resolved_slug: string | undefined = namespaceResolved ?? (page && page.slug !== slug ? page.slug : undefined);
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 
     if (!page && fuzzy) {
       const fallback = await ctx.engine.transaction(async tx => {
@@ -360,6 +375,11 @@ const put_page: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     const { pageMutationSource, submitPageMutation } = await pageMutations();
+    if (typeof p.slug === 'string') {
+      p.slug = ctx.dryRun
+        ? await normalizePageWriteSlugWithConfig(ctx.engine, p.slug, ctx.logger)
+        : await normalizeEntityPageWriteSlugWithConfig(ctx.engine, p.slug, ctx.logger);
+    }
     const sourceId = pageMutationSource(ctx, p, 'put_page');
     if (ctx.dryRun) {
       if (typeof p.slug === 'string') {
@@ -371,8 +391,28 @@ const put_page: Operation = {
       return { dry_run: true, action: 'put_page', slug: p.slug };
     }
     if (ctx.remote !== false && typeof p.slug === 'string') await assertLargePageAdmission(ctx.engine, p.slug, sourceId, p);
+<<<<<<< HEAD
     (await import('../persistence/page-visibility.ts')).assertSubmittedReaders(ctx.remote, p.slug, p.content);
     return submitPageMutation(ctx, { operation: 'put_page', params: p }).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
+=======
+    const { preflightPutPagePrivateWrite } = await import('./pages-private-preflight.ts');
+    const route = await preflightPutPagePrivateWrite(ctx, sourceId, p);
+    if (route.routedFromSourceId) p.source_id = route.sourceId;
+    const result = await submitPageMutation(ctx, { operation: 'put_page', params: p })
+      .then(funnelPassThrough('save'))
+      .catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
+    if (route.routedFromSourceId && typeof p.slug === 'string') {
+      const existing = await ctx.engine.readPageSnapshot(p.slug, { sourceId: route.routedFromSourceId, includeDeleted: true });
+      if (existing && existing.page.deleted_at == null) {
+        const { routedDefaultTombstoneParams } = await import('../persistence/page-prepare.ts');
+        await submitPageMutation(ctx, {
+          operation: 'delete_page',
+          params: routedDefaultTombstoneParams(p.slug, route.routedFromSourceId, existing.revision),
+        });
+      }
+    }
+    return result;
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
@@ -435,6 +475,8 @@ const delete_page: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     const { pageMutationSource, submitPageMutation, validateMutationSlug } = await pageMutations();
+    const { ROUTED_DEFAULT_TOMBSTONE_KEY } = await import('../persistence/page-prepare.ts');
+    if (Object.hasOwn(p, ROUTED_DEFAULT_TOMBSTONE_KEY)) delete p[ROUTED_DEFAULT_TOMBSTONE_KEY];
     const sourceId = pageMutationSource(ctx, p, 'delete_page');
     assertPurgeParams(p, ctx.remote);
     if (ctx.dryRun) {
@@ -466,6 +508,8 @@ const restore_page: Operation = {
   handler: async (ctx, p) => {
     const { pageMutationSource, submitPageMutation, validateMutationSlug } = await pageMutations();
     const sourceId = pageMutationSource(ctx, p, 'restore_page');
+    const route = await enforcePrivatePageWrite(ctx.engine, { requestedSourceId: sourceId, slug: p.slug as string });
+    if (ctx.remote && route.routed) throw opError('permission_denied', `private-write routing refused remote restore for '${p.slug}'`, 'Ask the brain host to restore this private routed page through its trusted local CLI.');
     if (ctx.dryRun) {
       if (typeof p.slug === 'string') {
         await validateMutationSlug(ctx, 'restore_page', p.slug, sourceId);

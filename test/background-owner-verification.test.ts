@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import type { OperationContext } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runCycle } from '../src/core/cycle.ts';
+import { readPurgeRetentionHours } from '../src/core/sync-reconcile.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -79,9 +80,17 @@ describe('#6741 C: the owner marker deleted while the worktree state is still ac
     expect(result).toMatchObject({ count: 0, failed: 0, inactive: 1 });
     expect(result.blocked).toEqual([expect.objectContaining({ slug: 'notes/expired', code: 'writer_not_active', binding_state: 'recovery_required' })]);
     expect(result.blocked[0]!.reason.length).toBeGreaterThan(80);
-    const phase = (await withEnv(env(), () => runCycle(engine, { brainDir: root, phases: ['purge'], sourceId: SOURCE }))).phases.find(p => p.phase === 'purge')!;
+    const olderThanHours = await readPurgeRetentionHours(engine);
+    const phase = (await withEnv(env(), () => runCycle(engine, { brainDir: root, phases: ['purge'], sourceId: SOURCE, purgeConsent: { olderThanHours } }))).phases.find(p => p.phase === 'purge')!;
     expect(phase.status).toBe('warn');
     expect(await lifetimeIds()).toBe(before);
+  }, 120_000);
+
+  test('without purge consent the phase is skipped and nothing is deleted', async () => {
+    const phase = (await withEnv(env(), () => runCycle(engine, { brainDir: root, phases: ['purge'], sourceId: SOURCE }))).phases.find(p => p.phase === 'purge')!;
+    expect(phase.status).toBe('skipped');
+    expect(phase.details).toEqual({ reason: 'missing_purge_consent', required_flag: '--yes-i-mean-it' });
+    expect((await engine.executeRaw("SELECT 1 FROM pages WHERE source_id=$1 AND slug='notes/expired'", [SOURCE])).length).toBe(1);
   }, 120_000);
 
   test('a background admission is refused owner_unavailable with the owner-status fix before any receipt', async () => {

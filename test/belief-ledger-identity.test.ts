@@ -71,7 +71,7 @@ async function managedWorktree(engine: BrainEngine, seed: (f: Managed) => Promis
       const sourceId = `identity-${randomUUID().slice(0, 8)}`;
       await disposePersistenceConsumer(engine);
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-      await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
+      await engine.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{"federated":true,"facts_visibility":"world"}'::jsonb)`, [sourceId, root]);
       await engine.setConfig('sync.write_through', 'true');
       await engine.setConfig('facts.extraction_enabled', 'true');
       await claimWorktree(engine, sourceId, root);
@@ -102,7 +102,10 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       else { const lite = new PGLiteEngine(); await lite.connect({}); await lite.initSchema(); engine = lite; }
     }, 120_000);
     afterAll(async () => { await disposePersistenceConsumer(engine); if (close) await close(); else await engine.disconnect(); });
-    const brain = (run: (b: BeliefBrain) => Promise<void>) => beliefBrain(run, { databaseUrl: engineCase.databaseUrl });
+    const brain = (run: (b: BeliefBrain) => Promise<void>) => beliefBrain(async b => {
+      await b.engine.executeRaw(`UPDATE sources SET config = COALESCE(config, '{}'::jsonb) || '{"federated":true,"facts_visibility":"world"}'::jsonb WHERE id = $1`, [b.sourceId]);
+      await run(b);
+    }, { databaseUrl: engineCase.databaseUrl });
 
     test('probe 4: a cheap rename and a fallback rename each append one page.renamed on the same lifetime; replay before the rename resolves the old slug', () => brain(async b => {
       await b.put('notes/old-example', beliefPage({ type: 'note', title: 'Old', facts: ['Old example has a roof'] }));

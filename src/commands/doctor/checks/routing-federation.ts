@@ -207,7 +207,7 @@ export async function checkOauthConfidentialHealth(engine: BrainEngine): Promise
         message:
           `${broken.length} confidential OAuth client(s) have NULL/empty secret hash: ${broken.map(b => b.client_id).slice(0, 5).join(', ')}` +
           (broken.length > 5 ? ` (+${broken.length - 5} more)` : '') +
-          `. Fix: \`gbrain auth revoke-client <id> && gbrain auth register-client …\` for each, OR \`gbrain upgrade\` if pre-v0.37.7.0.`,
+          `. Fix: \`gbrain auth revoke-client <id> --yes-i-mean-it && gbrain auth register-client …\` for each, OR \`gbrain upgrade\` if pre-v0.37.7.0.`,
       };
     }
     return {
@@ -285,7 +285,7 @@ export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<
       orphaned = await engine.executeRaw<{ id: string }>(orphanSql(true), [WORKSPACE_SUFFIX]);
     } catch (e) {
       // Pre-v0.31 brain without the facts table: a source can't hold facts it
-      // has no table for — retry without the exclusion. Scoped here so the
+      // has no table for - retry without the exclusion. Scoped here so the
       // dangling-grant arm's findings above aren't lost to the outer catch.
       if (!isMissingSchemaObject(e, 'table', 'facts')) throw e;
       orphaned = await engine.executeRaw<{ id: string }>(orphanSql(false), [WORKSPACE_SUFFIX]);
@@ -333,7 +333,7 @@ export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<
         `and look self-registered (no operator grant record): ${shown.join('; ')}` +
         (privilegedDcr.length > 5 ? ` (+${privilegedDcr.length - 5} more)` : '') +
         `. If you did not register these yourself, narrow with \`gbrain auth rescope-client <client_id> --scopes ${dcrCeiling.join(',')}\` ` +
-        `or remove with \`gbrain auth revoke-client <client_id>\`.`,
+        `or remove with \`gbrain auth revoke-client <client_id> --yes-i-mean-it\`.`,
       );
     }
     if (dangling.length > 0) {

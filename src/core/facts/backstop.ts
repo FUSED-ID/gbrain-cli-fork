@@ -379,9 +379,19 @@ export async function runFactsBackstop(
       ? { mode: 'queue', enqueued: false, queueDepth: 0, skipped }
       : { mode: 'inline', inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], skipped };
   }
+<<<<<<< HEAD
   // Facts extracted from a private page stay private, whatever the caller or the brain default says.
   const { tightenToStoredPage } = await import('./visibility.ts');
   if (await tightenToStoredPage(ctx.engine, ctx.sourceId, 'world', parsedPage) === 'private') ctx = { ...ctx, visibility: 'private' };
+=======
+  // Stage one resolves caller, source policy, and brain default. Stage two
+  // applies both floors. Repeating this before worker execution rechecks the
+  // current source and page state for queued jobs.
+  const { resolveSourceVisibility, tightenToPage } = await import('./visibility.ts');
+  const sourceVisibility = await resolveSourceVisibility(ctx.engine, ctx.sourceId, ctx.visibility);
+  const visibility = tightenToPage(sourceVisibility, parsedPage);
+  ctx = { ...ctx, visibility };
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
   const { managedPersistenceEnabled } = await import('../persistence/ownership.ts');
   if (await managedPersistenceEnabled(ctx.engine)) {
     if (mode !== 'inline') {
@@ -440,10 +450,6 @@ export async function runFactsBackstop(
           .digest('hex')
           .slice(0, 16);
         const minions = new MinionQueue(ctx.engine);
-        // [ENG-8] Caller-unset visibility resolves the brain default HERE
-        // (not in the long-lived worker) so the durable payload carries the
-        // visibility that was in force at write time.
-        const { resolveDefaultVisibility } = await import('./visibility.ts');
         await minions.add(
           'facts-absorb',
           {
@@ -452,7 +458,7 @@ export async function runFactsBackstop(
             source: ctx.source,
             sessionId: ctx.sessionId,
             notabilityFilter: ctx.notabilityFilter ?? 'all',
-            visibility: ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine)),
+            visibility: ctx.visibility,
             ...(ctx.model ? { model: ctx.model } : {}),
           },
           {

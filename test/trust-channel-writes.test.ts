@@ -74,7 +74,7 @@ async function brain(engine: BrainEngine): Promise<Brain> {
   const sourceId = `trust-${randomUUID().slice(0, 8)}`;
   await disposePersistenceConsumer(engine);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-  await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+  await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES($1,$1,'{"federated":true,"facts_visibility":"world"}')`, [sourceId]);
   await registerLocalWriter(engine, 'cli');
   const minted = await mintLegacyToken(engine, { name: `token-${sourceId}`, scopes: ['read', 'write'], sourceGrant: [sourceId], takesHolders: ['world'] });
   await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');

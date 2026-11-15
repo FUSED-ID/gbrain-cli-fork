@@ -15,7 +15,7 @@ const fence = (...claims: string[]) => renderFactsTable(claims.map((claim, i) =>
   rowNum: i + 1, claim, visibility: 'world' as const, kind: 'fact' as const, confidence: 1, notability: 'medium' as const, active: true,
 })));
 const expired = async (id: number) => (await engine.executeRaw<{ expired: boolean }>('SELECT expired_at IS NOT NULL AS expired FROM facts WHERE id=$1', [id]))[0].expired;
-const source = async (id: string) => { await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [id]); return id; };
+const source = async (id: string) => { await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES($1,$1,'{"federated":true,"facts_visibility":"world"}'::jsonb)`, [id]); return id; };
 
 beforeAll(async () => {
   engine = new PGLiteEngine();

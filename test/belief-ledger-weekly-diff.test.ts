@@ -256,6 +256,7 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
     }), 120_000);
 
     test('a page created and renamed inside the window is reported under its final slug, with the beliefs it moved', () => beliefBrain(async b => {
+      await b.engine.executeRaw(`UPDATE sources SET config = COALESCE(config, '{}'::jsonb) || '{"federated":true,"facts_visibility":"world"}'::jsonb WHERE id = $1`, [b.sourceId]);
       const t0 = await at(b);
       await b.put('notes/old-example', beliefPage({ type: 'note', title: 'Old', facts: ['Old example has a roof', { claim: 'Old example has 3 rooms', confidence: '0.5' }] }));
       await b.put('notes/old-example', beliefPage({ type: 'note', title: 'Old', facts: ['Old example has a roof', { claim: 'Old example has 3 rooms', confidence: '0.9' }] }));

@@ -32,6 +32,7 @@ const siblingCanonical: typeof import('../mentions/siblings.ts').siblingCanonica
 import { isMissingSchemaObject } from '../utils.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { rankingLinkSql } from '../link-ranking-policy.ts';
+import { normalizePageWriteSlug, resolveSlugNamespaceRewrites } from '../slug-namespace.ts';
 
 /**
  * Canonicalize a free-form entity reference to a page slug.
@@ -64,11 +65,15 @@ export async function resolveEntitySlug(
   if (!raw) return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
+  const namespace = trimmed.split('/', 1)[0] ?? '';
+  const slugInput = ['person', 'people', 'company', 'companies'].includes(namespace)
+    ? normalizePageWriteSlug(trimmed, await resolveSlugNamespaceRewrites(engine))
+    : trimmed;
 
   // 1. Exact match on slug. If raw already looks like a slug (or matches
   //    a row exactly), use it.
-  if (looksLikeSlug(trimmed)) {
-    const exact = await tryExactSlug(engine, source_id, trimmed);
+  if (looksLikeSlug(slugInput)) {
+    const exact = await tryExactSlug(engine, source_id, slugInput);
     if (exact) return exact.retired ? (await followRetirement(engine, source_id, exact.slug))?.slug ?? fallbackSlugify(trimmed) : exact.slug;
   }
 
@@ -110,7 +115,7 @@ export async function resolveEntitySlug(
   }
 
   // 4. Fallback: deterministic slugify.
-  return fallbackSlugify(trimmed);
+  return fallbackSlugify(slugInput);
 }
 
 /**

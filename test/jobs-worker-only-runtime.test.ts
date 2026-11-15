@@ -7,12 +7,19 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { MinionWorker } from '../src/core/minions/worker.ts';
+<<<<<<< HEAD
 import { drainPgliteQueue, runJobsWork } from '../src/commands/jobs/work.ts';
+=======
+import { drainPgliteQueue } from '../src/commands/jobs/work.ts';
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 import { runJobs } from '../src/commands/jobs.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
+<<<<<<< HEAD
 import { WORKER_EXIT_CONFIGURATION } from '../src/core/minions/worker-exit-codes.ts';
+=======
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 
 let engine: PGLiteEngine;
 let home: string;
@@ -110,6 +117,7 @@ describe('jobs work PGLite worker allow-list runtime', () => {
     });
   }), 60_000);
 
+<<<<<<< HEAD
   test('R10 jobs work honors the environment allow-list through the command entry', () => inHome(async () => {
     const queue = new MinionQueue(engine);
     await queue.ensureSchema();
@@ -159,4 +167,27 @@ describe('jobs work PGLite worker allow-list runtime', () => {
     expect(exitCode).toBe(WORKER_EXIT_CONFIGURATION);
     expect(startupCalls).toEqual([]);
   });
+=======
+  test('R10 MinionWorker start and stop claim only the selected handler', () => inHome(async () => {
+    const queue = new MinionQueue(engine);
+    await queue.ensureSchema();
+    await queue.add('allowed-name', {}, {});
+    await queue.add('excluded-name', {}, {});
+    let resolveCompleted!: () => void;
+    const completed = new Promise<void>(resolve => { resolveCompleted = resolve; });
+    const worker = new MinionWorker(engine, { pollInterval: 10, healthCheckInterval: 0 });
+    worker.register('allowed-name', async () => {
+      resolveCompleted();
+      return { ok: true };
+    });
+    worker.register('excluded-name', async () => ({ ok: true }));
+    worker.keepOnly(['allowed-name']);
+    const running = worker.start();
+    await completed;
+    worker.stop();
+    await running;
+    expect(await count('allowed-name', 'completed')).toBe(1);
+    expect(await count('excluded-name', 'waiting')).toBe(1);
+  }), 60_000);
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 });

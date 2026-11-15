@@ -183,7 +183,8 @@ export async function prepareTopology(engine: BrainEngine, { sources, worktrees,
     return { id: `${prefix}-${i}`, root: dir, worktree };
   });
   for (const source of fixtureSources) {
-    await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [source.id, source.root]);
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)',
+      [source.id, source.root, JSON.stringify({ federated: true, facts_visibility: 'world' })]);
     await claimWorktree(engine, source.id, source.root);
   }
   // A GitHub connector source in its own checkout; its items publish through the coordinator.

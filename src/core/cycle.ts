@@ -52,6 +52,7 @@ import { createProgress, type ProgressReporter } from './progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
 import { tryAcquireDbLock, reapDeadHolderLocks, inspectLock, LockStolenError, type DbLockHandle } from './db-lock.ts';
 import { timeContainedPhase } from './cycle/phase-containment.ts';
+import { skipPurgeWithoutConsent } from './cycle/purge-consent.ts';
 import { isManagedBrain } from './cycle/phase-table.ts';
 import { packGateSkip, resolvePackPhaseGate } from './cycle/pack-phase-gate.ts';
 import { managedPullWarning, type UpstreamRefresh } from './sync-upstream.ts';
@@ -222,7 +223,7 @@ export const ALL_PHASES: CyclePhase[] = [
   // by default; LLM only when chat provider configured).
   'schema-suggest',
   // v0.26.5: hard-deletes soft-deleted pages and expired archived sources past
-  // the 72h recovery window. Runs last so the rest of the cycle sees the
+  // the caller-supplied recovery window. Runs last so the rest of the cycle sees the
   // recoverable set; the purge then drops what's expired.
   'purge',
 ];
@@ -249,6 +250,9 @@ export const SOURCE_PHASES: CyclePhase[] = ALL_PHASES.filter((p) => PHASE_SCOPE[
 export const MIXED_PHASES: CyclePhase[] = ALL_PHASES.filter((p) => PHASE_SCOPE[p] === 'mixed');
 export const GLOBAL_PHASES: CyclePhase[] = ALL_PHASES.filter((p) => PHASE_SCOPE[p] === 'global');
 export const MAINTENANCE_PHASES: CyclePhase[] = ALL_PHASES.filter((p) => PHASE_SCOPE[p] !== 'source');
+/** Queue cycle phase surfaces deliberately exclude the hard-delete phase. */
+export const QUEUED_AUTOPILOT_PHASES: CyclePhase[] = ALL_PHASES.filter((p) => p !== 'purge');
+export const QUEUED_MAINTENANCE_PHASES: CyclePhase[] = MAINTENANCE_PHASES.filter((p) => p !== 'purge');
 
 /** LLM-backed or unbounded source work that cannot hold freshness hostage. */
 export const SOURCE_BACKGROUND_PHASES: CyclePhase[] = SOURCE_PHASES.filter(
@@ -630,6 +634,8 @@ export interface CycleOpts {
   deadlineAtMs?: number | null;
   /** Internal: minion job id that owns any phase-created private dream-inline queues. */
   privateQueueOwnerJobId?: number | null;
+  /** Explicit operator/scheduler consent and cutoff for the hard-delete phase. */
+  purgeConsent?: { olderThanHours: number };
 }
 
 // ─── Lock primitives ───────────────────────────────────────────────
@@ -1163,8 +1169,9 @@ interface SyncPhaseResult extends PhaseResult {
  * everything but name, so dream derives the source id up front and passes
  * it as opts.sourceId — landing the freshness stamp without changing
  * runCycle's stamp/lock semantics for legacy global callers (the
- * autopilot-global-maintenance handler runs MAINTENANCE_PHASES with a brainDir
- * and MUST NOT stamp per-source freshness; see rejected PR #2549).
+ * autopilot-global-maintenance handler runs the queued maintenance phase set
+ * with a brainDir and MUST NOT stamp per-source freshness; see rejected PR
+ * #2549).
  */
 export async function resolveSourceForDir(
   engine: BrainEngine,
@@ -1709,7 +1716,7 @@ async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean, signal?: Abor
  * v0.26.5 — purge phase. Hard-deletes:
  *  - source rows where `archived = true AND archive_expires_at <= now()`
  *    (paired with the cascade FK to `pages`, this also drops the source's pages)
- *  - page rows where `deleted_at` is older than `purge.retention_hours` (default 72h), except
+ *  - page rows where `deleted_at` is older than the caller-supplied cutoff, except
  *    managed sync tombstones with no live twin (#7130), which wait for `gbrain pages purge-deleted`
  *
  * Cascade on `pages` covers `content_chunks`, `page_links`, `chunk_relations`.
@@ -1754,7 +1761,11 @@ async function purgeOrphanClones(staleHours: number): Promise<{ count: number; b
   return { count: removed.length, bytes, names: removed };
 }
 
-async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<PhaseResult> {
+async function runPhasePurge(
+  engine: BrainEngine,
+  dryRun: boolean,
+  purgeConsent?: CycleOpts['purgeConsent'],
+): Promise<PhaseResult> {
   try {
     if (dryRun) {
       return {
@@ -1765,12 +1776,13 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         details: { dry_run: true, purged_sources_count: 0, purged_pages_count: 0, purged_orphan_clones_count: 0 },
       };
     }
+    const skippedPurge = skipPurgeWithoutConsent(purgeConsent); if (skippedPurge) return skippedPurge;
     const [{ purgeExpiredSources }, { purgeDeletedPagesCoordinated, purgePhaseNote, purgePhaseStatus }, { readPurgeRetentionHours }] = await Promise.all([import('./destructive-guard.ts'), import('./persistence/purge-deleted.ts'), import('./sync-reconcile.ts')]);
     // gbrain#4115: {purged, blocked} — a RESTRICT-FK-held source (revoked
     // oauth_client, v64) is reported and skipped instead of aborting the sweep.
     const purgeResult = await purgeExpiredSources(engine);
     const purgedSources = purgeResult.purged;
-    const retentionHours = await readPurgeRetentionHours(engine); // #7130: purge.retention_hours (default 72, never less)
+    const retentionHours = await readPurgeRetentionHours(engine);
     // #5405: coordinated on managed brains; #7130: `automatic` keeps managed sync tombstones with no live twin.
     const purgedPages = await purgeDeletedPagesCoordinated(engine, retentionHours, { automatic: true });
     const purgedClones = await purgeOrphanClones(retentionHours);
@@ -3061,7 +3073,7 @@ async function runCycleUnscoped(
 
     // ── Phase 9: purge (v0.26.5) ────────────────────────────────
     // Hard-delete soft-deleted pages and expired archived sources past the
-    // 72h recovery window. Runs last so the rest of the cycle sees the
+    // caller-supplied recovery window. Runs last so the rest of the cycle sees the
     // recoverable set; the purge then drops what's truly expired.
     if (phases.includes('purge')) {
       checkAborted(cycleSignal);
@@ -3075,7 +3087,7 @@ async function runCycleUnscoped(
         });
       } else {
         progress.start('cycle.purge');
-        const { result, duration_ms } = await timePhase(() => runPhasePurge(engine, dryRun), 'purge');
+        const { result, duration_ms } = await timePhase(() => runPhasePurge(engine, dryRun, opts.purgeConsent), 'purge');
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -3342,4 +3354,5 @@ export function deriveStatus(phases: PhaseResult[], totals: CycleReport['totals'
 // Not part of the runtime contract.
 export const __testing = {
   deriveStatus,
+  runPhasePurge,
 };

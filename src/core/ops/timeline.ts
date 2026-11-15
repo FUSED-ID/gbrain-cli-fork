@@ -11,6 +11,7 @@ import { MERGE_PRECONDITION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/p
 import { opError, type Operation } from './contract.ts';
 import { opTransport } from './op-fix.ts';
 import { readPolicyOpts } from './context.ts';
+import { enforcePrivatePageWrite } from '../private-source-routing.ts';
 import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
 import { stampRowTrust } from '../eligibility/stamp.ts';
 import { quoteTimelineRows } from './timeline-quote.ts';
@@ -18,6 +19,7 @@ import { unquoteTranscriptText } from '../search/transcript-quote.ts';
 import {
   enforceSubagentSlugFence,
   enforceClientSlugFence,
+  enforcePrivateWriteGuard,
 } from './context.ts';
 
 // --- Timeline ---
@@ -47,6 +49,8 @@ const add_timeline_entry: Operation = {
     enforceSubagentSlugFence(ctx, p.slug as string, 'add_timeline_entry');
     enforceClientSlugFence(ctx, p.slug as string, 'add_timeline_entry');
     if (ctx.dryRun) return { dry_run: true, action: 'add_timeline_entry', slug: p.slug };
+    const route = await enforcePrivatePageWrite(ctx.engine, { requestedSourceId: ctx.sourceId ?? 'default', slug: p.slug as string });
+    if (ctx.remote && route.routed) throw opError('permission_denied', `private-write routing refused remote timeline write for '${p.slug}'`, 'Ask the brain host to update this private routed timeline through its trusted local CLI.');
     const date = p.date as string;
     const badDate = (message: string) => opError('invalid_params', message,
       `Nothing was written. Pass ${opTransport(ctx) === 'cli' ? 'the date argument' : '`date`'} as a strict YYYY-MM-DD calendar date (year 1900-2199), for example 2026-04-03.`);
@@ -65,9 +69,28 @@ const add_timeline_entry: Operation = {
     if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
       throw badDate(`Invalid calendar date "${date}"`);
     }
+<<<<<<< HEAD
     // #8377: an entry an agent copied out of a quoted read (get_timeline, chronicle) is stored without the fence, so its replay key matches; #8384: its source too.
     const unquote = (v: unknown) => typeof v === 'string' && ctx.remote !== false ? unquoteTranscriptText(v, String(p.slug).toLowerCase()) : v;
     return submitPageMutation(ctx, { operation: 'add_timeline_entry', params: { ...p, summary: unquote(p.summary), ...(p.detail !== undefined ? { detail: unquote(p.detail) } : {}), ...(p.source !== undefined ? { source: unquote(p.source) } : {}) } });
+=======
+    // D1 (fork): refuse a private-routed timeline write before the upstream
+    // mutation pipeline runs. The pipeline owns the write itself.
+    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // Identity fields only (type/title), read directly: a page snapshot here
+    // would add a read ahead of the pipeline's preflight + admission snapshot.
+    const [current] = await ctx.engine.executeRaw<{ type: string; title: string }>(
+      'SELECT type, title FROM pages WHERE slug = $1 AND source_id = $2 LIMIT 1',
+      [p.slug as string, sourceOpts.sourceId ?? 'default'],
+    );
+    await enforcePrivateWriteGuard(ctx, 'add_timeline_entry', {
+      requestedSourceId: sourceOpts.sourceId ?? 'default',
+      slug: p.slug as string,
+      entityType: current?.type,
+      entityName: current?.title,
+    }, current ?? undefined);
+    return submitPageMutation(ctx, { operation: 'add_timeline_entry', params: p });
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
   },
   cliHints: { name: 'timeline-add', positional: ['slug', 'date', 'summary'] },
 };

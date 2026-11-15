@@ -90,7 +90,7 @@ function assertAccounting(result: any) {
 test.each(['warn', 'reject'])('explicit recall source narrows both arms within grants under %s validation', async mode => {
   await engine.setConfig('mcp.strict_params', mode);
   for (const source of ['default', 'peer', 'denied']) {
-    if (source !== 'default') await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [source]);
+    if (source !== 'default') await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES($1,$1,'{"federated":true,"facts_visibility":"world"}')`, [source]);
     await page('notes/telescope', 'Telescope', `Telescope evidence from ${source}.`, source);
     await fact(`Telescope evidence from ${source}.`, {}, source);
   }
@@ -344,7 +344,7 @@ describe('recall opt-in query-first budget packing', () => {
   });
 
   test('remote grants and private/safe-page filters apply before query-first packing across duplicate slugs', async () => {
-    for (const source of ['peer', 'denied']) await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1)', [source]);
+    for (const source of ['peer', 'denied']) await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, $1, '{"federated":true,"facts_visibility":"world"}')`, [source]);
     await page('notes/compass', 'Compass public', 'Compass public answer.', 'peer');
     await page('notes/compass', 'Compass denied', 'Compass denied answer.', 'denied');
     await page('notes/private', 'Compass private', 'Compass private answer.', 'default', { visibility: 'private' });

@@ -195,6 +195,8 @@ export interface MinionWorker {
 export class MinionWorker extends EventEmitter {
   private queue: MinionQueue;
   private handlers = new Map<string, MinionHandler>();
+  /** Bounded claim set for `--only` / GBRAIN_WORKER_ONLY_NAMES; null means unrestricted. */
+  private onlyNames: Set<string> | null = null;
   private running = false;
   /** Log the pause/resume transition once each, not every poll. */
   private pausedByMarkerAnnounced = false;
@@ -357,7 +359,21 @@ export class MinionWorker extends EventEmitter {
 
   /** Get registered handler names (used by claim query). */
   get registeredNames(): string[] {
-    return Array.from(this.handlers.keys());
+    const names = Array.from(this.handlers.keys());
+    return this.onlyNames ? names.filter(name => this.onlyNames!.has(name)) : names;
+  }
+
+  /**
+   * Restrict the claim set to the named registered handlers. Names that are
+   * absent from the registry are rejected, and unlisted handlers stay
+   * registered but are never claimed.
+   */
+  keepOnly(names: string[]): void {
+    const unknown = names.filter(name => !this.handlers.has(name));
+    if (unknown.length > 0) {
+      throw new Error(`Unknown worker job name(s): ${unknown.join(', ')}`);
+    }
+    this.onlyNames = new Set(names);
   }
 
   /**

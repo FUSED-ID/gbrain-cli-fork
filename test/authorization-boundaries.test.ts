@@ -37,7 +37,7 @@ describe('operation authorization boundaries', () => {
       engine = new PGLiteEngine();
       await engine.connect({});
       await engine.initSchema();
-      await engine.executeRaw("INSERT INTO sources(id,name) VALUES('source-a','Source A'),('source-b','Source B')");
+      await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES('source-a','Source A','{"federated":true,"facts_visibility":"world"}'::jsonb),('source-b','Source B','{"federated":true,"facts_visibility":"world"}'::jsonb)`);
       await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_name,scope,source_id,allowed_operations)
         VALUES($1,'Authorization boundary fixture','read write','source-a',$2)`, [clientId, ['forget_fact']]);
     }, 60_000);

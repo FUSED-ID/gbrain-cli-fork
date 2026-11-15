@@ -28,7 +28,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
         const sourceId = `synthetic-${order}`;
         const slug = 'synthetic-claim';
         const claim = `withdrawalsentinel ${order} synthetic claim`;
-        await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+        await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES($1,$1,'{"federated":true,"facts_visibility":"world"}'::jsonb)`, [sourceId]);
         await engine.putPage(slug, { type: 'note', title: 'Synthetic race', compiled_truth: 'Safe retained prose', timeline: renderFactsTable([
           { rowNum: 1, claim, kind: 'fact', confidence: 1, visibility: 'world', notability: 'medium', active: true },
         ]) }, { sourceId });
@@ -54,7 +54,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
       test(`${change} change rejects a prepared vector without changing the replacement state`, async () => {
         const sourceId = `synthetic-prepared-${change}`;
         const slug = 'synthetic-prepared';
-        await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+        await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES($1,$1,'{"federated":true,"facts_visibility":"world"}'::jsonb)`, [sourceId]);
         await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'Synthetic stable content' }, { sourceId });
         await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: 'Synthetic stable content' }], { sourceId });
         const prepared = (await readProjectionSnapshot(engine, slug, sourceId))!;

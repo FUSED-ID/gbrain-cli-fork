@@ -29,8 +29,14 @@ import { sqlFragment, trustedSql } from './fragment.ts';
 import { compileRowNormalizer } from './normalize.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { FACT_WITHDRAWAL_STAMP_DEFERRED_SETTING } from '../facts/insert-guard-schema.ts';
+<<<<<<< HEAD
 import { privateProvenanceFilterUnderPolicy } from '../search/private-visibility.ts';
 import { factVisibilitySql, onMemberPageSql } from '../access/member-facts.ts';
+=======
+import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
+import { tightenToPage, tightenToSource } from '../facts/visibility.ts';
+import { isSourceFederated } from '../sources-load.ts';
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 import { storedTrustTier } from '../trust/tier.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 
@@ -46,6 +52,75 @@ export type ResolveEmbeddingCast = () => Promise<EmbeddingCast>;
 async function embeddingCast(exec: SqlExecutor, probe: ResolveEmbeddingCast | undefined): Promise<EmbeddingCast> {
   if (!exec.capabilities.probesEmbeddingCast || !probe) return '::vector';
   return probe();
+}
+
+type SourceFloor = { exists: boolean; federated: boolean };
+
+async function sourceFloor(exec: Pick<SqlExecutor, 'executeRaw'>, sourceId: string): Promise<SourceFloor> {
+  try {
+    const rows = await exec.executeRaw<{ config: unknown }>(
+      'SELECT config FROM sources WHERE id = $1 AND archived IS NOT TRUE', [sourceId],
+    );
+    return { exists: rows.length > 0, federated: rows.length > 0 && isSourceFederated(rows[0]!.config) };
+  } catch {
+    return { exists: false, federated: false };
+  }
+}
+
+async function pageFloor(
+  exec: Pick<SqlExecutor, 'executeRaw'>,
+  sourceId: string,
+  slug: string | null | undefined,
+): Promise<{ type?: string | null; frontmatter?: unknown } | null> {
+  if (!slug) return null;
+  try {
+    const rows = await exec.executeRaw<{ type: string | null; frontmatter: unknown }>(
+      'SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1',
+      [sourceId, slug],
+    );
+    return rows[0] ?? null;
+  } catch {
+    // An unread page is not proof that the page is public. No slug and no
+    // page row still return null and apply no page floor.
+    return { frontmatter: { visibility: 'private' } };
+  }
+}
+
+export async function floorVisibility(
+  exec: SqlExecutor,
+  sourceId: string,
+  visibility: FactVisibility,
+  pageSlug?: string | null,
+): Promise<FactVisibility> {
+  const sourceVisibility = tightenToSource(visibility, await sourceFloor(exec, sourceId));
+  return tightenToPage(sourceVisibility, await pageFloor(exec, sourceId, pageSlug));
+}
+
+/**
+ * The batch floor the insert chokepoint applies, for callers that match fence
+ * rows before they are stored: one source read and one page read for the
+ * page, then tightenToPage(tightenToSource(...)) per row.
+ */
+export async function floorFactRows<T extends { visibility?: FactVisibility }>(
+  exec: Pick<SqlExecutor, 'executeRaw'>,
+  sourceId: string,
+  pageSlug: string | null | undefined,
+  rows: readonly T[],
+): Promise<Array<T & { visibility: FactVisibility }>> {
+  // No row means the source and page reads have nothing to tighten.
+  if (rows.length === 0) return [];
+  // Only world can change, and only toward private. A private row stays private
+  // for every source and every page, so the reads would not change the result.
+  const needsFloor = rows.some(row => (row.visibility ?? 'private') === 'world');
+  if (!needsFloor) return rows.map(row => ({ ...row, visibility: row.visibility ?? 'private' }));
+  const srcFloor = await sourceFloor(exec, sourceId);
+  // A missing or non-federated source forces private before the page is consulted.
+  if (!srcFloor.exists || !srcFloor.federated) return rows.map(row => ({ ...row, visibility: 'private' as const }));
+  const page = await pageFloor(exec, sourceId, pageSlug);
+  return rows.map(row => ({
+    ...row,
+    visibility: tightenToPage(tightenToSource(row.visibility ?? 'private', srcFloor), page),
+  }));
 }
 
 /**
@@ -94,7 +169,7 @@ export async function insertFact(
     const validFrom = input.valid_from ?? new Date();
     const validUntil = input.valid_until ?? null;
     const kind = input.kind ?? 'fact';
-    const visibility = input.visibility ?? 'private';
+    const visibility = await floorVisibility(exec, ctx.source_id, input.visibility ?? 'private', input.entity_slug);
     const notability = input.notability ?? 'medium';
     const confidence = input.confidence ?? 1.0;
     const entitySlug = input.entity_slug ?? null;
@@ -262,7 +337,15 @@ export async function insertFacts(
   resolveCast: ResolveEmbeddingCast | undefined,
     rows: Array<NewFact & { row_num: number; source_markdown_slug: string; superseded_by_row?: number }>,
     ctx: { source_id: string },
-    opts?: { deleteForPageFirst?: { slug: string; excludeSourcePrefixes?: string[]; preserveExpiredLegacy?: boolean } },
+    opts?: {
+      deleteForPageFirst?: { slug: string; excludeSourcePrefixes?: string[]; preserveExpiredLegacy?: boolean };
+      /**
+       * Caller already ran the source and page floor, and every row is private.
+       * Private cannot widen, so the floor statements would store the same visibility.
+       * A world row ignores the flag and reads. The flag is this call's argument, not module state.
+       */
+      skipFloor?: boolean;
+    },
   ): Promise<{ inserted: number; ids: number[]; warnings: string[]; deleted: number }> {
     if (rows.length === 0) return { inserted: 0, ids: [], warnings: [], deleted: 0 };
 
@@ -279,6 +362,28 @@ export async function insertFacts(
     // v0.46 (#3014): the fence path carries struck rows — `expired_at` is
     // stamped inline here, and `superseded by #N` references are resolved
     // to `facts.superseded_by` in a second pass below (same transaction).
+    // One source read for the batch and one page read per distinct slug, not
+    // per row. The same tightenToSource / tightenToPage decisions apply per row.
+    // skipFloor is safe only while every row is already private: the floor never widens private.
+    // Callers that omit the flag keep both reads, including the SQL-text golden.
+    const alreadyPrivate = opts?.skipFloor === true && rows.every(row => (row.visibility ?? 'private') !== 'world');
+    let flooredRows: typeof rows;
+    if (alreadyPrivate) {
+      flooredRows = rows.map(row => ({ ...row, visibility: row.visibility ?? 'private' }));
+    } else {
+      const srcFloor = await sourceFloor(exec, ctx.source_id);
+      const pageFloors = new Map<string, Awaited<ReturnType<typeof pageFloor>>>();
+      for (const slug of new Set(rows.map(row => row.source_markdown_slug))) {
+        if (slug) pageFloors.set(slug, await pageFloor(exec, ctx.source_id, slug));
+      }
+      flooredRows = rows.map(row => ({
+        ...row,
+        visibility: tightenToPage(
+          tightenToSource(row.visibility ?? 'private', srcFloor),
+          row.source_markdown_slug ? pageFloors.get(row.source_markdown_slug) ?? null : null,
+        ),
+      }));
+    }
     const ids = await exec.transaction(async (tx) => {
       // v0.46 (#3014) — atomic reconcile: wipe the page's fence-owned rows
       // as the FIRST statement of this transaction so a failing insert
@@ -314,7 +419,7 @@ export async function insertFacts(
       // #6574: one INSERT per chunk of rows, not one per row. A publication
       // over a high-latency link paid a round trip per fact row; a 1,000-row
       // fence took a minute before anything else ran.
-      const rowIds = await insertFactRows(tx, castSuffix, rows, ctx.source_id);
+      const rowIds = await insertFactRows(tx, castSuffix, flooredRows, ctx.source_id);
       const out = rowIds.filter((id): id is number => id !== null);
 
       // v0.46 (#3014) — second pass: resolve `superseded by #N` page-local

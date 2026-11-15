@@ -46,6 +46,7 @@ beforeAll(async () => {
   await engine.connect({});
   await engine.initSchema();
   sourceId = await newSource(engine);
+  await engine.executeRaw(`UPDATE sources SET config = COALESCE(config, '{}'::jsonb) || '{"federated":true,"facts_visibility":"world"}'::jsonb WHERE id = $1`, [sourceId]);
   await putPage(engine, sourceId, 'notes/harbor-public', page('note', 'Harbor public', 'Public notes on the harbor ferry timetable.'));
   await putPage(engine, sourceId, 'notes/harbor-private', page('note', 'Harbor private', 'Private notes on the harbor ferry.', 'visibility: private\n'));
   await putPage(engine, sourceId, 'notes/harbor-held', page('note', 'Harbor held', 'Held notes on the harbor ferry.'));

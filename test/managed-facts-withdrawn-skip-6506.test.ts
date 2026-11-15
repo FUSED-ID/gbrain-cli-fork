@@ -93,7 +93,7 @@ afterAll(async () => {
 async function managedSource(engine: BrainEngine, seed: { withdraw?: string[]; purge?: string[] } = {}) {
   const sourceId = `w6506-${randomUUID().slice(0, 8)}`;
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-  await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+  await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES($1,$1,'{"federated":true,"facts_visibility":"world"}')`, [sourceId]);
   await engine.putPage(SLUG, { type: 'person', title: 'Alice Example', compiled_truth: '# Alice Example\n\nFictional person for the regression.\n' }, { sourceId });
   for (const fact of seed.withdraw ?? []) {
     const saved = await engine.insertFact({ fact, entity_slug: SLUG, visibility: 'world', kind: 'fact', source: 'fixture' }, { source_id: sourceId });

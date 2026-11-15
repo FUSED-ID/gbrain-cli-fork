@@ -90,7 +90,7 @@ export async function graduationBlockers(source: BrainEngine, hostId: string): P
     for (const c of dangling) {
       blockers.push({ kind: 'dangling_reference', id: `oauth_clients.${c.client_id}`,
         detail: `OAuth client ${c.client_name} is bound to source ${c.bound_source_id}, which no longer exists; Postgres enforces this binding, and clearing it would widen the client's access. Restore the source, or revoke the client and register a replacement`,
-        argv: ['gbrain', 'auth', 'revoke-client', c.client_id], needsUser: true });
+        argv: ['gbrain', 'auth', 'revoke-client', c.client_id, '--yes-i-mean-it'], needsUser: true });
     }
   }
   return blockers;

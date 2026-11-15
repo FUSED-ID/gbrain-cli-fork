@@ -150,7 +150,7 @@ describe('actual remote source selection', () => {
     await remote.setConfig('search.track_retrieval', 'false');
     await remote.setConfig('mcp.strict_params', 'reject');
     for (const source of ['default', 'peer', 'denied']) {
-      if (source !== 'default') await remote.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [source]);
+      if (source !== 'default') await remote.executeRaw(`INSERT INTO sources(id,name,config) VALUES($1,$1,'{"federated":true,"facts_visibility":"world"}')`, [source]);
       const text = `Telescope evidence from ${source}.`;
       await asOwner(remote, async tx => {
         await tx.putPage('notes/telescope', { type: 'note', title: 'Telescope', compiled_truth: text }, { sourceId: source });

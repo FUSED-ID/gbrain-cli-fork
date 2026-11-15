@@ -5,12 +5,14 @@
  * world-only when the recall op enforces the filter. Local CLI sees all.
  */
 
-import { describe, test, expect, beforeAll, afterAll, afterEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, afterEach, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import {
   resolveDefaultVisibility,
   resolveVisibilityParam,
+  resolveSourceVisibility,
+  __resetVisibilityClampWarnings,
   FACTS_DEFAULT_VISIBILITY_KEY,
 } from '../src/core/facts/visibility.ts';
 import { runFactsBackstop } from '../src/core/facts/backstop.ts';
@@ -37,7 +39,6 @@ beforeAll(async () => {
     { source_id: 'default' },
   ));
 });
-
 afterAll(async () => {
   await engine.disconnect();
 });
@@ -152,6 +153,52 @@ describe('resolveVisibilityParam — explicit caller value ALWAYS wins [ENG-8]',
   });
 });
 
+describe('resolveSourceVisibility - per-source policy above ENG-8', () => {
+  afterEach(async () => {
+    await engine.unsetConfig(FACTS_DEFAULT_VISIBILITY_KEY);
+    await engine.executeRaw(`UPDATE sources SET config = config - 'facts_visibility' WHERE id = 'default'`);
+    await engine.executeRaw(`UPDATE sources SET config = config - 'facts_visibility' WHERE id = 'visibility-private-source'`).catch(() => {});
+    await engine.executeRaw(`DELETE FROM sources WHERE id = 'visibility-private-source'`);
+  });
+
+  test('explicit world is allowed on a federated source', async () => {
+    expect(await resolveSourceVisibility(engine, 'default', 'world')).toBe('world');
+  });
+
+  test('source private policy beats a world brain default', async () => {
+    await engine.setConfig(FACTS_DEFAULT_VISIBILITY_KEY, 'world');
+    await engine.updateSourceConfig('default', { facts_visibility: 'private' });
+    expect(await resolveSourceVisibility(engine, 'default')).toBe('private');
+  });
+
+  test('world policy is clamped on a non-federated source', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('visibility-private-source', 'visibility-private-source', $1::jsonb)`,
+      [JSON.stringify({ federated: false, facts_visibility: 'world' })],
+    );
+    expect(await resolveSourceVisibility(engine, 'visibility-private-source')).toBe('private');
+  });
+
+  test('explicit world clamp is warned once per source and reason', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('visibility-private-source', 'visibility-private-source', $1::jsonb)`,
+      [JSON.stringify({ federated: false })],
+    );
+    __resetVisibilityClampWarnings();
+    const seen: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { seen.push(args.map(String).join(' ')); };
+    try {
+      await resolveSourceVisibility(engine, 'visibility-private-source', 'world');
+      await resolveSourceVisibility(engine, 'visibility-private-source', 'world');
+    } finally {
+      console.error = original;
+    }
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain('OVERRIDDEN');
+  });
+});
+
 describe('ontology_propose visibility site (operations.ts ~:5812) [ENG-8]', () => {
   afterEach(async () => {
     await engine.unsetConfig(FACTS_DEFAULT_VISIBILITY_KEY);
@@ -256,5 +303,84 @@ describe('backstop minion-payload visibility site (backstop.ts queue mode) [ENG-
 
   test('caller-unset + no config → private (historic behavior preserved)', async () => {
     expect(await submitAndReadPayload('wiki/notes/vis-floor')).toBe('private');
+  });
+});
+
+/**
+ * G2 gap: the ONLY clamp case the suite had ("world policy is clamped on a
+ * non-federated source") passes NO `requested` argument, so it pinned the
+ * POLICY branch. The explicit-caller branch, which is the one that narrows
+ * the upstream ENG-8 contract, was never tested. These pin it.
+ */
+describe('resolveSourceVisibility: explicit caller values (P4 narrowing)', () => {
+  beforeEach(() => { __resetVisibilityClampWarnings(); });
+
+  afterEach(async () => {
+    await engine.executeRaw(`DELETE FROM sources WHERE id LIKE 'p4-%'`);
+  });
+
+  async function mkSource(id: string, federated: boolean | null) {
+    const cfg: Record<string, unknown> = {};
+    if (federated !== null) cfg.federated = federated;
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ($1, $1, $2::jsonb)`,
+      [id, JSON.stringify(cfg)],
+    );
+  }
+
+  test('explicit world is HONOURED on a federated source', async () => {
+    await mkSource('p4-federated', true);
+    expect(await resolveSourceVisibility(engine, 'p4-federated', 'world')).toBe('world');
+  });
+
+  test('explicit world is OVERRIDDEN to private on a non-federated source', async () => {
+    await mkSource('p4-not-federated', false);
+    expect(await resolveSourceVisibility(engine, 'p4-not-federated', 'world')).toBe('private');
+  });
+
+  test('explicit world is OVERRIDDEN when federated is absent (strict === true)', async () => {
+    await mkSource('p4-federated-absent', null);
+    expect(await resolveSourceVisibility(engine, 'p4-federated-absent', 'world')).toBe('private');
+  });
+
+  test('explicit private is honoured everywhere, federated or not', async () => {
+    await mkSource('p4-fed-priv', true);
+    await mkSource('p4-nonfed-priv', false);
+    expect(await resolveSourceVisibility(engine, 'p4-fed-priv', 'private')).toBe('private');
+    expect(await resolveSourceVisibility(engine, 'p4-nonfed-priv', 'private')).toBe('private');
+  });
+
+  test('an unknown source id overrides an explicit value to private', async () => {
+    expect(await resolveSourceVisibility(engine, 'p4-does-not-exist', 'world')).toBe('private');
+  });
+
+  test('the override is announced on stderr, once per source+reason', async () => {
+    await mkSource('p4-warns', false);
+    const seen: string[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => { seen.push(a.map(String).join(' ')); };
+    try {
+      await resolveSourceVisibility(engine, 'p4-warns', 'world');
+      await resolveSourceVisibility(engine, 'p4-warns', 'world');
+      await resolveSourceVisibility(engine, 'p4-warns', 'world');
+    } finally {
+      console.error = orig;
+    }
+    expect(seen.length).toBe(1);
+    expect(seen[0]).toContain('p4-warns');
+    expect(seen[0]).toContain('OVERRIDDEN');
+  });
+
+  test('no warning is emitted when the caller passed nothing to override', async () => {
+    await mkSource('p4-quiet', false);
+    const seen: string[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => { seen.push(a.map(String).join(' ')); };
+    try {
+      await resolveSourceVisibility(engine, 'p4-quiet');
+    } finally {
+      console.error = orig;
+    }
+    expect(seen.length).toBe(0);
   });
 });

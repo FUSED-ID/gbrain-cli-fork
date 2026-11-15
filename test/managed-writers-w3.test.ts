@@ -185,7 +185,7 @@ test('#5405: the purge phase hard-deletes expired tombstones through the coordin
       slug: 'notes/expired', expected_revision: snapshot!.revision, request_id: randomUUID() } });
     await engine.executeRaw("UPDATE pages SET deleted_at=now() - interval '100 hours' WHERE source_id=$1 AND slug='notes/expired'", [sourceId]);
   }, async (engine, sourceId, root) => {
-    const report = await runCycle(engine, { brainDir: root, phases: ['purge'], sourceId });
+    const report = await runCycle(engine, { brainDir: root, phases: ['purge'], sourceId, purgeConsent: { olderThanHours: 72 } });
     const phase = report.phases.find(p => p.phase === 'purge')!;
     expect(phase.status).toBe('ok');
     expect(phase.details.purged_pages_count).toBe(1);
@@ -235,7 +235,7 @@ test('#5405: the purge job fails when a coordinated purge fails, after reporting
     await registerBuiltinHandlers({ register(name: string, fn: (job: unknown) => Promise<unknown>) { handlers.set(name, fn); } } as never, engine);
     // Another host owns the canonical worktree now: the purge cannot publish here.
     await withEnv({ GBRAIN_HOME: mkdtempSync(join(tmpdir(), 'gbrain-w3-otherhost-')) }, async () => {
-      await expect(handlers.get('purge')!({ id: 1, data: { scope: 'pages' } })).rejects.toThrow(/could not be purged through the coordinator/);
+      await expect(handlers.get('purge')!({ id: 1, data: { scope: 'pages', olderThanHours: 72, confirm: 'yes-i-mean-it' } })).rejects.toThrow(/could not be purged through the coordinator/);
     });
     expect((await engine.readPageSnapshot('notes/stuck', { sourceId, includeDeleted: true }))?.page.deleted_at).toBeTruthy();
   });

@@ -97,7 +97,7 @@ afterAll(async () => {
 async function recoverySource(engine: BrainEngine) {
   const sourceId = `w6506r-${randomUUID().slice(0, 8)}`;
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-  await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+  await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES($1,$1,'{"federated":true,"facts_visibility":"world"}')`, [sourceId]);
   await engine.putPage(ENTITY, { type: 'person', title: 'Alice Example', compiled_truth: '# Alice Example\n\nFictional person for the regression.\n' }, { sourceId });
   await engine.putPage(ORIGIN, { type: 'meeting', title: 'Synthetic workshop', compiled_truth: BODY }, { sourceId });
   const saved = await engine.insertFact({ fact: WITHDRAWN, entity_slug: ENTITY, visibility: 'world', kind: 'fact', source: 'fixture' }, { source_id: sourceId });

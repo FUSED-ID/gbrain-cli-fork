@@ -34,6 +34,7 @@ describe('supervisor worker allow-list propagation', () => {
       expect(internal.handlerNames).toEqual(['facts-absorb']);
     });
   }, 60_000);
+<<<<<<< HEAD
 
   test('R23 derives health names from options when the environment is unset', async () => {
     await withEnv({ GBRAIN_WORKER_ONLY_NAMES: undefined }, async () => {
@@ -66,6 +67,8 @@ describe('supervisor worker allow-list propagation', () => {
       expect(internal.handlerNames).toEqual(['facts-absorb']);
     });
   }, 60_000);
+=======
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 });
 
 /**
@@ -190,6 +193,7 @@ function expectSupervisorOnlyRefusal(result: SupervisorInvocation): void {
   expect(leftovers).toEqual([]);
 }
 
+<<<<<<< HEAD
 function expectSupervisorEnvironmentRefusal(result: SupervisorInvocation, message: string): void {
   expect(result.exitCode).toBe(2);
   expect(result.stderr).toContain(message);
@@ -198,6 +202,8 @@ function expectSupervisorEnvironmentRefusal(result: SupervisorInvocation, messag
   expect(result.stdout).not.toContain('supervisor_pid');
 }
 
+=======
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 describe('jobs supervisor start refuses the worker-only CLI flag', () => {
   test('R11 a valid explicit --only is refused, never silently ignored', async () => {
     const result = await invokeSupervisorStart(['--only', 'facts-absorb']);
@@ -252,13 +258,18 @@ describe('jobs supervisor start refuses the worker-only CLI flag', () => {
     const result = await invokeSupervisorStart(['--detach'], {
       GBRAIN_WORKER_ONLY_NAMES: '',
     });
+<<<<<<< HEAD
     expectSupervisorEnvironmentRefusal(result, '--only must contain at least one worker job name');
+=======
+    expectSupervisorOnlyRefusal(result);
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
   });
 
   test('R20 an unknown worker-only environment name fails before detached start', async () => {
     const result = await invokeSupervisorStart(['--detach'], {
       GBRAIN_WORKER_ONLY_NAMES: 'facts-absorb,typo-name',
     });
+<<<<<<< HEAD
     expectSupervisorEnvironmentRefusal(result, 'Unknown worker job name: typo-name');
   });
 
@@ -286,6 +297,9 @@ describe('jobs supervisor start refuses the worker-only CLI flag', () => {
     }
     expect(workerArgs).toContain('--only');
     expect(workerArgs?.[workerArgs.indexOf('--only') + 1]).toBe('facts-absorb');
+=======
+    expectSupervisorOnlyRefusal(result);
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
   });
 
   test('R16 the environment-only allow-list still reaches supervisor configuration', async () => {

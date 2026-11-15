@@ -10,6 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+<<<<<<< HEAD
 ## [0.60.568.0] - 2026-11-03
 
 **A brain opened from settings keeps its files in its own store.** On an engine opened from settings, every file operation (`file_upload`, `file_url`, page purge and the new `file_verify`) uses the engine's own `settings.storage`: a local path, or s3 with its endpoint and keys, and an optional one-segment key `prefix` so brains sharing a bucket each keep their own keys. The process storage config is never used there. `file_verify` lists which rows still have their object or re-hashes one. A brain the CLI or a server opens is unchanged, and there `file_verify` refuses `embedded_engine_required`; it is never an MCP tool. `file_register`, which lets a host record bytes it stored itself, ships separately. Contributed by @bradgessler (#8457).
@@ -1818,6 +1819,11 @@ The writer guards on pages, facts, takes, tags, timeline entries, aliases, sourc
 | A Git-canonical flag change by a role that RLS filters on `sources` | the strict-source count could drop to zero | refused |
 
 The migration replaces five function bodies. It changes no privileges and rewrites no data. Function owners and `search_path` settings stay the same.
+=======
+## Post-473 security carry
+
+- Commit 1a104187d carries @hono/node-server from 2.1.0 to 2.1.3 for GHSA-rmxm-3fg6-px4f.
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 
 ## [0.60.473.0] - 2026-10-27
 

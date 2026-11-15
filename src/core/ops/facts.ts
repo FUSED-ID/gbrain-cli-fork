@@ -113,9 +113,14 @@ const extract_facts: Operation = {
     // [ENG-8] Explicit caller value wins; UNSET resolves through the shared
     // facts.default_visibility helper (the old ternary coerced unset →
     // 'private' before any config default could run). Garbage stays 'private'.
+<<<<<<< HEAD
     const { resolveVisibilityParam, tightenToPage } = await import('../facts/visibility.ts');
     const { withFolderRestricted } = await import('../search/private-visibility.ts');
     let visibility: 'private' | 'world' = await resolveVisibilityParam(ctx.engine, p.visibility);
+=======
+    const { resolveSourceVisibility, tightenToPage } = await import('../facts/visibility.ts');
+    let visibility: 'private' | 'world' = await resolveSourceVisibility(ctx.engine, sourceId, p.visibility);
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 
     // #4206: optional event-time + provenance threading. An unparseable
     // valid_from fails LOUD — silently defaulting to now() is exactly the

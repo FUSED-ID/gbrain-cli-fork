@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import type { OperationContext } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runCycle } from '../src/core/cycle.ts';
+import { readPurgeRetentionHours } from '../src/core/sync-reconcile.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -129,7 +130,10 @@ async function cli(args: string[]): Promise<string> {
   return out.join('');
 }
 const dryRun = async (...flags: string[]) => JSON.parse(await cli(['purge-deleted', ...flags, '--dry-run', '--json']));
-const cycle = () => withEnv(env(), () => runCycle(engine, { brainDir: root, phases: ['purge'], sourceId: SOURCE }));
+const cycle = async () => {
+  const olderThanHours = await readPurgeRetentionHours(engine);
+  return withEnv(env(), () => runCycle(engine, { brainDir: root, phases: ['purge'], sourceId: SOURCE, purgeConsent: { olderThanHours } }));
+};
 
 describe('#6741 C v3: --retry-parked rides one eligibility selector', () => {
   test('the strict argument table accepts --retry-parked for pages purge-deleted', () => {
@@ -217,6 +221,14 @@ describe('#6741 C v3: the cycle purge phase warns instead of failing', () => {
     expect(phase.status).toBe('warn');
     expect(phase.details.purged_pages_blocked).toEqual([expect.objectContaining({ slug: PARKED, code: 'purge_parked' })]);
     expect(await lifetimeIds()).toBe(before);
+  }, 120_000);
+
+  test('without purge consent the phase is skipped and the expired page stays', async () => {
+    await expired(ORDINARY);
+    const phase = (await withEnv(env(), () => runCycle(engine, { brainDir: root, phases: ['purge'], sourceId: SOURCE }))).phases.find(p => p.phase === 'purge')!;
+    expect(phase.status).toBe('skipped');
+    expect(phase.details).toEqual({ reason: 'missing_purge_consent', required_flag: '--yes-i-mean-it' });
+    expect(await exists(ORDINARY)).toBe(true);
   }, 120_000);
 });
 

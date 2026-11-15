@@ -25,8 +25,19 @@ import { stampEvidence } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
 import type { SearchResult, HybridSearchMeta, PageReadScope, PageReadPolicy } from '../types.ts';
 import { resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
+<<<<<<< HEAD
 import { assertMemberPageWriter } from '../access/member-facts.ts';
 import { pageNotVisibleError, remoteTargetHidden } from '../persistence/page-visibility.ts';
+=======
+import {
+  assertPrivateRoutingArmed,
+  isPersonishPageWrite,
+  resolvePrivateWriteSource,
+  shouldAssertPrivateRouting,
+  type PrivateWriteRoute,
+  type PrivateWriteRouteInput,
+} from '../private-source-routing.ts';
+>>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 
 // --- Agent-contract fixes shared by the op error sites ---
 
@@ -83,6 +94,37 @@ export function pageNotFoundError(
 }
 
 const HTTP_HOST = { remote: true, transport: 'http' } as const;
+
+/** Shared D1 guard for operation paths that do not call putPage. */
+export async function enforcePrivateWriteGuard(
+  ctx: OperationContext,
+  operation: string,
+  input: PrivateWriteRouteInput,
+  page?: { type?: string; title?: string; frontmatter?: unknown },
+): Promise<PrivateWriteRoute> {
+  const requestedSourceId = input.requestedSourceId ?? 'default';
+  const personish = await isPersonishPageWrite(ctx.engine, input.slug, page ?? {
+    type: input.entityType,
+    title: input.entityName,
+  });
+  if (personish && await shouldAssertPrivateRouting(ctx.engine, requestedSourceId)) {
+    await assertPrivateRoutingArmed(ctx.engine);
+  }
+  const route = await resolvePrivateWriteSource(ctx.engine, input);
+  if (!route.routed || (ctx.remote === false && route.sourceId === requestedSourceId)) return route;
+  if (ctx.remote !== false) {
+    throw opError(
+      'permission_denied',
+      `${operation} slug '${input.slug}' is routed to private source '${route.privateSourceId}' and cannot be written by a remote caller`,
+      'Ask the brain host to make this private routed write through its trusted local CLI.',
+    );
+  }
+  throw opError(
+    'permission_denied',
+    `${operation} slug '${input.slug}' must be written to private source '${route.sourceId}' (${route.reason})`,
+    'Write this identity through its configured private source on the trusted brain host.',
+  );
+}
 const TOKEN_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CLIENT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 

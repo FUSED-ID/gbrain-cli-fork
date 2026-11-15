@@ -290,11 +290,13 @@
       },
       "createVersion#default": {
         "flagOffLanes": [
+          "pool",
           "tx"
         ],
         "flagOffOpensTransaction": true,
         "flagOn": "scoped",
         "flagOnLanes": [
+          "pool",
           "tx",
           "tx>sp"
         ],
@@ -2851,25 +2853,32 @@
       },
       "restorePage#default": {
         "flagOffLanes": [
+          "pool",
           "tx"
         ],
         "flagOffOpensTransaction": true,
-        "flagOn": "unscoped",
+        "flagOn": "scoped",
         "flagOnLanes": [
+          "pool",
           "tx"
         ],
-        "flagOnScopes": []
+        "flagOnScopes": [
+          "default"
+        ]
       },
       "restorePage#sourceId": {
         "flagOffLanes": [
+          "pool",
           "tx"
         ],
         "flagOffOpensTransaction": true,
-        "flagOn": "unscoped",
+        "flagOn": "scoped",
         "flagOnLanes": [
           "tx"
         ],
-        "flagOnScopes": []
+        "flagOnScopes": [
+          "src-a"
+        ]
       },
       "revertToVersion#default": {
         "flagOffLanes": [
@@ -3755,7 +3764,7 @@
         "resolveSlugs": "none",
         "resolveSlugsByPaths": "none",
         "resolveTake": "none",
-        "restorePage": "none",
+        "restorePage": "via:getPage",
         "retireSegmentDerivations": "none",
         "revertToVersion": "none",
         "rewriteLinks": "none",

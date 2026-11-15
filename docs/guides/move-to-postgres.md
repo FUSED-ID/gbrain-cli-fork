@@ -238,7 +238,7 @@ on Postgres. To issue fresh ones anyway:
 
 ```bash
 gbrain auth revoke <name> && gbrain auth create <name>              # access token
-gbrain auth revoke-client <client_id> && gbrain auth register-client <name>   # OAuth client
+gbrain auth revoke-client <client_id> --yes-i-mean-it && gbrain auth register-client <name>   # OAuth client
 gbrain auth local-writer register stdio --replace                   # local writer (or: cli)
 ```
 

@@ -10,7 +10,14 @@ import { join } from 'node:path';
 import { readBeliefHistory } from '../src/core/belief/history.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { beliefBrain, beliefEngineCase, beliefPage, type BeliefBrain } from './helpers/belief-ledger.ts';
+import { beliefBrain as beliefBrainRaw, beliefEngineCase, beliefPage, type BeliefBrain } from './helpers/belief-ledger.ts';
+
+async function beliefBrain(run: (brain: BeliefBrain) => Promise<void>, opts?: Parameters<typeof beliefBrainRaw>[1]): Promise<void> {
+  return beliefBrainRaw(async b => {
+    await b.engine.executeRaw(`UPDATE sources SET config = COALESCE(config, '{}'::jsonb) || '{"federated":true,"facts_visibility":"world"}'::jsonb WHERE id = $1 AND COALESCE(config->>'federated', '') <> 'true'`, [b.sourceId]);
+    await run(b);
+  }, opts);
+}
 
 const remote = (b: BeliefBrain, slug?: string) => readBeliefHistory(b.engine, { sourceId: b.sourceId, slug, remote: true });
 const local = (b: BeliefBrain, slug?: string) => readBeliefHistory(b.engine, { sourceId: b.sourceId, slug, remote: false });

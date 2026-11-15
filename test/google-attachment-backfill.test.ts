@@ -153,7 +153,8 @@ test('an edit during Gmail fetch is preserved, while delete/recreate cannot reta
     try {
       if (change === 'delete-recreate') {
         await submitPageMutation(ctx(engine, f.id), { operation: 'delete_page', params: { slug: slug(1), purge: true, expected_revision: before.revision } });
-        await submitPageMutation(ctx(engine, f.id), { operation: 'put_page', params: { slug: slug(1), content: content(1) } });
+        // Distinct, non-purged content: the purged claim would be refused as purged_content before the identity race is reached.
+        await submitPageMutation(ctx(engine, f.id), { operation: 'put_page', params: { slug: slug(1), content: content(1).replaceAll(claim, 'syntheticrecreated sentinel prefers teal fixtures') } });
       } else {
         await submitPageMutation(ctx(engine, f.id), { operation: 'put_page', params: { slug: slug(1), expected_revision: before.revision,
           content: serializePageToMarkdown({ ...before.page, compiled_truth: before.page.compiled_truth + '\nConcurrent editor text.\n' }, before.tags) } });
