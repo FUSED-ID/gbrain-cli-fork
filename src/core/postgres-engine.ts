@@ -171,14 +171,11 @@ export function cancelSettleMs(): number {
   const raw = Number(process.env.GBRAIN_CANCEL_SETTLE_MS);
   return Number.isFinite(raw) && raw >= 100 ? raw : DEFAULT_CANCEL_SETTLE_MS;
 }
-<<<<<<< HEAD
 import type { SqlExecutor } from './engine-sql/executor.ts';
 import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
 import { writerStamp } from './persistence/writer-versions.ts';
 import { wellFormedJson } from './text-safe.ts';
 import { ENGINE_ROOT } from './engine-root.ts';
-=======
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 
 function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
@@ -198,10 +195,6 @@ export function getPostgresSchema(
     .replace(/'text-embedding-3-large'/g, `'${sanitizedModel}'`)
     .replace(/\('embedding_dimensions', '1536'\)/g, `('embedding_dimensions', '${parsedDims}')`);
 }
-import type { SqlExecutor } from './engine-sql/executor.ts';
-import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
-import { writerStamp } from './persistence/writer-versions.ts';
-import { wellFormedJson } from './text-safe.ts';
 
 export class PostgresEngine implements BrainEngine {
   readonly [ENGINE_ROOT]: object = this;
