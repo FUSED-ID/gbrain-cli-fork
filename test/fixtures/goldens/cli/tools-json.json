@@ -2,13 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-<<<<<<< HEAD
-    "stdoutBytes": 269760,
-    "stdoutSha256": "dd3dc10529f90a617d4ddfde2eaffd90fe3892a5d23ffe0f6457aa9557e5babb",
-=======
-    "stdoutBytes": 264489,
-    "stdoutSha256": "6416fc799c6c995e1db20e2787e6252f7d65f93e3428555e9899a90463bd23cf",
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
+    "stdoutBytes": 269776,
+    "stdoutSha256": "d423adb00087d34eabae53f3809829621377feb539fffa85ded69b5fb830ada4",
     "toolNames": [
       "remember",
       "entity",
