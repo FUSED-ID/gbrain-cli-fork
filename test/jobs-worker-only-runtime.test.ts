@@ -132,7 +132,7 @@ describe('jobs work PGLite worker allow-list runtime', () => {
     expect(await count('excluded-name', 'waiting')).toBe(1);
   }), 60_000);
 
-  test('R10 jobs work honors the environment allow-list through the command entry', () => inHome(async () => {
+  test('R10b (P6) jobs work honors the environment allow-list through the command entry', () => inHome(async () => {
     const queue = new MinionQueue(engine);
     await queue.ensureSchema();
     await queue.add('shell', { cmd: 'true', cwd: '/tmp' }, {}, { allowProtectedSubmit: true });
