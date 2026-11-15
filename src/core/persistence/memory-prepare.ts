@@ -19,15 +19,9 @@ import { writeGateRejectedError } from '../write-gate.ts';
 import { lexicalContestCandidate, recordContestedFact, supersessionGuarded } from '../trust/supersede-handlers.ts';
 import { storedTrustTier } from '../trust/tier.ts';
 import { fenceAppendPendingTier } from '../eligibility/fence-overlay.ts';
-<<<<<<< HEAD
 import { prepareFenceFactAppend, prepareFenceFactCreate, requestReceiptFix, type FenceFactAppend } from '../facts/fence-fact-append.ts';
 import { privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
-import { tightenToPage } from '../facts/visibility.ts';
-=======
-import { prepareFenceFactAppend, requestReceiptFix, type FenceFactAppend } from '../facts/fence-fact-append.ts';
-import { privateProvenanceFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { resolveSourceVisibility, tightenToPage } from '../facts/visibility.ts';
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 import { noteBelief } from '../belief/ledger.ts';
 import { MEMBER_PAGE_PREFIX, memberPageFrontmatter, memberPageIsOwn, memberPageNotOwned, onMemberPageSql } from '../access/member-facts.ts';
 
@@ -81,21 +75,18 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     visibility: (p.visibility ?? 'world') as SingleFactIntent['visibility'], entity_slug: p.entity_slug as string | null,
     ...(p.member_page === true ? { page_slug: row.slug } : {}) };
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
-<<<<<<< HEAD
   // GST-359 C2: a member page another write created after this one was accepted is the same page, not a recreation.
   const createdSince = p.member_page === true && row.page_id === null && snapshot !== null && !snapshot.page.deleted_at;
   if ((snapshot?.page.id ?? null) !== row.page_id && !createdSince) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted entity was deleted or recreated.');
   if (p.member_page === true && snapshot && !memberPageIsOwn(row.slug, snapshot.page.frontmatter)) throw memberPageNotOwned(row.slug);
-  // A defaulted visibility never lands broader than the target page as it stands at publication.
-  if (p.visibility_defaulted === true && snapshot) input.visibility = tightenToPage(input.visibility, await withFolderRestricted(engine, snapshot.page));
-=======
-  if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted entity was deleted or recreated.');
   // Re-apply both visibility floors at publication. This covers explicit
   // world requests and also catches a source or page that changed after
-  // journal admission.
+  // journal admission. Each floor only narrows, so an explicit private
+  // visibility is never widened here.
   input.visibility = await resolveSourceVisibility(engine, row.source_id, input.visibility);
   if (snapshot) input.visibility = tightenToPage(input.visibility, snapshot.page);
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
+  // A defaulted visibility never lands broader than the target page as it stands at publication.
+  if (p.visibility_defaulted === true && snapshot) input.visibility = tightenToPage(input.visibility, await withFolderRestricted(engine, snapshot.page));
   if (p.expected_revision !== undefined) assertPageRevision(snapshot, engineMutationPrecondition(parseMutationPrecondition(p)));
   const observedRevision = snapshot?.revision ?? null;
   const excludePrivate = await resolveExcludePrivatePages(engine, row.authority.remote === true);
