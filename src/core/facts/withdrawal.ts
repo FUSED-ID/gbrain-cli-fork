@@ -5,12 +5,8 @@ import { fenceOperationError } from '../fence-repair/refusal.ts';
 import { withdrawnFact, withdrawalFenceBlocks } from './withdrawal-overlay.ts';
 import { ambiguousFenceClaims, discoverWithdrawalTargets, withdrawalDiscoveryFailure } from './withdrawal-discovery.ts';
 import { dropPurgedFenceRows } from './purge-overlay.ts';
-<<<<<<< HEAD
-import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
-import { outcomeMarkerSql } from './audit-sources.ts';
-=======
 import { derivationPrivateSql, privateProvenanceFilterFragment } from '../search/private-visibility.ts';
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
+import { outcomeMarkerSql } from './audit-sources.ts';
 import { coverageActive, noteBelief, readLedgerSource, withBeliefBatch } from '../belief/ledger.ts';
 import { createPageVersion } from '../page-state/versions.ts';
 import { validateSlug } from '../utils.ts';
