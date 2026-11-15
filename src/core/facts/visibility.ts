@@ -20,12 +20,8 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-<<<<<<< HEAD
 import { folderRestricted, isDerivationPrivate } from '../search/private-visibility.ts';
-=======
-import { isDerivationPrivate } from '../search/private-visibility.ts';
 import { parseSourceConfig } from '../sources-load.ts';
->>>>>>> 6690b2ee7485e0f829013e571360aaff5d22ce4e
 
 export type FactVisibility = 'private' | 'world';
 
