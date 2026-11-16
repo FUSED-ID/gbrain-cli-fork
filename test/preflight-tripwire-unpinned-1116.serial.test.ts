@@ -4,7 +4,10 @@
  * other than the private source it names, or other than the armed private source, is refused
  * with permission_denied before anything is written. The routing module and the write-through
  * readiness check are stubbed, so the check is exercised alone: with it replaced by
- * `if (false)` the two refusal cases fail and the control still passes.
+ * `if (false)` the refusal cases fail and the control still passes; with only its second
+ * half kept (route.sourceId !== armed.privateSourceId) the third case fails.
+ * Serial (R2): the top-level mock.module replaces these modules for every later file in
+ * the same Bun process, so the file runs in its own process (scripts/serial-files.tsv).
  */
 import { describe, expect, mock, test } from 'bun:test';
 import * as realRouting from '../src/core/private-source-routing.ts';
@@ -51,6 +54,12 @@ describe('preflight explicit route check (stubbed route)', () => {
   test('a moved route to a named private source that is not the armed private source is refused', async () => {
     route = { sourceId: 'lg-private', routed: true, reason: 'excluded_people_policy', privateSourceId: 'lg-private' };
     armedPrivate = 'other-private';
+    expect(await codeOf(preflightPutPagePrivateWrite(local, 'default', page))).toBe('permission_denied');
+  });
+
+  test('a moved route to the armed private source that names a different private source is refused', async () => {
+    route = { sourceId: 'lg-private', routed: true, reason: 'excluded_people_policy', privateSourceId: 'other' };
+    armedPrivate = 'lg-private';
     expect(await codeOf(preflightPutPagePrivateWrite(local, 'default', page))).toBe('permission_denied');
   });
 
