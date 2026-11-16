@@ -203,13 +203,25 @@ describe('Fable round 9 probe.ts', () => {
     await engine.putPage('wiki/albert-bausch', { ...page('Albert Bausch','person', fenceBody2), source_path: 'wiki/albert-bausch.md' } as any, { sourceId: 'default', migrationWrite: true });
     const drifted = fenceBody2.replace('# Albert Bausch\n', '# Albert Bausch\n\nSECRET-DRIFT: Albert medical detail added on disk after the DB row was written.\n');
     writeFileSync(join(brainDir, 'wiki/albert-bausch.md'), drifted);
-    id = await seedFact('wiki/albert-bausch', 'Albert lives in Spain', 1);
-    expect((await probe('forgetFactInFence with drifted file', async () => ({ res: await forgetFactInFence(engine, id, { reason: 'cleanup' }), row: await factRow(id) }))).ok).toBe(true);
+    // Fable NO-GO on ef6cecd8 (P1-1): row 1 was withdrawn in the section above, so forgetting it again exits as
+    // already_expired before any mirror code. Row 2 was never withdrawn, so its forget reaches the drift path.
+    // Upstream 53308ee6 (preserve divergent file and database bodies): on drift the withdrawal stays authoritative in
+    // the DB and the page mirror is held, so the user's drifted file keeps its text (D1-FORGET-DRIFT-LIVE, LGV ruling
+    // 16 Nov 2026, option (a)). Striking only the forgotten row in the file is TD D1-FORGET-STRIKE.
+    const driftId = await seedFact('wiki/albert-bausch', 'Albert second claim', 2);
+    const driftRes = await forgetFactInFence(engine, driftId, { reason: 'cleanup' });
+    console.log('drift forget result: ' + JSON.stringify(driftRes));
+    expect(driftRes.ok).toBe(true);
+    expect(String(driftRes.warning ?? '')).toContain('file_database_drift');
+    expect((await factRow(driftId)).expired_at).not.toBeNull();
+    const driftRemote = ((await operationsByName.get_page.handler(
+      { engine, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true, sourceId: 'default' } as any,
+      { slug: 'wiki/albert-bausch', source_id: 'default' },
+    )) as { compiled_truth?: string }).compiled_truth ?? '';
+    expect(driftRemote).not.toContain('| 2 | Albert second claim |');
+    expect(driftRemote).toContain('forgotten:');
     expect(((await engine.getPage('wiki/albert-bausch', { sourceId: 'default' }))?.compiled_truth ?? '')).not.toContain('SECRET-DRIFT');
-    // Upstream 53308ee6 (preserve divergent file and database bodies): on drift the withdrawal stays authoritative in the
-    // DB and the page mirror is held, so the on-disk edit is neither imported nor overwritten. D1's guarantee is the DB
-    // and remote side (asserted above); the user's own drifted file keeps its text (D1-FORGET-DRIFT-LIVE, LGV ruling).
-    expect(readFileSync(join(brainDir, 'wiki/albert-bausch.md'), 'utf8')).toContain('SECRET-DRIFT');
+    expect(readFileSync(join(brainDir, 'wiki/albert-bausch.md'), 'utf8')).toBe(drifted);
 
     console.log('\n=== D1: routed put tombstones default and writes private ===');
     await engine.executeRaw(`DELETE FROM pages WHERE slug='wiki/g-pavlov-kuna-family'`);
