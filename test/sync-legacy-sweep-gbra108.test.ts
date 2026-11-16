@@ -53,6 +53,8 @@ const setupNotes = (count: number) => ({ root }: { root: string }) => {
  * the background work the counter also sees. A read per page coming back costs at least one a page (about 18 before GBRA-108).
  */
 const PER_PAGE_BUDGET = 0.5;
+/** Fork D1: the per-import source-list read of private-write routing (engine.listAllSources). */
+const D1_ROUTE_READ = /SELECT\s+id,\s*name,\s*local_path,\s*last_sync_at,\s*config\s+FROM\s+sources\b/;
 /**
  * Reads every screened preparation repeats; the sweep answers each once per slice, never once per page. The config read is
  * the plain `SELECT … FROM config`: the projection drain's statement, which also reads config, runs on its own timer.
@@ -124,7 +126,12 @@ for (const backend of testBackends()) {
           }
           // The counter saw both syncs (each reads its pages at least once).
           expect(small.records.length).toBeGreaterThan(12);
-          const perPage = (large.records.length - small.records.length) / (48 - 12);
+          // Fork D1 (private-write routing): with no private source armed, every imported page reads the source list once to resolve its route (armed: about 6 statements per page, see TD D1-ROUTE-PER-PAGE-SOURCES)
+          // (import-private-route.ts -> private-source-routing.ts listSources). That read is pinned at exactly one per
+          // page and kept out of the upstream budget, which still bounds every other statement.
+          const d1 = (records: StatementRecord[]) => records.filter(record => D1_ROUTE_READ.test(record.sql)).length;
+          expect(d1(large.records) - d1(small.records)).toBe(48 - 12);
+          const perPage = ((large.records.length - d1(large.records)) - (small.records.length - d1(small.records))) / (48 - 12);
           expect(perPage).toBeLessThanOrEqual(PER_PAGE_BUDGET);
           const uses = (records: StatementRecord[]) => INVARIANT.map(pattern => [String(pattern), records.filter(record => pattern.test(record.sql)).length]);
           expect(uses(large.records)).toEqual(uses(small.records));

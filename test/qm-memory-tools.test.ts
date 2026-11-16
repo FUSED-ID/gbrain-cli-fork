@@ -175,7 +175,7 @@ for (const kind of testBackends()) {
       else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
       __resetPrivateVisibilityCacheForTests();
       __resetHotMemoryCacheForTests();
-      await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [SRC]);
+      await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, $1, '{"federated":true}'::jsonb) ON CONFLICT (id) DO NOTHING`, [SRC]);
       for (const id of ['alice-example', 'bob-example', 'carol-example', 'dave-example']) await addMember(engine, id);
       await importFromContent(engine, ACME, '---\ntype: company\ntitle: Acme Example\n---\n# Acme Example\n\nAcme example harbor ledger canarypagebody budget notes.', { sourceId: SRC });
       const register = async (name: string) => {

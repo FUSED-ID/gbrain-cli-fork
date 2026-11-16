@@ -154,7 +154,7 @@ for (const kind of testBackends()) {
       if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
       else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
       __resetPrivateVisibilityCacheForTests();
-      await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [SRC]);
+      await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, $1, '{"federated":true}'::jsonb) ON CONFLICT (id) DO NOTHING`, [SRC]);
       await importFromContent(engine, TARGET, '---\ntype: note\ntitle: Shared roadmap\n---\n# Shared roadmap\n\nThe shared roadmap.', { sourceId: SRC });
       await importFromContent(engine, OPEN.slug, `---\ntype: note\ntitle: Open plan\n---\n# Open plan\n\nHarbor ledger planning notes ${OPEN.canary}.`, { sourceId: SRC });
       for (const key of Object.keys(PAGES) as PageKey[]) {

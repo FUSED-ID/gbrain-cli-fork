@@ -53,7 +53,7 @@ describe('similarity dedup never matches a member-page fact (pglite, repo-less)'
       blocks: [], stopReason: 'end', usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'test:stub', providerId: 'test' }) as never);
     engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema();
     __resetPrivateVisibilityCacheForTests();
-    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [SRC]);
+    await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, $1, '{"federated":true}'::jsonb) ON CONFLICT (id) DO NOTHING`, [SRC]);
     for (const id of ['alice-example', 'bob-example']) await addMember(engine, id);
     await engine.setConfig('facts.supersession_thresholds', JSON.stringify({ 'openai:text-embedding-3-small@1536': 0.95 }));
     await importFromContent(engine, ACME, '---\ntype: company\ntitle: Acme Example\n---\n# Acme Example\n\nAcme example builds harbor ledgers.', { sourceId: SRC });
@@ -109,7 +109,7 @@ describe('member-page facts never crowd the dedup candidate cap (pglite, repo-le
       blocks: [], stopReason: 'end', usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'test:stub', providerId: 'test' }) as never);
     engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema();
     __resetPrivateVisibilityCacheForTests();
-    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [SRC]);
+    await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, $1, '{"federated":true}'::jsonb) ON CONFLICT (id) DO NOTHING`, [SRC]);
     for (const id of [...CROWD, 'bob-example']) await addMember(engine, id);
     await engine.setConfig('facts.supersession_thresholds', JSON.stringify({ 'openai:text-embedding-3-small@1536': 0.95 }));
     await importFromContent(engine, ACME, '---\ntype: company\ntitle: Acme Example\n---\n# Acme Example\n\nAcme example builds harbor ledgers.', { sourceId: SRC });
@@ -153,7 +153,7 @@ describe('a member updates its own facts whatever other members saved (pglite, r
     __setEmbedTransportForTests((async ({ values }: { values: string[] }) => ({ embeddings: values.map(t => t.includes('canaryoldbob') ? V_OLD : VEC) })) as never);
     engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema();
     __resetPrivateVisibilityCacheForTests();
-    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [SRC]);
+    await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, $1, '{"federated":true}'::jsonb) ON CONFLICT (id) DO NOTHING`, [SRC]);
     for (const id of [...CROWD, 'bob-example']) await addMember(engine, id);
     await engine.setConfig('facts.supersession_thresholds', JSON.stringify({ 'openai:text-embedding-3-small@1536': 0.95 }));
     await importFromContent(engine, ACME, '---\ntype: company\ntitle: Acme Example\n---\n# Acme Example\n\nAcme example builds harbor ledgers.', { sourceId: SRC });
