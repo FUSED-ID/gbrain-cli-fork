@@ -171,7 +171,7 @@ function flooredClaimSql(withRowNum: boolean): string {
         ) AS federated,
         EXISTS (
           SELECT 1 FROM (
-            SELECT type, frontmatter FROM pages
+            SELECT type, frontmatter, source_id, slug, folder_rule_ids FROM pages
             WHERE source_id = $1 AND slug = $3 AND deleted_at IS NULL
             ORDER BY id DESC LIMIT 1
           ) pf
