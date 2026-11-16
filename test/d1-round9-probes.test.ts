@@ -206,7 +206,10 @@ describe('Fable round 9 probe.ts', () => {
     id = await seedFact('wiki/albert-bausch', 'Albert lives in Spain', 1);
     expect((await probe('forgetFactInFence with drifted file', async () => ({ res: await forgetFactInFence(engine, id, { reason: 'cleanup' }), row: await factRow(id) }))).ok).toBe(true);
     expect(((await engine.getPage('wiki/albert-bausch', { sourceId: 'default' }))?.compiled_truth ?? '')).not.toContain('SECRET-DRIFT');
-    expect(readFileSync(join(brainDir, 'wiki/albert-bausch.md'), 'utf8')).not.toContain('SECRET-DRIFT');
+    // Upstream 53308ee6 (preserve divergent file and database bodies): on drift the withdrawal stays authoritative in the
+    // DB and the page mirror is held, so the on-disk edit is neither imported nor overwritten. D1's guarantee is the DB
+    // and remote side (asserted above); the user's own drifted file keeps its text (D1-FORGET-DRIFT-LIVE, LGV ruling).
+    expect(readFileSync(join(brainDir, 'wiki/albert-bausch.md'), 'utf8')).toContain('SECRET-DRIFT');
 
     console.log('\n=== D1: routed put tombstones default and writes private ===');
     await engine.executeRaw(`DELETE FROM pages WHERE slug='wiki/g-pavlov-kuna-family'`);

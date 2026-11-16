@@ -49,8 +49,12 @@ describe('Postgres selected worker configuration', () => {
         else process.env[key] = value;
       }
     }
+    // Fork worker design (840492660a, R22 8426323c): the name probe registers quietly with the real config and the
+    // live worker registers with no options, so no registration ever carries an injected (synthetic) config and the
+    // selected subagent handler keeps full config loading.
     expect(registrationOptions).toHaveLength(2);
-    expect(registrationOptions[0]).toEqual({ quiet: true, config: { engine: 'postgres' } });
-    expect(registrationOptions[1]).toEqual({ quiet: true });
+    expect(registrationOptions[0]).toEqual({ quiet: true });
+    expect(registrationOptions[1]).toBeUndefined();
+    expect(registrationOptions.every((o) => o?.config === undefined)).toBe(true);
   });
 });

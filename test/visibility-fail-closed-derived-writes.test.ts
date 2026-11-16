@@ -187,7 +187,7 @@ describe('remember without a visibility never widens', () => {
   const visibilityOf = async (engine: BrainEngine, id: string) =>
     (await engine.executeRaw<{ visibility: string }>('SELECT visibility FROM facts WHERE id=$1', [Number(id)]))[0]?.visibility;
 
-  test('onto a private entity page it saves private; an explicit world is honored; a world page keeps the world default', async () => {
+  test('onto a private entity page it saves private; an explicit world is floored to private; a world page keeps the world default', async () => {
     await onEachEngine(async engine => {
       const s = await source(engine, true);
       const onPrivate = await remember(s.local, { fact: 'Dana Example prefers morning meetings', entity: PRIVATE_PERSON });
@@ -195,7 +195,9 @@ describe('remember without a visibility never widens', () => {
       const onWorld = await remember(s.local, { fact: 'Alice Example prefers morning meetings', entity: PERSON });
       expect(await visibilityOf(engine, onWorld.id)).toBe('world');
       const explicit = await remember(s.local, { fact: 'Dana Example uses a standing desk', entity: PRIVATE_PERSON, visibility: 'world' });
-      expect(await visibilityOf(engine, explicit.id)).toBe('world');
+      // Fork delta C2-VFCDW-EXPLICIT-WORLD, LGV ruling 16 Nov 2026 (keep the fork floor): an explicit world on a
+      // private entity page is floored to private, so remember never widens a private page's fact to world.
+      expect(await visibilityOf(engine, explicit.id)).toBe('private');
     });
   }, 120_000);
 
