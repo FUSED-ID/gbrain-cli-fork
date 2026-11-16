@@ -38,14 +38,15 @@ export async function preflightPutPagePrivateWrite(
   }
   if (moved && ctx.remote === false) {
     await assertPageWriteThroughReady(ctx.engine, p.slug, route.sourceId);
-    await assertPrivateRoutingArmed(ctx.engine);
-    if (route.reason !== 'existing_private_page') {
-      await enforcePrivatePageWrite(ctx.engine, {
-        requestedSourceId: route.sourceId,
-        slug: p.slug,
-        entityType: parsed.type,
-        entityName: parsed.title,
-      });
+    const armed = await assertPrivateRoutingArmed(ctx.engine);
+    // A moved write lands only in the armed private source that the route names. enforcePrivatePageWrite
+    // would return at once here (it asserts only for 'default'), so the check is explicit.
+    if (route.sourceId !== route.privateSourceId || route.sourceId !== armed.privateSourceId) {
+      throw opError(
+        'permission_denied',
+        `put_page slug '${p.slug}' was routed to '${route.sourceId}', not to the armed private source '${armed.privateSourceId}'`,
+        'Nothing was written. Report this routing mismatch; do not retry.',
+      );
     }
   }
   if (!moved) await enforcePrivatePageWrite(ctx.engine, {
