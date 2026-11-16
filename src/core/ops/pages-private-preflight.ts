@@ -41,7 +41,7 @@ export async function preflightPutPagePrivateWrite(
     await assertPrivateRoutingArmed(ctx.engine);
     if (route.reason !== 'existing_private_page') {
       await enforcePrivatePageWrite(ctx.engine, {
-        requestedSourceId: sourceId,
+        requestedSourceId: route.sourceId,
         slug: p.slug,
         entityType: parsed.type,
         entityName: parsed.title,
