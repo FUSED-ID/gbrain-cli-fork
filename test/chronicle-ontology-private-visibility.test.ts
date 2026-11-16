@@ -122,6 +122,21 @@ describe('ontology provenance rows follow the page-visibility policy', () => {
     }
   });
 
+  test('ontology_get: a world-stored row on a private provenance page is still gated by the provenance page', async () => {
+    // Legacy shape the write-time floor no longer produces: force the private-sourced row to world.
+    await engine.executeRaw(`UPDATE facts SET visibility = 'world' WHERE value = 'secretvalue'`);
+    const stored = await engine.executeRaw<{ visibility: string }>(
+      `SELECT visibility FROM facts WHERE entity_slug = 'people/open-person' AND value = 'secretvalue'`,
+    );
+    expect(stored[0]?.visibility).toBe('world');
+    for (const c of [remote(), remoteUndef()]) {
+      const rows = await operationsByName.ontology_get.handler(c, { entity: 'people/open-person' }) as Val[];
+      expect(privateToken(rows)).toBeNull();
+      const [got, want] = quoted(rows.find((v) => v.dimension === 'role'), 'openvalue');
+      expect(got).toBe(want!);
+    }
+  });
+
   test('ontology_conflicts: a disagreement that needs a private provenance is not reported remotely', async () => {
     const seen = await operationsByName.ontology_conflicts.handler(local(), {}) as Conflict[];
     expect(seen.some((c) => c.entity_slug === 'people/conf-person')).toBe(true);
