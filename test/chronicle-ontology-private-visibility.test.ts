@@ -147,16 +147,15 @@ describe('ontology provenance rows follow the page-visibility policy', () => {
 });
 
 describe('operator opt-out matches the sibling reads', () => {
-  test(`${REMOTE_PRIVATE_PAGES_KEY}=visible restores private-provenance values for remote callers`, async () => {
+  test(`${REMOTE_PRIVATE_PAGES_KEY}=visible does not promote stored private facts for remote callers`, async () => {
     await engine.setConfig(REMOTE_PRIVATE_PAGES_KEY, 'visible');
     __resetPrivateVisibilityCacheForTests();
     try {
       const rows = await operationsByName.ontology_get.handler(remote(), { entity: 'people/open-person' }) as Val[];
-      const [got, want] = quoted(rows.find((v) => v.dimension === 'role'), 'secretvalue');
-      expect(got).toBe(want!);
       // The opt-out no longer promotes stored private facts: the remote caller still gets only the older world value.
       expect(privateToken(rows)).toBeNull();
-      expect(rows.find((v) => v.dimension === 'role')?.value).toBe('openvalue');
+      const [got, want] = quoted(rows.find((v) => v.dimension === 'role'), 'openvalue');
+      expect(got).toBe(want!);
     } finally {
       await engine.setConfig(REMOTE_PRIVATE_PAGES_KEY, '');
       __resetPrivateVisibilityCacheForTests();
