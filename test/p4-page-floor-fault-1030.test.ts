@@ -3,7 +3,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 const SOURCE_FED = 'p4-pagefault-fed';
 const PAGE = 'p4-pagefault-public';
-const PAGE_FLOOR_SQL = 'SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1';
+const PAGE_FLOOR_SQL = 'SELECT p.type, p.frontmatter, (p.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(p.source_id, p.slug) OR (SELECT gbrain_access_state_unreadable())) AS folder_restricted FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ORDER BY p.id DESC LIMIT 1';
 let engine: PGLiteEngine;
 let pageQueryFault = false;
 let restoreQuery: (() => void) | null = null;

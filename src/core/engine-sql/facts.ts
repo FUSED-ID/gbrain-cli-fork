@@ -29,7 +29,7 @@ import { sqlFragment, trustedSql } from './fragment.ts';
 import { compileRowNormalizer } from './normalize.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { FACT_WITHDRAWAL_STAMP_DEFERRED_SETTING } from '../facts/insert-guard-schema.ts';
-import { privateProvenanceFilterUnderPolicy } from '../search/private-visibility.ts';
+import { folderRestrictedSql, privateProvenanceFilterUnderPolicy } from '../search/private-visibility.ts';
 import { factVisibilitySql, onMemberPageSql } from '../access/member-facts.ts';
 import { tightenToPage, tightenToSource } from '../facts/visibility.ts';
 import { isSourceFederated } from '../sources-load.ts';
@@ -63,15 +63,19 @@ async function sourceFloor(exec: Pick<SqlExecutor, 'executeRaw'>, sourceId: stri
   }
 }
 
+// TD-P4-FOLDER-RULES: the page row's GBRA-218 folder restriction, the same predicate
+// (folderRestrictedSql over the newest live row) that flooredClaimSql in facts/withdrawal.ts applies.
+const PAGE_FLOOR_SQL = `SELECT p.type, p.frontmatter, ${folderRestrictedSql('p')} AS folder_restricted FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ORDER BY p.id DESC LIMIT 1`;
+
 async function pageFloor(
   exec: Pick<SqlExecutor, 'executeRaw'>,
   sourceId: string,
   slug: string | null | undefined,
-): Promise<{ type?: string | null; frontmatter?: unknown } | null> {
+): Promise<{ type?: string | null; frontmatter?: unknown; folder_restricted?: boolean | null } | null> {
   if (!slug) return null;
   try {
-    const rows = await exec.executeRaw<{ type: string | null; frontmatter: unknown }>(
-      'SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1',
+    const rows = await exec.executeRaw<{ type: string | null; frontmatter: unknown; folder_restricted: boolean | null }>(
+      PAGE_FLOOR_SQL,
       [sourceId, slug],
     );
     return rows[0] ?? null;

@@ -266,8 +266,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
-            "textSha256": "4ac8824bb6a6a975075277bdd430f464ec25b7d30d34c875440d0219335704fc"
+            "sql": "SELECT p.type, p.frontmatter, (p.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(p.source_id, p.slug) OR (SELECT gbrain_access_state_unreadable())) AS folder_restricted FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ORDER BY p.id DESC LIMIT 1",
+            "textSha256": "35a9d17441028d3440d9a0fe54199dbfefda7d670b7fe0413a1820fd47676855"
           },
           {
             "lane": "pool",
@@ -388,8 +388,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
-            "textSha256": "4ac8824bb6a6a975075277bdd430f464ec25b7d30d34c875440d0219335704fc"
+            "sql": "SELECT p.type, p.frontmatter, (p.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(p.source_id, p.slug) OR (SELECT gbrain_access_state_unreadable())) AS folder_restricted FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ORDER BY p.id DESC LIMIT 1",
+            "textSha256": "35a9d17441028d3440d9a0fe54199dbfefda7d670b7fe0413a1820fd47676855"
           },
           {
             "lane": "pool",
@@ -477,8 +477,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
-            "textSha256": "4ac8824bb6a6a975075277bdd430f464ec25b7d30d34c875440d0219335704fc"
+            "sql": "SELECT p.type, p.frontmatter, (p.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(p.source_id, p.slug) OR (SELECT gbrain_access_state_unreadable())) AS folder_restricted FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ORDER BY p.id DESC LIMIT 1",
+            "textSha256": "35a9d17441028d3440d9a0fe54199dbfefda7d670b7fe0413a1820fd47676855"
           },
           {
             "event": "begin",
@@ -535,8 +535,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
-            "textSha256": "4ac8824bb6a6a975075277bdd430f464ec25b7d30d34c875440d0219335704fc"
+            "sql": "SELECT p.type, p.frontmatter, (p.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(p.source_id, p.slug) OR (SELECT gbrain_access_state_unreadable())) AS folder_restricted FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ORDER BY p.id DESC LIMIT 1",
+            "textSha256": "35a9d17441028d3440d9a0fe54199dbfefda7d670b7fe0413a1820fd47676855"
           },
           {
             "event": "begin",
@@ -767,8 +767,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
-            "textSha256": "4ac8824bb6a6a975075277bdd430f464ec25b7d30d34c875440d0219335704fc"
+            "sql": "SELECT p.type, p.frontmatter, (p.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(p.source_id, p.slug) OR (SELECT gbrain_access_state_unreadable())) AS folder_restricted FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ORDER BY p.id DESC LIMIT 1",
+            "textSha256": "35a9d17441028d3440d9a0fe54199dbfefda7d670b7fe0413a1820fd47676855"
           },
           {
             "lane": "pool",
@@ -848,8 +848,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
-            "textSha256": "4ac8824bb6a6a975075277bdd430f464ec25b7d30d34c875440d0219335704fc"
+            "sql": "SELECT p.type, p.frontmatter, (p.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(p.source_id, p.slug) OR (SELECT gbrain_access_state_unreadable())) AS folder_restricted FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ORDER BY p.id DESC LIMIT 1",
+            "textSha256": "35a9d17441028d3440d9a0fe54199dbfefda7d670b7fe0413a1820fd47676855"
           },
           {
             "lane": "pool",
@@ -906,8 +906,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
-            "textSha256": "4ac8824bb6a6a975075277bdd430f464ec25b7d30d34c875440d0219335704fc"
+            "sql": "SELECT p.type, p.frontmatter, (p.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(p.source_id, p.slug) OR (SELECT gbrain_access_state_unreadable())) AS folder_restricted FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ORDER BY p.id DESC LIMIT 1",
+            "textSha256": "35a9d17441028d3440d9a0fe54199dbfefda7d670b7fe0413a1820fd47676855"
           },
           {
             "lane": "pool",
