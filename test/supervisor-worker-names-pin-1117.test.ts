@@ -43,10 +43,124 @@ const DECLARATION = 'const SUPERVISOR_WORKER_NAMES = new Set([';
  * returning an empty set.
  */
 function readSupervisorWorkerNames(): Set<string> {
-  return parseWorkerNameSet(readFileSync(SUPERVISOR_SOURCE, 'utf8'), SUPERVISOR_SOURCE);
+  const source = stripComments(readFileSync(SUPERVISOR_SOURCE, 'utf8'), SUPERVISOR_SOURCE);
+  assertIdentifierUses(source, SUPERVISOR_SOURCE);
+  return parseWorkerNameSet(source, SUPERVISOR_SOURCE);
 }
 
-function parseWorkerNameSet(source: string, label: string): Set<string> {
+/**
+ * Fable 2026-11-17 P2-L3-1: a name the reader cannot see must not pass. In the
+ * comment-stripped source the identifier must occur exactly twice: the one
+ * declaration and the one `.has(` use in the validator. A later `.add(`, an
+ * alias, a bracket access or a second declaration makes a third occurrence.
+ */
+const IDENTIFIER = 'SUPERVISOR_WORKER_NAMES';
+
+function assertIdentifierUses(source: string, label: string): void {
+  const uses = [...source.matchAll(/(?<![\w$])SUPERVISOR_WORKER_NAMES(?![\w$])/g)].map(m => m.index!);
+  if (uses.length !== 2) {
+    throw new Error(
+      `expected ${IDENTIFIER} exactly twice in the comment-stripped ${label} ` +
+        `(declaration and one .has( use), found ${uses.length}`,
+    );
+  }
+  if (!source.startsWith(DECLARATION, uses[0]! - 'const '.length)) {
+    throw new Error(`first ${IDENTIFIER} in ${label} is not "${DECLARATION}"`);
+  }
+  if (!source.startsWith(`${IDENTIFIER}.has(`, uses[1]!)) {
+    throw new Error(`second ${IDENTIFIER} in ${label} is not "${IDENTIFIER}.has("`);
+  }
+}
+
+/** JavaScript ends a line comment at any of these, not only at \n (Fable P3-L3-2). */
+const LINE_TERMINATORS = '\n\r\u2028\u2029';
+
+/**
+ * Remove line and block comments from TypeScript source, keeping string and
+ * template literals (with nested `${...}`) intact, so a commented-out copy of
+ * the declaration can never be the one that is read (Fable P2-L3-1). Regex
+ * literals are not modelled: a misread there yields a loud failure (a wrong
+ * identifier count or unreadable Set text), not a silent pass.
+ */
+function stripComments(source: string, label: string): string {
+  let i = 0;
+  const fail = (what: string): never => {
+    throw new Error(`${what} in ${label}`);
+  };
+  const template = (): string => {
+    let out = '`';
+    i += 1;
+    while (i < source.length) {
+      const ch = source[i]!;
+      if (ch === '\\') {
+        out += source.slice(i, i + 2);
+        i += 2;
+        continue;
+      }
+      if (ch === '`') {
+        i += 1;
+        return `${out}\``;
+      }
+      if (ch === '$' && source[i + 1] === '{') {
+        i += 2;
+        out += `\${${code(true)}}`;
+        i += 1;
+        continue;
+      }
+      out += ch;
+      i += 1;
+    }
+    return fail('unterminated template literal');
+  };
+  const code = (untilBrace: boolean): string => {
+    let out = '';
+    let depth = 0;
+    while (i < source.length) {
+      const ch = source[i]!;
+      const next = source[i + 1];
+      if (untilBrace && ch === '}') {
+        if (depth === 0) return out;
+        depth -= 1;
+      } else if (untilBrace && ch === '{') {
+        depth += 1;
+      }
+      if (ch === '/' && next === '/') {
+        i += 2;
+        while (i < source.length && !LINE_TERMINATORS.includes(source[i]!)) i += 1;
+        out += ' ';
+        continue;
+      }
+      if (ch === '/' && next === '*') {
+        const end = source.indexOf('*/', i + 2);
+        if (end < 0) fail('unterminated block comment');
+        i = end + 2;
+        out += ' ';
+        continue;
+      }
+      if (ch === "'" || ch === '"') {
+        const start = i;
+        i += 1;
+        while (i < source.length && source[i] !== ch) i += source[i] === '\\' ? 2 : 1;
+        if (i >= source.length) fail(`unterminated ${ch} literal`);
+        i += 1;
+        out += source.slice(start, i);
+        continue;
+      }
+      if (ch === '`') {
+        out += template();
+        continue;
+      }
+      out += ch;
+      i += 1;
+    }
+    if (untilBrace) fail('unterminated template substitution');
+    return out;
+  };
+  return code(false);
+}
+
+function parseWorkerNameSet(rawSource: string, label: string): Set<string> {
+  const source = stripComments(rawSource, label);
   const declarations = source.split(DECLARATION).length - 1;
   if (declarations !== 1) {
     throw new Error(`expected exactly one "${DECLARATION}" in ${label}, found ${declarations}`);
@@ -62,10 +176,11 @@ function parseWorkerNameSet(source: string, label: string): Set<string> {
       i += 1;
       continue;
     }
+    // Comments were removed by stripComments; these two branches only guard a caller that skips it.
     if (ch === '/' && next === '/') {
-      const end = source.indexOf('\n', i);
-      if (end < 0) throw new Error(`unterminated line comment in ${DECLARATION} in ${label}`);
-      i = end + 1;
+      let end = i + 2;
+      while (end < source.length && !LINE_TERMINATORS.includes(source[end]!)) end += 1;
+      i = end;
       continue;
     }
     if (ch === '/' && next === '*') {
@@ -174,6 +289,31 @@ describe('supervisor worker-name allow-list pin', () => {
     expect([...parsed].sort()).toEqual(['a', 'b', 'c', 'f']);
     for (const bad of ['...EXTRA_NAMES', 'NAME_CONSTANT', '`x${y}`', "'a\\'b'", "'open"]) {
       expect(() => parseWorkerNameSet(wrap(`'a', ${bad},`), 'synthetic')).toThrow();
+    }
+  });
+
+  /**
+   * Fable 2026-11-17 P2-L3-1 and P3-L3-2: names the reader cannot see. A
+   * `.add(` after the declaration, an old declaration left in a block comment
+   * beside a live typed one, and a line comment ended by CR, U+2028 or U+2029
+   * with a name after it on the same physical line must all fail the pin.
+   */
+  test('a name outside the read declaration or behind a non-LF line end fails the pin', () => {
+    const decl = `${DECLARATION}\n  'a', 'b',\n]);\n`;
+    const use = 'if (!SUPERVISOR_WORKER_NAMES.has(name)) refuse();\n';
+    const read = (src: string) => {
+      const stripped = stripComments(src, 'synthetic');
+      assertIdentifierUses(stripped, 'synthetic');
+      return [...parseWorkerNameSet(stripped, 'synthetic')].sort();
+    };
+    expect(read(decl + use)).toEqual(['a', 'b']);
+    expect(read(`/* old: ${DECLARATION} 'x' ]); */\n// ${IDENTIFIER}.add('y')\n` + decl + use)).toEqual(['a', 'b']);
+    expect(() => read(decl + `${IDENTIFIER}.add('ghost');\n` + use)).toThrow(/exactly twice/);
+    expect(() => read(decl + `const alias = ${IDENTIFIER};\n` + use)).toThrow(/exactly twice/);
+    expect(() => read(`/* ${decl} */\nconst SUPERVISOR_WORKER_NAMES = new Set<string>([\n  'a', 'b', 'ghost',\n]);\n` + use)).toThrow();
+    for (const end of ['\r', '\u2028', '\u2029']) {
+      const src = `${DECLARATION}\n  'a', 'b', // note${end}  'ghost',\n]);\n` + use;
+      expect(read(src)).toEqual(['a', 'b', 'ghost']);
     }
   });
 });
