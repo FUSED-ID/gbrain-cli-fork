@@ -59,11 +59,18 @@ afterAll(async () => {
 });
 
 describe('Fable round 2 private-port seams', () => {
-  test('put_page rejects a private-routed person before submitPageMutation', async () => {
-    await expect(putPage.handler(putContext(), {
+  // C4 ruling (43bcf71b8c, D1): a local put_page on a deny-listed person is moved into the armed private
+  // source instead of refused; a remote caller is still refused before submitPageMutation. Default never holds it.
+  test('put_page keeps a private-routed person out of default: local write moves to lg-private, remote is refused', async () => {
+    await expect(putPage.handler({ ...putContext(), remote: true }, {
       slug: 'people/fable-round2-put',
       content: PERSON_CONTENT,
-    })).rejects.toThrow(/private-write routing is ARMED.*must land in private source/);
+    })).rejects.toThrow(/routed to private source 'lg-private' and cannot be written by a remote caller/);
+    expect(await engine.getPage('people/fable-round2-put', { sourceId: 'default', includeDeleted: true })).toBeNull();
+    expect(await engine.getPage('people/fable-round2-put', { sourceId: 'lg-private', includeDeleted: true })).toBeNull();
+    await putPage.handler(putContext(), { slug: 'people/fable-round2-put', content: PERSON_CONTENT });
+    expect(await engine.getPage('people/fable-round2-put', { sourceId: 'default', includeDeleted: true })).toBeNull();
+    expect((await engine.getPage('people/fable-round2-put', { sourceId: 'lg-private' }))?.title).toBe('Fable Round 2');
   });
 
   test('revertToVersion rejects a private-routed page at the engine seam', async () => {
