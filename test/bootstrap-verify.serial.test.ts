@@ -106,7 +106,7 @@ beforeAll(async () => {
   await engine.initSchema();
   // The workspace source: brain/ registered with its own local_path so the
   // put_page write-through materializes committed files under brain/ [G1].
-  await addSource(engine, { id: 'workspace', localPath: join(ws, 'brain'), force: true });
+  await addSource(engine, { id: 'workspace', localPath: join(ws, 'brain'), force: true, federated: true });
 }, 240_000);
 
 afterAll(async () => {

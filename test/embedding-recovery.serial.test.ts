@@ -914,12 +914,15 @@ for (const kind of backends) {
       await engine.executeRaw("DELETE FROM gbrain_cycle_locks WHERE id='gbrain-embedding-migration'");
     });
     test('source-enumeration failure never becomes an empty-brain migration', async () => {
-      const original = engine.listAllSources.bind(engine);
       let calls = 0;
       __setEmbedTransportForTests(async () => { calls++; throw new Error('No provider calls permitted'); });
       engine.listAllSources = async () => { throw new Error('Synthetic census outage'); };
       try { expect((await flow()).status).toBe('apply_failed'); }
-      finally { engine.listAllSources = original; }
+      // Remove the own-property stub so the prototype method returns. Restoring a copy bound to the outer engine
+      // shadows it on every Object.create(engine) transaction engine, and the fork's in-transaction private-routing
+      // source read (tx.listAllSources) then queries the outer PGLite connection and deadlocks the next putPage.
+      finally { delete (engine as { listAllSources?: unknown }).listAllSources; }
+      expect(Object.prototype.hasOwnProperty.call(engine, 'listAllSources')).toBe(false);
       expect(calls).toBe(0);
       expect((await readMigrationState(engine)).state).toBeNull();
     });

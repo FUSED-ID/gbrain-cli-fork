@@ -31,7 +31,7 @@ beforeAll(async () => {
 afterAll(async () => { if (engine) await engine.disconnect(); }, 60_000);
 
 async function source(id: string, config: Record<string, unknown>) {
-  await engine.executeRaw('INSERT INTO sources (id, name, local_path, config) VALUES ($1, $1, NULL, $2::text::jsonb) ON CONFLICT (id) DO NOTHING', [id, JSON.stringify(config)]);
+  await engine.executeRaw('INSERT INTO sources (id, name, local_path, config) VALUES ($1, $1, NULL, $2::text::jsonb) ON CONFLICT (id) DO NOTHING', [id, JSON.stringify({ federated: true, ...config })]);
 }
 
 async function page(sourceId: string, slug: string, type: string, body: string, extra = '') {

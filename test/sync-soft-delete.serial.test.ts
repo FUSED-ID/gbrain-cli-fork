@@ -413,7 +413,8 @@ describe('#4587: full-sync reconcile + unsyncable lane are SOFT, purge window is
 
     // The CYCLE purge phase owns the eventual hard delete (72h constant).
     const { runCycle } = await import('../src/core/cycle.ts');
-    const report = await runCycle(engine, { brainDir: null, phases: ['purge'] });
+    // Fork R4: the cycle purge phase needs explicit consent (--yes-i-mean-it); 72h is the same window the test pins.
+    const report = await runCycle(engine, { brainDir: null, phases: ['purge'], purgeConsent: { olderThanHours: 72 } });
     const purgePhase = report.phases.find((p) => p.phase === 'purge');
     expect(purgePhase).toBeDefined();
     expect(purgePhase!.status).not.toBe('failed');

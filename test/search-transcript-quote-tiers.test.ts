@@ -115,7 +115,7 @@ for (const backend of testBackends()) {
         close = () => pglite.disconnect();
       }
       await engine.setConfig('embedding_disabled', 'true');
-      await engine.executeRaw("INSERT INTO sources(id,name) VALUES('source-a','source-a') ON CONFLICT DO NOTHING");
+      await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES('source-a','source-a','{"federated":true}'::jsonb) ON CONFLICT DO NOTHING`);
       await ok('put_page', { slug: 'notes/source-a-index', content: '---\ntype: note\ntitle: Channel index\n---\n\nChannel index for source-a.' }, member);
       for (const p of PAGES) {
         await ok('put_page', { slug: SLUG[p], content: pageContent(p) });

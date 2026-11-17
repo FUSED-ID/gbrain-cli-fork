@@ -35,7 +35,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({ engine: 'pglite' } as never);
   await engine.initSchema();
-  for (const id of [MEMBER_SOURCE, CHANNEL_SOURCE]) await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [id]);
+  for (const id of [MEMBER_SOURCE, CHANNEL_SOURCE]) await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, $1, '{"federated":true}'::jsonb) ON CONFLICT (id) DO NOTHING`, [id]);
   await asOwner(engine, tx => tx.insertFact({ fact: FACT, kind: 'preference', entity_slug: 'people/alice-example', visibility: 'world', source: 'test' }, { source_id: MEMBER_SOURCE }));
   token = (await mintLegacyToken(engine, { name: 'hm-member-alice', scopes: ['read'], takesHolders: ['world'], sourceGrant: [MEMBER_SOURCE, CHANNEL_SOURCE] })).token;
   app = await startServeHttp(engine);

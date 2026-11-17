@@ -58,7 +58,7 @@ for (const kind of testBackends()) {
       if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
       else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
       for (const id of ['source-a', 'source-b', 'source-c']) {
-        await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING`, [id]);
+        await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, $1, '{"federated":true}'::jsonb) ON CONFLICT (id) DO NOTHING`, [id]);
       }
       const pages: Array<[string, string, string]> = [
         ['source-a', 'chats/orchard-alpha', '# Zephyrblatt orchard\nZephyrblatt orchard harvest notes for the alpha team.'],

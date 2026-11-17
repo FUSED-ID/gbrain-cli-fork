@@ -105,7 +105,8 @@ afterAll(async () => {
 beforeEach(async () => {
   await resetPgliteState(engine);
   await engine.setConfig('version', schemaVersion);
-  ownerJobId = (await new MinionQueue(engine).add('autopilot-global-maintenance', {})).id;
+  // Fork R4 (P22): the autopilot names are submit-protected; the test submits as the trusted local scheduler does.
+  ownerJobId = (await new MinionQueue(engine).add('autopilot-global-maintenance', {}, undefined, { allowProtectedSubmit: true })).id;
   await engine.putPage('atoms/example', { title: 'Example', type: 'note', compiled_truth: 'A synthetic note.', timeline: '' });
   rmSync(corpusPath, { recursive: true, force: true });
   mkdirSync(corpusPath);

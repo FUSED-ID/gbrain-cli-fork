@@ -312,7 +312,7 @@ async function setupFixtureSource(brain: TrustBrain, fixture: BrainBenchFixture)
   await engine.executeRaw('UPDATE persistence_brain SET enabled = false WHERE singleton = 1');
   let minted: { id: string };
   try {
-    await engine.executeRaw(`INSERT INTO sources (id, name, local_path, config) VALUES ($1, $1, $2, '{}'::jsonb)`, [sourceId, repoDir]);
+    await engine.executeRaw(`INSERT INTO sources (id, name, local_path, config) VALUES ($1, $1, $2, '{"federated":true}'::jsonb)`, [sourceId, repoDir]);
     await claimWorktree(engine, sourceId, repoDir);
     if (connector) {
       await engine.executeRaw('INSERT INTO sources (id, name, local_path, config) VALUES ($1, $1, $2, $3::text::jsonb)',
