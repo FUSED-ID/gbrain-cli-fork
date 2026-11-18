@@ -43,6 +43,7 @@ const DECLARATION = 'const SUPERVISOR_WORKER_NAMES = new Set([';
  * returning an empty set.
  */
 function readSupervisorWorkerNames(): Set<string> {
+  // test-reads-source-ok[structural]: SUPERVISOR_WORKER_NAMES is not exported, so the pin reads its one declaration from the module source.
   const source = stripComments(readFileSync(SUPERVISOR_SOURCE, 'utf8'), SUPERVISOR_SOURCE);
   assertIdentifierUses(source, SUPERVISOR_SOURCE);
   return parseWorkerNameSet(source, SUPERVISOR_SOURCE);
