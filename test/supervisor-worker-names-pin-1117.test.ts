@@ -349,6 +349,7 @@ async function supervisorVerdict(name: string): Promise<'allowed' | 'refused'> {
           args: ['supervisor', 'zzz-probe-non-subcommand'],
           engine: {} as never,
           engineOrNull: null,
+          queue: {} as never,
         });
       } catch (error) {
         if (!(error instanceof ExitSignal)) throw error;
