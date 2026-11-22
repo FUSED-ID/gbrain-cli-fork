@@ -1,3 +1,4 @@
+import { workerEffectSourceEligibleSql, workerSourceEligibleSql } from './worker-source-hold.ts';
 import type { BrainEngine, ReservedConnection } from '../engine.ts';
 import { withoutCallerAccess } from '../search/private-visibility.ts';
 import { withEngineScope } from '../engine-scope.ts';
@@ -115,9 +116,10 @@ export async function runResidentProjectionInvocation(engine: BrainEngine, hostI
   const pages = writesWaiting ? WRITE_WAITING_PROJECTION_PAGES : RESIDENT_PROJECTION_PAGES;
   // Wave B: queued segmented pages are rebuilt first, through their own route (one segment batch at a time).
   const startedAt = now();
-  await rebuildPendingSegmentedProjections(engine, pages, { deadlineMs: RESIDENT_PROJECTION_BUDGET_MS, now });
+  const heldSource = process.env.GBRAIN_WORKER_HELD_SOURCE;
+  await rebuildPendingSegmentedProjections(engine, pages, { heldSource, deadlineMs: RESIDENT_PROJECTION_BUDGET_MS, now });
   return rebuildPendingPageProjections(engine, pages, { deadlineMs: Math.max(0, RESIDENT_PROJECTION_BUDGET_MS - (now() - startedAt)), now, retryCooldown: true,
-    window: residentProjectionCursor(engine) });
+    heldSource, window: residentProjectionCursor(engine) });
 }
 
 const PARKED_WORKER: Promise<void> = Promise.resolve();
@@ -411,7 +413,11 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     // probe advances; segmented rows keep their own probe over the whole queue, as their selector reads it.
     const cursor = residentProjectionCursor(this.engine);
     const params: unknown[] = [this.hostId, excluded, publicationConcurrency(this.engine) > 0, retryingTopologies, [...this.laneTasks.keys()]];
-    const windowCtes = residentWindowCtes(cursor, params, PROJECTION_RETRY_READY_SQL);
+    const heldSource = process.env.GBRAIN_WORKER_HELD_SOURCE;
+    const windowCtes = residentWindowCtes(cursor, params, PROJECTION_RETRY_READY_SQL, heldSource);
+    const segmentHold = heldSource ? ` AND s.id <> $${params.push(heldSource)}::text` : '';
+    const requestEligible = workerSourceEligibleSql('r.source_id', params, heldSource);
+    const effectEligible = workerEffectSourceEligibleSql(params, heldSource);
     const [row] = await this.phase('idle_probe', async signal => this.probeQuery<{ work: boolean; projection_work: boolean; projection_last: { source_incarnation: string; slug: string } | null; high_water: string | null }>(this.laneInUse || direct ? undefined : await this.acquireIdleLane(signal), `WITH ${windowCtes},
     pwork AS (SELECT EXISTS (SELECT 1 FROM (SELECT source_incarnation,slug FROM recent UNION ALL SELECT source_incarnation,slug FROM win) j
       CROSS JOIN LATERAL (SELECT s.id FROM sources s WHERE s.incarnation=j.source_incarnation AND NOT s.archived OFFSET 0) s
@@ -421,7 +427,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       (SELECT json_build_object('source_incarnation',source_incarnation,'slug',slug) FROM win ORDER BY ord DESC LIMIT 1) AS projection_last,
       (SELECT at FROM high_water) AS high_water, (
       EXISTS (SELECT 1 FROM persistence_requests r LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
-        WHERE ${claimableWriteSql(foregroundPrioritySql(), '$5::text[]')}
+        WHERE ${claimableWriteSql(foregroundPrioritySql(), '$5::text[]')} AND ${requestEligible}
         AND ($3::boolean OR r.blocked_reason IS DISTINCT FROM 'writer_pool_capacity'))
       OR EXISTS (SELECT 1 FROM persistence_requests r JOIN persistence_worktrees w ON w.id=r.worktree_id
         WHERE w.owner_host_id=$1::uuid AND r.recovery IS NOT NULL AND NOT (r.worktree_id::text=ANY($2::text[])))
@@ -430,6 +436,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
         AND (r.worktree_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=r.worktree_id AND w.owner_host_id=$1::uuid)))
       OR EXISTS (SELECT 1 FROM persistence_effects e LEFT JOIN persistence_worktrees w ON w.id=e.worktree_id
         WHERE (e.state='queued' OR e.state='running' AND e.claim_expires_at<now()) AND e.next_attempt_at<=now()
+        AND ${effectEligible}
         AND (e.worktree_id IS NULL OR w.owner_host_id=$1::uuid) AND (e.worktree_id IS NULL OR ${refreshFenceClear('e')}) AND e.recovery IS NULL
         AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
         AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
@@ -440,7 +447,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       OR (SELECT found FROM pwork)
       OR EXISTS (SELECT 1 FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation AND NOT s.archived
         JOIN pages p ON p.source_id=s.id AND p.slug=j.slug AND p.deleted_at IS NULL AND p.body_storage='segmented'
-        WHERE ${PROJECTION_RETRY_READY_SQL})
+        WHERE ${PROJECTION_RETRY_READY_SQL}${segmentHold})
       OR EXISTS (SELECT 1 FROM persistence_topology_changes c
         JOIN persistence_worktrees w ON w.id=(c.recovery->>'worktreeId')::uuid
         WHERE c.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND NOT (c.id::text=ANY($4::text[])))
@@ -713,8 +720,10 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     }
     if (this.housekeepingOnly) return;
     if (publicationConcurrency(this.engine) === 0) {
+      const params: unknown[] = [];
+      const eligible = workerSourceEligibleSql('source_id', params);
       await this.phase('capacity', signal => this.statements.executeRaw(`UPDATE persistence_requests SET blocked_reason='writer_pool_capacity'
-        WHERE state='queued' AND blocked_reason IS DISTINCT FROM 'writer_pool_capacity' AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, undefined, { signal }));
+        WHERE state='queued' AND ${eligible} AND blocked_reason IS DISTINCT FROM 'writer_pool_capacity' AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, params, { signal }));
       return;
     }
     // #6278: at the zombie cap this process claims nothing more; status() says restart_required and the drain ends.

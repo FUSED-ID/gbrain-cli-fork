@@ -1,3 +1,4 @@
+import { workerEffectSourceEligibleSql } from './worker-source-hold.ts';
 import { randomUUID } from 'node:crypto';
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
@@ -144,19 +145,21 @@ export const effectClaimStamp = (token: string) => JSON.stringify({ token, owner
  * `deadOwners` (GBRA-133): owner keys the consumer proved dead, whose running effects are claimable before their lease lapses.
  */
 export async function claimPersistenceEffect(engine: BrainEngine, hostId: string, deadOwners: readonly string[] = []): Promise<PersistenceEffect | null> {
+  const params: unknown[] = [hostId, [...deadOwners]];
+  const eligible = workerEffectSourceEligibleSql(params);
   return engine.transactionDirect(async tx => {
     await declarePersistenceProtocol(tx);
     const [candidate] = await tx.executeRaw<PersistenceEffect>(`SELECT e.* FROM persistence_effects e
       LEFT JOIN persistence_worktrees w ON w.id=e.worktree_id
       WHERE (e.state='queued' OR e.state='running' AND e.claim_expires_at<now() OR ${DEAD_OWNER_EFFECT_SQL('e', '$2')}) AND e.next_attempt_at<=now()
       AND (e.worktree_id IS NULL OR w.owner_host_id=$1::uuid) AND (e.worktree_id IS NULL OR ${refreshFenceClear('e')})
-      AND e.recovery IS NULL AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked
+      AND ${eligible} AND e.recovery IS NULL AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked
         WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
       AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked
         WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
       AND (e.kind='withdrawal-mirror' OR NOT EXISTS (SELECT 1 FROM persistence_effects mirror
         WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running')))
-      ORDER BY e.next_attempt_at,e.id LIMIT 1 FOR UPDATE OF e SKIP LOCKED`, [hostId, [...deadOwners]]);
+      ORDER BY e.next_attempt_at,e.id LIMIT 1 FOR UPDATE OF e SKIP LOCKED`, params);
     if (!candidate) return null;
     const token = randomUUID();
     const [claimed] = await tx.executeRaw<PersistenceEffect>(`UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,
@@ -249,6 +252,8 @@ export async function rearmWithheldTargets(engine: SqlEngine, requestIds: readon
 export async function claimCoalescedGitEffects(engine: BrainEngine, hostId: string, worktreeId: string, limit: number,
   deadOwners: readonly string[] = []): Promise<PersistenceEffect[]> {
   if (limit <= 0) return [];
+  const params: unknown[] = [hostId, worktreeId, limit, [...deadOwners], JSON.stringify(claimOwner())];
+  const eligible = workerEffectSourceEligibleSql(params);
   const rows = await engine.transactionDirect(async tx => {
     await declarePersistenceProtocol(tx);
     // The worktree-wide conditions (owner, refresh fence, recovery blocks) are one
@@ -262,14 +267,14 @@ export async function claimCoalescedGitEffects(engine: BrainEngine, hostId: stri
       AND e.worktree_id=$2::uuid AND e.kind='git' AND e.data ? 'relative_path'
       AND NOT (e.data ? 'targets') AND NOT (e.data ? 'source_scan') AND NOT (e.data ? 'version')
       AND (e.state='queued' OR e.state='running' AND e.claim_expires_at<now() OR ${DEAD_OWNER_EFFECT_SQL('e', '$4')}) AND e.next_attempt_at<=now()
-      AND e.recovery IS NULL
+      AND ${eligible} AND e.recovery IS NULL
       AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror
         WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running'))
       ORDER BY e.next_attempt_at,e.id LIMIT $3 FOR UPDATE OF e SKIP LOCKED)
       UPDATE persistence_effects p SET state='running',execution_token=ready.token,
       claim_owner=jsonb_build_object('token',ready.token::text,'owner',$5::text::jsonb),
       claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now()
-      FROM ready WHERE p.id=ready.id RETURNING p.*`, [hostId, worktreeId, limit, [...deadOwners], JSON.stringify(claimOwner())]);
+      FROM ready WHERE p.id=ready.id RETURNING p.*`, params);
   }, { pipelineFirst: isPersistenceDeclaration });
   return rows.sort((a, b) => Number(a.id) - Number(b.id));
 }

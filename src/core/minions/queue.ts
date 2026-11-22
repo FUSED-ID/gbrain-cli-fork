@@ -1471,6 +1471,37 @@ export class MinionQueue {
     // repair, foreign tooling) must not grant a ~24-day lease to a worker
     // that crashes before its first renewal (or a 1ms one that thrashes).
     const excludeNames = opts.excludeNames?.length ? opts.excludeNames : null;
+
+    // #568: source-isolation guard for the protected launcher. When a held
+    // source is configured, only the four registered handlers are admissible,
+    // and only jobs that cannot process that source. The predicate is inside
+    // the selection subquery, so held-source jobs are skipped BEFORE the row
+    // is locked or marked active. Handler names are fixed literals; the held
+    // source itself is bound as the next SQL parameter after the existing
+    // watchdog/excludeNames parameters. An omitted sourceId is safe only for
+    // the handlers that resolve it to 'default', and only when the hold is
+    // not 'default'. A present but non-string/empty sourceId is malformed and
+    // is refused. extract-atoms-drain additionally requires an explicit
+    // sourceId and is refused when the caller supplied repoPath.
+    const heldSource = process.env.GBRAIN_WORKER_HELD_SOURCE ?? '';
+    const heldSourceActive = heldSource.length > 0;
+    const heldSourceParam = 8 + (opts.excludeWatchdogSuspects ? 1 : 0) + (excludeNames ? 1 : 0) + 1;
+    const heldSourceFilterSql = heldSourceActive
+      ? ` AND name = ANY(ARRAY['chronicle_extract', 'facts-absorb', 'embed-backfill', 'extract-atoms-drain'])
+          AND NOT (name = 'extract-atoms-drain' AND data ? 'repoPath')
+          AND (
+            (data ? 'sourceId'
+              AND jsonb_typeof((data -> 'sourceId')::jsonb) = 'string'
+              AND data ->> 'sourceId' <> ''
+              AND data ->> 'sourceId' <> $${heldSourceParam})
+            OR (
+              (data IS NULL OR NOT (data ? 'sourceId'))
+              AND name = ANY(ARRAY['chronicle_extract', 'facts-absorb'])
+              AND $${heldSourceParam} <> 'default'
+            )
+          )`
+      : '';
+
     const rows = await this.engine.executeRawDirect<Record<string, unknown>>(
       `UPDATE minion_jobs SET
         status = 'active',
@@ -1490,14 +1521,14 @@ export class MinionQueue {
         updated_at = now()
        WHERE id = (
          SELECT id FROM minion_jobs
-         WHERE queue = $3 AND status = 'waiting' AND submission_authority IS NOT NULL AND name = ANY($4)${opts.excludeWatchdogSuspects ? ` AND ${unmarkedJobSql('$9')}` : ''}${excludeNames ? ` AND NOT (name = ANY($${opts.excludeWatchdogSuspects ? 10 : 9}))` : ''}
+         WHERE queue = $3 AND status = 'waiting' AND submission_authority IS NOT NULL AND name = ANY($4)${opts.excludeWatchdogSuspects ? ` AND ${unmarkedJobSql('$9')}` : ''}${excludeNames ? ` AND NOT (name = ANY($${opts.excludeWatchdogSuspects ? 10 : 9}))` : ''}${heldSourceFilterSql}
          ORDER BY priority ASC, created_at ASC
          FOR UPDATE SKIP LOCKED
          LIMIT 1
        )
        RETURNING *`,
       [lockToken, lockDurationMs, queue, registeredNames, HANDLER_DEFAULT_TIMEOUT_MS, HANDLER_DEFAULT_LOCK_DURATION_MS, ...legacyDefaultClaimParams(),
-        ...(opts.excludeWatchdogSuspects ? [WATCHDOG_SUSPECT_MARK] : []), ...(excludeNames ? [excludeNames] : [])]
+        ...(opts.excludeWatchdogSuspects ? [WATCHDOG_SUSPECT_MARK] : []), ...(excludeNames ? [excludeNames] : []), ...(heldSourceActive ? [heldSource] : [])]
     );
     return rows.length > 0 ? rowToMinionJob(rows[0]) : null;
   }

@@ -146,6 +146,20 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
   async function handleMcpPost(req: Request, res: Response): Promise<void> {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
+    // The temporary office front requires the verified grant on this very request.
+    const officeSource = req.get('x-gbrain-office-source');
+    if (officeSource !== undefined) {
+      const officeClient = authInfo.clientName === 'cowork-m4' || authInfo.clientName === 'cowork-m4-mcp';
+      if (process.env.GBRAIN_WORKER_HELD_SOURCE !== 'fused-id-infrastructure' ||
+          officeSource !== 'default' || authTransport(authInfo) !== 'oauth' || !officeClient ||
+          authInfo.sourceId !== officeSource || !authInfo.scopes.includes('write') ||
+          authInfo.scopes.some(scope => scope !== 'read' && scope !== 'write')) {
+        res.status(403).json({ error: 'office_source_unavailable' });
+        return;
+      }
+      res.set('x-gbrain-office-source', officeSource);
+    }
+
 
     // Human-readable agent name is now threaded through AuthInfo by
     // verifyAccessToken (which JOINs oauth_clients in its existing token

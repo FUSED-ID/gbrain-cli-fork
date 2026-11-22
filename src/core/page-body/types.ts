@@ -151,6 +151,8 @@ export interface BodyStagingInput {
 
 export interface SegmentSweepOptions {
   sourceId?: string;
+  /** Keep segments and stagings belonging to this source. */
+  excludeSourceId?: string;
   pageId?: number;
   /** Texts younger than this are never swept. Defaults to SEGMENT_TEXT_GC_GRACE_MS. */
   graceMs?: number;

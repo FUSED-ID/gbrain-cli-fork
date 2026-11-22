@@ -21,6 +21,7 @@
  * `next_attempt_at, id` across kinds, only Git groups and withdrawal mirrors
  * gate other effects, and an embedding effect gates nothing.
  */
+import { workerEffectSourceEligibleSql } from './worker-source-hold.ts';
 import { trueUpRequests } from './receipt-true-up.ts';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -58,12 +59,15 @@ export async function settleNoopEmbeddingEffects(engine: BrainEngine, hostId: st
   after?: NoopSettleCursor, limit = NOOP_SETTLE_BATCH): Promise<NoopSettlePass> {
   const { column } = await embeddingWriteTarget(engine);
   const expectedModel = embeddingCompletionModel(column, signature) ?? null;
-  const key = `${column.name}\0${expectedModel ?? ''}\0${signature}`;
+  const heldSource = process.env.GBRAIN_WORKER_HELD_SOURCE ?? '';
+  const key = `${column.name}\0${expectedModel ?? ''}\0${signature}\0${heldSource}`;
   const from = after?.key === key ? after.through : '0';
+  const dueParams: unknown[] = [from];
+  const dueEligible = workerEffectSourceEligibleSql(dueParams, heldSource);
   // A drain with nothing new to consider costs one indexed read and opens no transaction.
   // Ordered by id so a generic plan (a prepared statement past its first runs) still walks the primary key from `from`.
   const [due] = await engine.executeRaw(`SELECT 1 FROM persistence_effects e WHERE e.id>$1::bigint AND e.kind='embedding' AND e.state='queued'
-    AND e.attempts=0 AND e.recovery IS NULL ORDER BY e.id LIMIT 1`, [from]);
+    AND e.attempts=0 AND e.recovery IS NULL AND ${dueEligible} ORDER BY e.id LIMIT 1`, dueParams);
   if (!due) return { settled: 0, cursor: { key, through: from }, done: true };
   const requestIds: string[] = [];
   const pass = await engine.transaction(async tx => {
@@ -72,9 +76,11 @@ export async function settleNoopEmbeddingEffects(engine: BrainEngine, hostId: st
     // The window is the next `limit` unattempted embedding effects by id, read from the primary key and locked;
     // the per-effect tests then run on that window only, so a pass costs at most `limit` effects whatever the
     // backlog holds and whatever the planner estimates for it.
+    const params: unknown[] = [from, limit];
+    const eligible = workerEffectSourceEligibleSql(params, heldSource);
     const rows = await tx.executeRaw<{ id: string; page_id: number | null }>(`SELECT e.id::text AS id, (e.data->>'page_id')::int AS page_id
       FROM persistence_effects e WHERE e.id>$1::bigint AND e.kind='embedding' AND e.state='queued' AND e.attempts=0 AND e.recovery IS NULL
-      ORDER BY e.id LIMIT $2 FOR UPDATE SKIP LOCKED`, [from, limit]);
+      AND ${eligible} ORDER BY e.id LIMIT $2 FOR UPDATE SKIP LOCKED`, params);
     const window = rows.map(row => row.id);
     // A short window reached the newest effect; a full one continues after its last effect.
     const done = window.length < limit;

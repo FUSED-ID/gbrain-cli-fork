@@ -1,3 +1,4 @@
+import { workerSourceEligibleSql } from './worker-source-hold.ts';
 import { randomUUID } from 'node:crypto';
 import { WRITE_SWITCHES, writeSwitchOn } from './switches.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -501,15 +502,17 @@ export async function claimGroupFollowers(engine: BrainEngine, head: WriteReques
     await declarePersistenceProtocol(tx);
     // #5984 G6: only the group's candidate prefix is locked. Locking every next row also held a foreground write's row
     // (the first non-member) for the claim's round trips, so its recovery record and reads waited on the lane.
+    const params: unknown[] = [head.worktree_id, head.sequence, max, group];
+    const eligible = workerSourceEligibleSql('source_id', params);
     const next = await tx.executeRaw<{ id: string; state: string; grp: string | null; recovering: boolean; claim_phase: unknown }>(`WITH next AS (
-        SELECT id,sequence,state,${GROUP_KEY_SQL} AS grp,recovery IS NOT NULL AS recovering,NOT ${BACKOFF_ELAPSED('persistence_requests')} AS backoff,transient_interruptions>0 AS charged FROM persistence_requests
+        SELECT id,sequence,state,${GROUP_KEY_SQL} AS grp,recovery IS NOT NULL AS recovering,NOT ${BACKOFF_ELAPSED('persistence_requests')} AS backoff,transient_interruptions>0 AS charged,${eligible} AS eligible FROM persistence_requests
         WHERE worktree_id=$1::uuid AND sequence>$2 AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) ORDER BY sequence LIMIT $3),
       -- v261: a member still in its transient backoff ends the group's prefix like a non-member, and so does one already
       -- charged a transient interruption: it publishes alone, so a batch that overruns only as a whole is not retried as one.
-      bound AS (SELECT min(sequence) AS sequence FROM next WHERE grp IS DISTINCT FROM $4 OR state<>'queued' OR recovering OR backoff OR charged)
+      bound AS (SELECT min(sequence) AS sequence FROM next WHERE grp IS DISTINCT FROM $4 OR state<>'queued' OR recovering OR backoff OR charged OR NOT eligible)
       SELECT r.id,r.state,${GROUP_KEY_SQL} AS grp,r.recovery IS NOT NULL AS recovering,r.claim_phase
       FROM persistence_requests r WHERE r.id IN (SELECT id FROM next WHERE sequence<COALESCE((SELECT sequence FROM bound),9223372036854775807))
-      ORDER BY r.sequence FOR UPDATE OF r`, [head.worktree_id, head.sequence, max, group]);
+      ORDER BY r.sequence FOR UPDATE OF r`, params);
     const members: string[] = [];
     const previous = new Map<string, unknown>();
     for (const row of next) {
@@ -698,8 +701,11 @@ export function foregroundPriority(engine: SqlEngine): Promise<boolean> {
 
 /** #5401: whether `claimNextWrite` would find a row now. Read-only: no lock and no claim. */
 export async function hasClaimableWrite(engine: SqlEngine, hostId: string, excludeRoots: string[] = [], signal?: AbortSignal): Promise<boolean> {
+  const params: unknown[] = [hostId, excludeRoots];
+  const eligible = workerSourceEligibleSql('r.source_id', params);
   const [row] = await engine.executeRaw<{ claimable: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_requests r
-      LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE ${claimableWriteSql(foregroundPrioritySql())} LIMIT 1) AS claimable`, [hostId, excludeRoots], { signal });
+      LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE ${claimableWriteSql(foregroundPrioritySql())}
+      AND ${eligible} LIMIT 1) AS claimable`, params, { signal });
   return row?.claimable === true;
 }
 
@@ -754,6 +760,9 @@ export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseM
   laneRoots: string[] = [], syncSeen: Record<string, string> = {}): Promise<(WriteRequest & { passed_sync?: boolean; seen_sequence?: string | null }) | null> {
   const first = `(${foregroundPrioritySql()}) AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($3::text[]))`;
   const holderOnly = !RESIDENT_CONSUMER_KINDS.includes(claimOwnerKind());
+  const params: unknown[] = [hostId, excludeRoots, fifoRoots, laneRoots, consumerIdentity().nonce, JSON.stringify(syncSeen),
+    ...(holderOnly ? [syncLockId(''), process.pid, hostname()] : [])];
+  const eligible = workerSourceEligibleSql('r.source_id', params);
   return engine.transactionDirect(async tx => {
     // The protocol declaration and the FIFO head read are sent together.
     const [, [row]] = await pipelined(tx, [
@@ -762,12 +771,11 @@ export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseM
         FROM (${FOREGROUND_WAITING_ON('$5::text', "($6::text::jsonb->>f.worktree_id::text)::bigint")}) f GROUP BY f.worktree_id)
       SELECT r.* FROM persistence_requests r
       LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
-      WHERE ${claimableWriteSql(`(${first})`, '$4::text[]')}
+      WHERE ${claimableWriteSql(`(${first})`, '$4::text[]')} AND ${eligible}
         -- On a root whose lane groups run in this process only a foreground write is claimed (beside them).
         AND NOT (r.worktree_id::text=ANY($4::text[]) AND (${SYNC_KIND('r')} OR NOT (${first})))
         AND NOT (${SYNC_KIND('r')} AND ${first} AND EXISTS (SELECT 1 FROM waiting g WHERE g.worktree_id=r.worktree_id AND g.last>r.sequence))
-      ORDER BY ${holderOnly ? `${LEASE_HELD}, ` : ''}${CLAIM_ORDER(`(${first})`)} LIMIT 1 FOR UPDATE OF r SKIP LOCKED`,
-      [hostId, excludeRoots, fifoRoots, laneRoots, consumerIdentity().nonce, JSON.stringify(syncSeen), ...(holderOnly ? [syncLockId(''), process.pid, hostname()] : [])]),
+      ORDER BY ${holderOnly ? `${LEASE_HELD}, ` : ''}${CLAIM_ORDER(`(${first})`)} LIMIT 1 FOR UPDATE OF r SKIP LOCKED`, params),
     ]) as [unknown, WriteRequest[]];
     if (!row) return null;
     if (holderOnly && String(row.intent?.kind ?? '').startsWith('managed_sync_')) {
@@ -804,11 +812,14 @@ export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseM
  */
 export async function claimNextLaneHead(engine: BrainEngine, hostId: string, worktreeId: string, run: string, leaseMs = 30_000,
   seenSequence: string | null = null): Promise<(WriteRequest & { seen_sequence: string }) | null> {
+  const params: unknown[] = [hostId, worktreeId, run, seenSequence, consumerIdentity().nonce];
+  const eligible = workerSourceEligibleSql('r.source_id', params);
   return engine.transactionDirect(async tx => {
     await declarePersistenceProtocol(tx);
     const [row] = await tx.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
       JOIN persistence_worktrees w ON w.id=r.worktree_id
       WHERE r.worktree_id=$2::uuid AND r.state='queued' AND ${BACKOFF_ELAPSED('r')} AND r.intent->>'lane'=$3 AND r.intent->>'group'=r.request_id::text
+        AND ${eligible}
         AND w.owner_host_id=$1::uuid AND w.state='active' AND ${refreshFenceClear('r')}
         AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
         AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror WHERE mirror.worktree_id=r.worktree_id
@@ -819,7 +830,7 @@ export async function claimNextLaneHead(engine: BrainEngine, hostId: string, wor
         -- #5984 Phase 4.5: no new lane head while a foreground write that may go first waits (a claimed one publishes
         -- beside the lanes), except one head after each foreground commit since this run's last head claim.
         AND NOT ((${foregroundPrioritySql()}) AND r.worktree_id IN (SELECT f.worktree_id FROM (${FOREGROUND_WAITING_ON('$5::text', '$4::bigint', 'f.worktree_id=$2::uuid')}) f))
-      ORDER BY r.sequence LIMIT 1 FOR UPDATE OF r SKIP LOCKED`, [hostId, worktreeId, run, seenSequence, consumerIdentity().nonce]);
+      ORDER BY r.sequence LIMIT 1 FOR UPDATE OF r SKIP LOCKED`, params);
     if (!row) return null;
     const token = randomUUID();
     const [claimed] = await tx.executeRaw<WriteRequest & { seen_sequence: string }>(`UPDATE persistence_requests SET state='running',
@@ -1111,9 +1122,15 @@ export async function sweepSegmentStorage(engine: BrainEngine): Promise<void> {
   const [row] = await engine.executeRaw<{ present: boolean }>(
     'SELECT EXISTS (SELECT 1 FROM page_body_stagings) OR EXISTS (SELECT 1 FROM page_segment_texts) AS present');
   if (!row?.present) return;
-  if (!await readManagedMode(engine)) { await engine.sweepSegments({ expireStagings: true }); return; }
+  const heldSource = process.env.GBRAIN_WORKER_HELD_SOURCE;
+  if (!await readManagedMode(engine)) {
+    await engine.sweepSegments({ expireStagings: true, excludeSourceId: heldSource || undefined });
+    return;
+  }
+  const params: unknown[] = [hostIdFor(engine)];
+  const eligible = workerSourceEligibleSql('s.source_id', params, heldSource);
   const owned = await engine.executeRaw<{ source_id: string }>(`SELECT s.source_id FROM persistence_source_bindings s
-    JOIN persistence_worktrees w ON w.id=s.worktree_id WHERE w.owner_host_id=$1::uuid AND w.state='active'`, [hostIdFor(engine)]);
+    JOIN persistence_worktrees w ON w.id=s.worktree_id WHERE w.owner_host_id=$1::uuid AND w.state='active' AND ${eligible}`, params);
   for (const { source_id: sourceId } of owned) {
     const writes = await segmentWriteScope(engine, sourceId);
     await writes(exec => exec.sweepSegments({ sourceId, expireStagings: true }));

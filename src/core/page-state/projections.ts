@@ -635,6 +635,8 @@ export interface ProjectionRebuildOptions {
    * cursor instead of a walk of the whole queue. Only `retryCooldown` applies with it.
    */
   window?: ProjectionScanCursor;
+  /** Source parked by the resident operator. Explicit drains retain their own scope. */
+  heldSource?: string;
   /** #6803: a media drain seals images next, so the statistics refresh also waits for its `sealable` rows. */
   media?: boolean;
   /**
@@ -656,10 +658,10 @@ type WindowKey = { source_incarnation: string; slug: string };
  * (the recency lane, then the window in key order), each probed by primary
  * key; rows of a kind the resident never builds go to the negative cache.
  */
-async function selectWindowJobs(engine: BrainEngine, cursor: ProjectionScanCursor, retryCooldown: boolean):
+async function selectWindowJobs(engine: BrainEngine, cursor: ProjectionScanCursor, retryCooldown: boolean, heldSource?: string):
   Promise<{ jobs: Array<QueuedJob & { ord: number }>; window: WindowKey[]; highWater: string | null }> {
   const params: unknown[] = [];
-  const ctes = residentWindowCtes(cursor, params, retryCooldown ? PROJECTION_RETRY_READY_SQL : 'TRUE');
+  const ctes = residentWindowCtes(cursor, params, retryCooldown ? PROJECTION_RETRY_READY_SQL : 'TRUE', heldSource);
   const rows = await engine.executeRaw<WindowKey & { lane: string | null; ord: number; revision: string; high_water: string | null }>(`WITH ${ctes}
     SELECT r.lane,r.ord,r.source_incarnation::text AS source_incarnation,r.slug,r.revision::text AS revision,h.at AS high_water
     FROM high_water h LEFT JOIN (SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM recent
@@ -786,7 +788,7 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
     filters.push(`(j.updated_at,j.source_incarnation,j.slug)>($${params.length - 2}::text::timestamptz,$${params.length - 1}::uuid,$${params.length})`);
   }
   const sourceFilter = opts.pages ? `WHERE s.id=$${params.push(opts.pages.sourceId)}` : '';
-  const selected = opts.window ? await selectWindowJobs(engine, opts.window, opts.retryCooldown === true) : null;
+  const selected = opts.window ? await selectWindowJobs(engine, opts.window, opts.retryCooldown === true, opts.heldSource) : null;
   const jobs = selected ? selected.jobs.slice(0, Number(params[0])) : await engine.executeRaw<QueuedJob>(`SELECT s.id AS source_id,j.source_incarnation,j.slug,j.revision,p.page_kind,j.updated_at::text AS updated_at
     FROM (SELECT source_incarnation,slug,revision,updated_at FROM page_projection_jobs j
       ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}

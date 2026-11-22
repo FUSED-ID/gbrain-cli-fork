@@ -427,12 +427,14 @@ export async function sweepSegments(exec: SqlExecutor, opts: SegmentSweepOptions
   const pageScope = joinFragments([
     opts.pageId !== undefined ? sqlFragment`p.id = ${opts.pageId}::int` : sqlFragment`TRUE`,
     opts.sourceId !== undefined ? sqlFragment`p.source_id = ${opts.sourceId}` : sqlFragment`TRUE`,
+    opts.excludeSourceId !== undefined ? sqlFragment`p.source_id <> ${opts.excludeSourceId}` : sqlFragment`TRUE`,
   ], ' AND ');
   let stagingsExpired = 0;
   if (opts.expireStagings) {
     const stagingScope = joinFragments([
       opts.pageId !== undefined ? sqlFragment`s.page_id = ${opts.pageId}::int` : sqlFragment`TRUE`,
       opts.sourceId !== undefined ? sqlFragment`s.source_id = ${opts.sourceId}` : sqlFragment`TRUE`,
+      opts.excludeSourceId !== undefined ? sqlFragment`s.source_id <> ${opts.excludeSourceId}` : sqlFragment`TRUE`,
     ], ' AND ');
     const { rows: expired } = await exec.run<{ n: number }>(sqlFragment`WITH gone AS (UPDATE page_body_stagings s SET state = 'expired', updated_at = ${now}
       WHERE s.state = ANY(${LIVE_STAGING_STATES}::text[]) AND ${stagingScope}
@@ -475,9 +477,10 @@ export async function sweepSegments(exec: SqlExecutor, opts: SegmentSweepOptions
     ? sqlFragment`AND t.source_id = (SELECT source_id FROM pages WHERE id = ${opts.pageId}::int)
         AND t.sha256 = ANY(SELECT decode(h, 'hex') FROM unnest(${[...released]}::text[]) AS h)`
     : opts.sourceId !== undefined ? sqlFragment`AND t.source_id = ${opts.sourceId}` : sqlFragment``;
+  const textExclusion = opts.excludeSourceId !== undefined ? sqlFragment`AND t.source_id <> ${opts.excludeSourceId}` : sqlFragment``;
   const textsDeleted = opts.pageId !== undefined && released.size === 0 ? 0 : (await exec.run(sqlFragment`DELETE FROM page_segment_texts d
     WHERE (d.source_id, d.sha256) IN (SELECT t.source_id, t.sha256 FROM page_segment_texts t
-      WHERE t.created_at < ${now} - (${graceMs}::bigint * interval '1 millisecond') ${textScope}
+      WHERE t.created_at < ${now} - (${graceMs}::bigint * interval '1 millisecond') ${textScope} ${textExclusion}
         AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id = t.source_id AND m.sha256 = t.sha256)
         AND NOT EXISTS (SELECT 1 FROM page_body_stagings s WHERE s.source_id = t.source_id AND s.created_at <= t.created_at
                          AND s.id::text IN ${liveStagingIds})

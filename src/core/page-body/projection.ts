@@ -223,12 +223,13 @@ async function buildClaimedProjection(engine: BrainEngine, ref: { sourceId: stri
  * tries each row once (`exclude`: `gbrain projections drain`).
  */
 export async function rebuildPendingSegmentedProjections(engine: BrainEngine, limit: number,
-  opts: { deadlineMs?: number; now?: () => number; notAfter?: string; reasons?: readonly string[]; retryCooldown?: boolean; exclude?: readonly string[];
+  opts: { deadlineMs?: number; now?: () => number; notAfter?: string; reasons?: readonly string[]; retryCooldown?: boolean; exclude?: readonly string[]; heldSource?: string;
     onFailure?: (failure: ProjectionRebuildFailure) => void } = {}): Promise<{ rebuilt: number; failed: number; listed: string[] }> {
   const now = opts.now ?? Date.now;
   const startedAt = now();
   const params: unknown[] = [Math.max(1, limit)];
   const filters = [opts.retryCooldown === false ? `NOT ${SEGMENTED_PROJECTION_CLAIMED_SQL}` : PROJECTION_RETRY_READY_SQL];
+  if (opts.heldSource) filters.push(`s.id <> $${params.push(opts.heldSource)}::text`);
   if (opts.notAfter !== undefined) filters.push(`j.updated_at<=$${params.push(opts.notAfter)}::text::timestamptz`);
   if (opts.reasons) filters.push(`j.reason=ANY($${params.push(opts.reasons)}::text[])`);
   if (opts.exclude?.length) filters.push(`NOT (j.source_incarnation::text || '/' || j.slug)=ANY($${params.push(opts.exclude)}::text[])`);

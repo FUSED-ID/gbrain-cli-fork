@@ -68,12 +68,16 @@ export function rememberIneligible(cursor: ProjectionScanCursor, row: { source_i
  * `params`. `high_water` (the queue's current `max(updated_at)`) rides along so
  * the caller can move the mark.
  */
-export function residentWindowCtes(cursor: ProjectionScanCursor, params: unknown[], filter = 'TRUE'): string {
+export function residentWindowCtes(cursor: ProjectionScanCursor, params: unknown[], filter = 'TRUE', heldSource?: string): string {
   const inc = params.push(cursor.after.source_incarnation);
   const slug = params.push(cursor.after.slug);
   const mark = params.push(cursor.highWater);
+  // Exclude before either bounded scan so a held source cannot consume another source's slots.
+  const eligible = heldSource ? `j.source_incarnation IS DISTINCT FROM (SELECT incarnation FROM sources WHERE id=$${params.push(heldSource)}::text)` : '';
+  const watermark = eligible ? ' FROM page_projection_jobs j WHERE ' + eligible : ' FROM page_projection_jobs';
+  if (eligible) filter = `(${filter}) AND ${eligible}`;
   const cols = 'j.source_incarnation,j.slug,j.revision,j.updated_at,j.reason';
-  return `mark AS (SELECT COALESCE($${mark}::text::timestamptz,(SELECT max(updated_at) FROM page_projection_jobs)) AS at),
+  return `mark AS (SELECT COALESCE($${mark}::text::timestamptz,(SELECT max(updated_at)${watermark})) AS at),
     recent AS (SELECT ${cols},'recent'::text AS lane,0 AS ord FROM page_projection_jobs j, mark
       WHERE j.updated_at > mark.at - interval '10 minutes' AND ${filter} ORDER BY j.updated_at DESC LIMIT ${RESIDENT_RECENT_ROWS}),
     fwd AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug) > ($${inc}::uuid,$${slug}) AND ${filter}
@@ -83,7 +87,7 @@ export function residentWindowCtes(cursor: ProjectionScanCursor, params: unknown
     win AS (SELECT *,'window'::text AS lane,row_number() OVER (ORDER BY part,source_incarnation,slug) AS ord FROM (
       (SELECT *,0 AS part FROM fwd ORDER BY source_incarnation,slug) UNION ALL (SELECT *,1 AS part FROM wrap ORDER BY source_incarnation,slug)
       ORDER BY part,source_incarnation,slug LIMIT ${WINDOW_ROWS}) w),
-    high_water AS (SELECT max(updated_at)::text AS at FROM page_projection_jobs)`;
+    high_water AS (SELECT max(updated_at)::text AS at${watermark})`;
 }
 
 /** Move the cursor past the window's last row a caller has finished with (none: the window was empty). */
