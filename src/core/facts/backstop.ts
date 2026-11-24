@@ -967,6 +967,7 @@ async function runPipelineBodyInner(
   }
 
   for (const { f, resolvedSlug, resolutionSource } of legacyBucket) {
+    if (resolvedSlug && isProtectedBinderPage(resolvedSlug)) continue; // LGV ruling 2026-11-24: no DB-only fact rows on a Binder page
     const newFact: NewFact = {
       fact: f.fact,
       kind: f.kind,

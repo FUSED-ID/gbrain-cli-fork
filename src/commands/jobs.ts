@@ -543,6 +543,7 @@ export async function registerBuiltinHandlers(
   engine: BrainEngine,
   opts?: { quiet?: boolean },
 ): Promise<void> {
+  if (!opts?.quiet) (await import('../core/persistence/protected-binder-pages.ts')).logProtectedBinderGuard();
   // `quiet` suppresses the informational startup stderr lines. The supervisor
   // (issue #1801) runs this against a throwaway worker purely to read
   // `registeredNames` for wedge name-scoping — it must not spam the operator's

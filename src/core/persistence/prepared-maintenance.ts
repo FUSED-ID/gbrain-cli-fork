@@ -1,4 +1,4 @@
-import { isProtectedBinderPage, PROTECTED_BINDER_SKIP } from './protected-binder-pages.ts';
+import { isProtectedBinderPage, PROTECTED_BINDER_SKIP, protectedPageOverride, withProtectedPageOverride, type ProtectedPageOverride } from './protected-binder-pages.ts';
 import { realpathSync } from 'node:fs';
 import { enterClaimStep, type ClaimPhaseClock } from './claim-phase.ts';
 import { boundedReads } from './bounded-reads.ts';
@@ -158,18 +158,23 @@ function awaitMaintenance(engine: BrainEngine, authority: MaintenanceAuthority, 
 /** Every check a maintenance request passes before it is journaled: the authorized prior request with its id (a replay), or the admission to submit. */
 async function prepareMaintenanceAdmission(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
   intent: Record<string, unknown>, requestId: string, file: boolean): Promise<{ prior: WriteRequest } | { admission: WriteAdmission }> {
-  // LGV ruling 2026-11-24: maintenance (worker) writes never touch a protected Binder page.
-  if (isProtectedBinderPage(slug)) {
-    throw opError('permission_denied', `Page ${slug} is a protected Binder page; maintenance writes to it are refused.`,
-      `Maintenance submitted nothing for ${slug} in '${authority.writer.sourceId}'. Binder pages are edited by hand only. An operator who must repair one sets GBRAIN_PROTECTED_SLUG_PATTERNS for that single command.`,
-      { detail: PROTECTED_BINDER_SKIP });
-  }
   await validateMaintenance(engine, authority, slug);
   const prior = await getWriteRequest(engine, authority.writer.principal, requestId);
   if (prior) {
     await authorizeStoredRequest(engine, prior);
     assertReplayIntent(prior, intentDigest({ operation: 'submit_job', sourceId: authority.writer.sourceId, slug, callerIntent: intent }));
     return { prior };
+  }
+  // LGV ruling 2026-11-24: a new maintenance (worker) write never touches a protected Binder page, unless the
+  // request carries a named operator override. A replay of an earlier request (above) only returns its receipt.
+  if (isProtectedBinderPage(slug)) {
+    const override = protectedPageOverride(intent);
+    if (!override) {
+      throw opError('permission_denied', `Page ${slug} is a protected Binder page; maintenance writes to it are refused.`,
+        `Maintenance submitted nothing for ${slug} in '${authority.writer.sourceId}'. Binder pages are edited by hand only. An operator repair that must write one carries a protected_page_override (operator and reason) on its request.`,
+        { detail: PROTECTED_BINDER_SKIP });
+    }
+    console.error(`[binder-guard] operator override admitted maintenance request ${requestId} on protected page ${slug} in '${authority.writer.sourceId}' (operator=${override.operator}, reason=${override.reason})`);
   }
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: authority.writer.sourceId, includeDeleted: true });
   // A deleted-page intent (extract_facts expiring a soft-deleted page's facts) admits only a page that is still soft-deleted.
@@ -244,6 +249,8 @@ export function maintenanceGhostRefusal(sourceId: string, slug: string): Operati
 export interface MaintenanceEventProjection { depth_slug: string; date: string; summary: string; }
 
 type MaintenancePageOptions = { requestId?: string; expectedRevision: string | null; file?: boolean;
+  /** LGV ruling 2026-11-24: a named operator override for one write to a protected Binder page. */
+  protectedPageOverride?: ProtectedPageOverride;
   eventProjection?: MaintenanceEventProjection; derivation?: DerivationDeclaration };
 
 /** A maintenance page publication's intent and request id; `batch` (G6) is the run's batch id, part of both. */
@@ -251,9 +258,10 @@ function maintenancePageRequest(authority: MaintenanceAuthority, slug: string, c
   const projection = options.eventProjection ? { event_projection: options.eventProjection } : {};
   const derivation = options.derivation ? { derivation: options.derivation } : {};
   const grouped = batch ? { maintenance_batch: batch } : {};
-  return { intent: { kind: 'managed_maintenance_page', content, expected_revision: options.expectedRevision, ...projection, ...derivation, ...grouped },
+  const override = options.protectedPageOverride ? withProtectedPageOverride({}, options.protectedPageOverride) : {};
+  return { intent: { kind: 'managed_maintenance_page', content, expected_revision: options.expectedRevision, ...projection, ...derivation, ...grouped, ...override },
     requestId: options.requestId ?? maintenanceRequestId({ authority: authority.writer, slug, content, revision: options.expectedRevision, file: options.file ?? true,
-      ...projection, ...derivation, ...grouped }) };
+      ...projection, ...derivation, ...grouped, ...override }) };
 }
 
 /** `derivation` (#5575 I2): the deriver's taint declaration; the page and its edges are stamped from it at publication. */
@@ -586,6 +594,13 @@ export async function prepareMaintenanceMutation(engine: BrainEngine, row: Write
 async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
   if (row.authority.remote) throw trustedCliRequired('Remote maintenance publication is not supported.');
   enterClaimStep(clock, 'maintenance_dispatch');
+  // LGV ruling 2026-11-24, apply side: a request admitted before the guard (or by a peer without it) settles as
+  // skipped protected_binder_page and writes nothing, unless it carries a named operator override.
+  if (isProtectedBinderPage(row.slug) && !protectedPageOverride(row.intent)) {
+    const current = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
+    return { observedRevision: current?.revision ?? null, noop: true,
+      apply: async () => ({ status: 'skipped', reason: PROTECTED_BINDER_SKIP, skipped: PROTECTED_BINDER_SKIP, noop: true }) };
+  }
   if (row.intent?.kind === 'managed_maintenance_restore_extractor_facts') return (await import('../repair/extractor-facts.ts')).prepareExtractorFactsRestore(engine, row);
   if (row.intent?.kind === 'managed_maintenance_expire_captured_facts') return (await import('../repair/captured-facts.ts')).prepareCapturedFactsExpiry(engine, row);
   if (row.intent?.kind === 'managed_maintenance_agent_session_facts') return (await import('../repair/agent-session-facts.ts')).prepareAgentSessionFactsWrite(engine, row);
@@ -605,6 +620,8 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
       ? { ...row, intent: { ...row.intent, expected_revision: undefined } } : row, config, undefined, undefined, { clock });
     const projection = row.intent.event_projection as MaintenanceEventProjection | undefined;
     if (!projection) return prepared;
+    // LGV ruling 2026-11-24: no timeline row is projected onto a protected Binder depth page.
+    if (isProtectedBinderPage(projection.depth_slug) && !protectedPageOverride(row.intent)) return prepared;
     // #5523: the event page and its depth-page timeline row commit together in
     // the coordinator's source-scoped transaction; a missing depth page
     // projects nothing, exactly like the legacy writer.

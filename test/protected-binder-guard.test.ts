@@ -3,8 +3,8 @@
  * protected Binder pages (slug matches binder-gbrain-conops-doc-family-*,
  * any directory prefix, any source) with the skip code
  * `protected_binder_page`. The job completes, it does not fail. Embedding is
- * not touched. GBRAIN_PROTECTED_SLUG_PATTERNS (comma list of globs) replaces
- * the default; a non-matching value turns the guard off for that pattern set.
+ * not touched. GBRAIN_PROTECTED_SLUG_PATTERNS adds patterns to the default;
+ * GBRAIN_PROTECTED_BINDER_GUARD=off is the only way to turn the guard off.
  *
  * Red/green pairs: guard on (default) -> each of facts-absorb,
  * chronicle_extract and extract_atoms writes nothing for the Binder page and
@@ -28,8 +28,8 @@ import { configureGateway, resetGateway, __setChatTransportForTests, __setEmbedT
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 
 const SKIP = 'protected_binder_page';
-const ENV = 'GBRAIN_PROTECTED_SLUG_PATTERNS';
-const OFF = 'no-such-page-*';
+const ENV = 'GBRAIN_PROTECTED_BINDER_GUARD';
+const OFF = 'off';
 const BINDER = 'docs/binder-gbrain-conops-doc-family-2026-11-24-t1';
 const BINDER_ROOT = 'binder-gbrain-conops-doc-family-2026-11-23';
 const PLAIN = 'notes/plain-example';
@@ -114,7 +114,7 @@ describe('the protected-slug predicate', () => {
       expect(isProtectedBinderPage('notes/about-binder-gbrain-conops')).toBe(false);
     });
     await withEnv({ [ENV]: OFF }, async () => { expect(isProtectedBinderPage(BINDER)).toBe(false); });
-    await withEnv({ [ENV]: 'notes/*, x' }, async () => { expect(isProtectedBinderPage(PLAIN)).toBe(true); expect(isProtectedBinderPage(BINDER)).toBe(false); });
+    await withEnv({ GBRAIN_PROTECTED_SLUG_PATTERNS: 'notes/*, x' }, async () => { expect(isProtectedBinderPage(PLAIN)).toBe(true); expect(isProtectedBinderPage(BINDER)).toBe(true); });
   });
 });
 

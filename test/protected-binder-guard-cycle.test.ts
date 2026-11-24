@@ -5,7 +5,7 @@
  * backstop entry, the fence writer, the unfenced-facts fencer (extract_facts
  * phase) and the maintenance coordinator (every managed cycle write).
  * Red/green: guard on (default) refuses with protected_binder_page; guard off
- * (GBRAIN_PROTECTED_SLUG_PATTERNS set to a non-matching glob) writes as before.
+ * (GBRAIN_PROTECTED_BINDER_GUARD=off) writes as before.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -27,8 +27,8 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { managedBrain, type ManagedBrain } from './helpers/managed-brain.ts';
 
 const SKIP = 'protected_binder_page';
-const ENV = 'GBRAIN_PROTECTED_SLUG_PATTERNS';
-const OFF = 'no-such-page-*';
+const ENV = 'GBRAIN_PROTECTED_BINDER_GUARD';
+const OFF = 'off';
 const BINDER_MEETING = 'meetings/binder-gbrain-conops-doc-family-2026-11-24';
 const PLAIN_MEETING = 'meetings/plain-sync';
 const BINDER = 'docs/binder-gbrain-conops-doc-family-2026-11-24-t2';
