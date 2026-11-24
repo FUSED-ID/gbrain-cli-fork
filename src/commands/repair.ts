@@ -85,7 +85,7 @@ export const REPAIR_HELP = `Usage: gbrain repair [<kind>] [--apply] [--source <i
                                 [--only <glob>]... [--skip <glob>]... --prefer file|database [--apply --expect <preview-hash>] [--json]
        gbrain repair stuck-recovery [--source <id>] [--request-id <uuid>]
                                     [--keep prior|disk|withdrawn --apply --expect <preview-hash> --yes] [--json]
-       gbrain repair ghost-pages --source <id> [--apply --expect <preview-hash> --yes] [--json]
+       gbrain repair ghost-pages --source <id> [--apply --expect <preview-hash> --yes [--protected-page-override <reason>]] [--json]
        gbrain repair legacy-twins --source <id> [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair uncommitted-deletions --source <id> [--after <page-id>] [--include-ambiguous] [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair rows-behind --source <id> [--include-ambiguous] [--apply --expect <preview-hash>] [--json]
@@ -202,7 +202,7 @@ A sources add --url clone whose pull stops at pull_blocked_local_changes: docs/g
 Renames whose identity sync did not keep (rename-identity): docs/guides/live-sync.md#renaming-a-page.`;
 
 const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--include-cross-entity', '--diff', '--yes', '--no-llm', '--all-drifted', '--include-failures', '--force', '--close', '--held']);
-const VALUE_FLAGS = new Set(['--rules', '--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--since', '--keep', '--request-id', '--older-than', '--from', '--side', '--state', '--after', '--cursor', '--provenance', '--kind', '--mode', '--run', '--key', '--generation', '--day', '--cwd', '--session', '--principal']);
+const VALUE_FLAGS = new Set(['--rules', '--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--since', '--keep', '--request-id', '--older-than', '--from', '--side', '--state', '--after', '--cursor', '--provenance', '--kind', '--mode', '--run', '--key', '--generation', '--day', '--cwd', '--session', '--principal', '--protected-page-override']);
 /** Flags only some kinds accept, with the kinds that do. */
 const KIND_FLAGS: Record<string, readonly string[]> = {
   '--only': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--skip': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--diff': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--yes': ['frontmatter', 'conversation-labels', 'stuck-recovery', 'ghost-pages', 'legacy-twins', 'rename-identity', 'url-clone-fences'],
@@ -214,12 +214,13 @@ const KIND_FLAGS: Record<string, readonly string[]> = {
   '--after': ['uncommitted-deletions'],
   '--kind': ['generations'], '--mode': ['generations'], '--run': ['generations'], '--key': ['generations'], '--generation': ['generations'], '--day': ['fact-claim-dates'], '--rules': ['secret-spans'],
   '--cwd': ['agent-session-facts'], '--session': ['agent-session-facts'], '--principal': ['agent-session-facts'],
+  '--protected-page-override': ['ghost-pages'],
 };
 const VALUE_EXAMPLES: Record<string, string> = { '--source': 'default', '--limit': '50', '--expect': 'PLAN_HASH', '--only': 'notes/a.md', '--skip': 'notes/a.md',
   '--slug': 'notes/a', '--max-usd': '0.50', '--prefer': 'file', '--request': 'REQUEST_UUID', '--class': 'review_required', '--since': '7d', '--side': 'deleted', '--state': 'tombstone_edited', '--keep': 'prior',
   '--request-id': '123e4567-e89b-42d3-a456-426614174000', '--older-than': '30d', '--from': 'notes/old', '--after': '1200', '--cursor': 'NEXT_CURSOR', '--provenance': 'never_committed',
   '--kind': 'atom', '--mode': 'restore', '--run': 'RUN_ID', '--key': 'page:notes/a', '--generation': '42', '--day': '2026-01-15', '--rules': 'openai,aws_access_key',
-  '--cwd': '/srv/agent-workers', '--session': 'SESSION_ID', '--principal': 'worker-a' };
+  '--cwd': '/srv/agent-workers', '--session': 'SESSION_ID', '--principal': 'worker-a', '--protected-page-override': 'restore a ghost Binder page' };
 /** A usage refusal whose fix is the read-only preview (gbrain repair without --apply writes nothing). */
 const invalid = (message: string, suggestion: string, preview: string[] = ['gbrain', 'repair', '--json']) => opError('invalid_params', message, suggestion,
   { fix: readFix('Previews the repair; without --apply it writes nothing.', { argv: preview }) });
@@ -230,7 +231,7 @@ interface RepairArgs { kind?: string; apply: boolean; all: boolean; json: boolea
   held: boolean; side?: string; state?: string; provenance?: string; cursor?: string;
   keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures: boolean; force: boolean; from?: string; close: boolean; afterPage?: number;
   generationKind?: string; generationMode?: string; run?: string; key?: string; generation?: number; day?: string; rules?: string[];
-  cwdPrefixes: string[]; sessions: string[]; principal?: string }
+  cwdPrefixes: string[]; sessions: string[]; principal?: string; protectedPageOverride?: string }
 
 /** `--max-usd` on a kind that never calls a paid model: the cap belongs to the doctor remediation run. */
 function maxUsdRefusal(flag: string, cap: string | undefined, kind: string | undefined): OperationError {
@@ -368,6 +369,11 @@ export function parseRepairArgs(args: string[]): RepairArgs {
       parsed.generation = Number(value);
     }
     else if (flag === '--keep') keepText = value;
+    else if (flag === '--protected-page-override') {
+      if (!value.trim()) throw invalid('--protected-page-override takes the reason for writing a protected Binder page.',
+        'Pass the reason in quotes, e.g. --protected-page-override "retire the ghost Binder page after the move".', ['gbrain', 'repair', 'ghost-pages', '--json']);
+      parsed.protectedPageOverride = value;
+    }
     else if (flag === '--request-id') {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw invalid(`--request-id must be a request UUID (got "${value}").`,
         'Pass the request_id the stuck-recovery preview (or gbrain sources writer status --json) lists, e.g. --request-id 123e4567-e89b-42d3-a456-426614174000.', ['gbrain', 'repair', 'stuck-recovery', '--json']);
@@ -458,7 +464,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
   if (args.includes('--help') || args.includes('-h')) { console.log(REPAIR_HELP); return; }
   const { kind, apply, all, json, noEmbed, includeAmbiguous, includeCrossEntity, source, expect, only, skip, slugs, diff, noLlm, maxUsd, limit: limitText,
     prefer, requests, allDrifted, driftClass, since, held, side, state, provenance, cursor, keep, requestId, olderThan, includeFailures, force, from, close, afterPage,
-    generationKind, generationMode, run, key, generation, day, rules, cwdPrefixes, sessions, principal } = parseRepairArgs(args);
+    generationKind, generationMode, run, key, generation, day, rules, cwdPrefixes, sessions, principal, protectedPageOverride } = parseRepairArgs(args);
   const generations: GenerationsSelection | undefined = kind === 'generations' ? { kind: generationKind ?? '', mode: (generationMode ?? 'restore') as GenerationMode,
     ...(run ? { run } : {}), ...(since ? { since } : {}), ...(key ? { key } : {}), ...(generation !== undefined ? { generation } : {}), ...(held ? { held } : {}) } : undefined;
   if (generations) {
@@ -523,6 +529,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     ...(k === kind && k === 'rename-identity' ? { from, close } : {}), ...(k === kind && afterPage !== undefined ? { afterPage } : {}),
     ...(k === kind && generations ? { generations } : {}), ...(k === kind && day ? { day } : {}), ...(k === kind && rules ? { rules } : {}),
     ...(k === kind && k === 'agent-session-facts' ? { cwdPrefixes, sessions, principal } : {}),
+    ...(k === kind && k === 'ghost-pages' && protectedPageOverride ? { protectedPageOverride } : {}),
     ...(apply ? { stop: stop.signal, recordDatabaseStops: true } : {}) })).finally(() => releaseSignals?.());
   if (apply) clearHealthMemo(engine);
   const paidKinds = results.filter(r => r.paid).map(r => r.kind);

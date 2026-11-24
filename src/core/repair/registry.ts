@@ -730,7 +730,7 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
       slugs?: string[]; noLlm?: boolean; maxLlmUsd?: number; deadline?: number; stop?: AbortSignal; recordDatabaseStops?: boolean;
       prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string; provenance?: string; cursor?: string; progress?: ProgressReporter;
       keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string; rules?: string[];
-      cwdPrefixes?: string[]; sessions?: string[]; principal?: string } = {}): Promise<RepairResult> {
+      cwdPrefixes?: string[]; sessions?: string[]; principal?: string; protectedPageOverride?: string } = {}): Promise<RepairResult> {
       const ctx = { engine, config, logger, dryRun: !opts.apply, remote: false, sourceId: scope.source_ids[0], writeWaitMs } as OperationContext;
       const spec = repairSpec(kind, opts.registry);
       return runRepair(ctx, spec.handler, scope, { apply: opts.apply, limit: run.limit, embeddingModel, sourceFlag: run.sourceFlag, spec,
@@ -741,7 +741,7 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
         explicit: run.explicit, expect: run.expect, includeAmbiguous: run.includeAmbiguous, includeCrossEntity: run.includeCrossEntity, only: run.only, skip: run.skip, slugs: run.slugs, noLlm: run.noLlm,
         maxLlmUsd: run.maxLlmUsd, deadline: run.deadline, ...(run.stop ? { stop: run.stop } : {}), ...(run.recordDatabaseStops ? { recordDatabaseStops: true } : {}), prefer: run.prefer, requests: run.requests, allDrifted: run.allDrifted, driftClass: run.driftClass, since: run.since,
         held: run.held, side: run.side, state: run.state, provenance: run.provenance, cursor: run.cursor, progress: run.progress, keep: run.keep, requestId: run.requestId, olderThan: run.olderThan, includeFailures: run.includeFailures, force: run.force, from: run.from, close: run.close, afterPage: run.afterPage, generations: run.generations, day: run.day, rules: run.rules,
-        cwdPrefixes: run.cwdPrefixes, sessions: run.sessions, principal: run.principal });
+        cwdPrefixes: run.cwdPrefixes, sessions: run.sessions, principal: run.principal, ...(run.protectedPageOverride ? { protectedPageOverride: run.protectedPageOverride } : {}) });
     },
   };
 }

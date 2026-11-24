@@ -4,8 +4,10 @@
  * (the job completes, it does not fail). Embedding is allowed and is not
  * guarded here.
  *
- * Patterns. The default Binder family (any directory prefix, and the
- * `<source>:<slug>` form) is ALWAYS protected. GBRAIN_PROTECTED_SLUG_PATTERNS
+ * Patterns. The default Binder family (after any `/` or `:` separator) is
+ * ALWAYS protected, and every pattern also matches in the `<source>:<slug>`
+ * form, anchored at the start (`<source>` holds no `/` or `:`). JS and SQL use
+ * the same anchored regular expressions, so they always agree. GBRAIN_PROTECTED_SLUG_PATTERNS
  * (comma list of globs, case-insensitive, `*` any run of characters including
  * slashes, `?` one character) ADDS patterns; it can never remove the default.
  * The only way to disable the guard is GBRAIN_PROTECTED_BINDER_GUARD=off
@@ -34,6 +36,7 @@ export const PROTECTED_PAGE_OVERRIDE_KEY = 'protected_page_override';
 export const DEFAULT_PROTECTED_SLUG_PATTERNS: readonly string[] = [
   'binder-gbrain-conops-doc-family-*',
   '*/binder-gbrain-conops-doc-family-*',
+  '*:binder-gbrain-conops-doc-family-*',
 ];
 
 /** True only when the operator set the explicit off switch. */
@@ -48,33 +51,39 @@ export function protectedSlugPatterns(raw = process.env[PROTECTED_SLUG_PATTERNS_
   return [...new Set([...DEFAULT_PROTECTED_SLUG_PATTERNS, ...added])];
 }
 
-function globRegExp(pattern: string): RegExp {
+/**
+ * One glob as an anchored regular expression that JS (`RegExp`, flag i) and Postgres (`~*`) read the same way:
+ * the slug itself, or `<source>:` (no `/` or `:` in the source id) followed by it.
+ */
+export function protectedSlugRegex(pattern: string): string {
   const body = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
-  return new RegExp(`^${body}$`, 'i');
+  return `^([^/:]+:)?(${body})$`;
 }
 
-/** `<source>:<slug>` names the same page as `<slug>`. */
-function slugForms(slug: string): string[] {
-  const bare = slug.replace(/^[^/:]+:/, '');
-  return bare === slug ? [slug] : [slug, bare];
+/** The active patterns as regular expressions, the operands of both the JS predicate and the SQL exclusion. */
+export function protectedSlugSqlPatterns(patterns = protectedSlugPatterns()): string[] {
+  return patterns.map(protectedSlugRegex);
 }
 
 /** The one predicate every guarded writer asks. */
 export function isProtectedBinderPage(slug: string, patterns = protectedSlugPatterns()): boolean {
-  if (!patterns.length) return false;
-  const regexes = patterns.map(globRegExp);
-  return slugForms(slug).some(form => regexes.some(r => r.test(form)));
+  return protectedSlugSqlPatterns(patterns).some(source => new RegExp(source, 'i').test(slug));
 }
 
-/** The same patterns as ILIKE operands (backslash is Postgres's default LIKE escape), plus their `<source>:` forms. */
-export function protectedSlugLikePatterns(patterns = protectedSlugPatterns()): string[] {
-  const like = patterns.map(p => p.replace(/[\\%_]/g, '\\$&').replace(/\*/g, '%').replace(/\?/g, '_'));
-  return [...like, ...like.map(p => `%:${p}`)];
-}
-
-/** SQL clause that leaves protected pages out of a page scan; binds the patterns at `$index`. */
+/** SQL clause that leaves protected pages out of a page scan; binds `protectedSlugSqlPatterns()` at `$index`. */
 export function protectedSlugExclusionSql(column: string, index: number): string {
-  return `AND NOT (${column} ILIKE ANY($${index}::text[]))`;
+  return `AND NOT (${column} ~* ANY($${index}::text[]))`;
+}
+
+/** Operator and reason as one safe log field: control characters and line breaks become spaces, length capped. */
+export function sanitizeOverrideText(value: string, max = 160): string {
+  const clean = value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return clean.length > max ? `${clean.slice(0, max)}...` : clean;
+}
+
+/** The operator name of an authenticated write principal (never taken from a flag). */
+export function principalOperator(principal: { kind: string; id: string }): string {
+  return `${principal.kind}:${principal.id}`;
 }
 
 let logged = false;

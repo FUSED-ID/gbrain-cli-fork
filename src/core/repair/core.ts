@@ -150,7 +150,9 @@ export interface RepairHandler {
    * cap), so the kind caps its own reservation at it. `deadline` (epoch ms) is when the run stops starting work; a
    * kind bounds its own provider calls by it. `noLlm` and `expect` repeat the run's options.
    */
-  apply(ctx: OperationContext, item: RepairItem, opts?: { embed: boolean; runId?: string; llmAllowanceUsd?: number; deadline?: number; noLlm?: boolean; expect?: string }): Promise<boolean | RepairItemOutcome>;
+  apply(ctx: OperationContext, item: RepairItem, opts?: { embed: boolean; runId?: string; llmAllowanceUsd?: number; deadline?: number; noLlm?: boolean; expect?: string;
+    /** `--protected-page-override <reason>` (ghost-pages): the operator's reason to write one protected Binder page. */
+    protectedPageOverride?: string }): Promise<boolean | RepairItemOutcome>;
   /** How many per-item outcomes the result lists (default 20). */
   outcomeItemsLimit?: number;
   /** Human lines for the plan's `details`; `diff` asks for every per-item diff, not one sample per class. */
@@ -335,7 +337,7 @@ export async function runRepair(ctx: OperationContext, handler: RepairHandler, s
     prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string;
     provenance?: string; cursor?: string; progress?: ProgressReporter;
     keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string; rules?: string[];
-    cwdPrefixes?: string[]; sessions?: string[]; principal?: string;
+    cwdPrefixes?: string[]; sessions?: string[]; principal?: string; protectedPageOverride?: string;
     spec?: Pick<RepairKindSpec, 'explicit_only' | 'consent' | 'spends'>; maxLlmUsd?: number; deadline?: number; now?: () => number;
     /** GBRA-133: the CLI's termination signal; the apply stops before the next item with a result instead of dying mid-run. */
     stop?: AbortSignal;
@@ -488,7 +490,8 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
     try {
       const applied = await handler.apply({ ...ctx, sourceId: item.source_id, ...(unresolved.length ? { writeWaitMs: 0 } : {}) }, item, { embed: opts.embed === true, runId,
         ...(llm && opts.maxLlmUsd !== undefined ? { llmAllowanceUsd: opts.maxLlmUsd - llmSpent } : {}),
-        ...(opts.deadline !== undefined ? { deadline: opts.deadline } : {}), ...(opts.noLlm ? { noLlm: true } : {}), ...(opts.expect ? { expect: opts.expect } : {}) });
+        ...(opts.deadline !== undefined ? { deadline: opts.deadline } : {}), ...(opts.noLlm ? { noLlm: true } : {}), ...(opts.expect ? { expect: opts.expect } : {}),
+        ...(opts.protectedPageOverride ? { protectedPageOverride: opts.protectedPageOverride } : {}) });
       if (llm && typeof applied === 'object' && applied.llm_usd) {
         llmSpent += applied.llm_usd;
         result.cost = { ...result.cost, llm_usd: llmSpent, llm_cap_remaining_usd: llmLeft(llmSpent) };

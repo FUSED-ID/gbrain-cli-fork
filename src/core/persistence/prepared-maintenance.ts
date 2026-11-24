@@ -1,4 +1,4 @@
-import { isProtectedBinderPage, PROTECTED_BINDER_SKIP, protectedPageOverride, withProtectedPageOverride, type ProtectedPageOverride } from './protected-binder-pages.ts';
+import { isProtectedBinderPage, PROTECTED_BINDER_SKIP, protectedPageOverride, sanitizeOverrideText, withProtectedPageOverride, type ProtectedPageOverride } from './protected-binder-pages.ts';
 import { realpathSync } from 'node:fs';
 import { enterClaimStep, type ClaimPhaseClock } from './claim-phase.ts';
 import { boundedReads } from './bounded-reads.ts';
@@ -171,10 +171,10 @@ async function prepareMaintenanceAdmission(engine: BrainEngine, authority: Maint
     const override = protectedPageOverride(intent);
     if (!override) {
       throw opError('permission_denied', `Page ${slug} is a protected Binder page; maintenance writes to it are refused.`,
-        `Maintenance submitted nothing for ${slug} in '${authority.writer.sourceId}'. Binder pages are edited by hand only. An operator repair that must write one carries a protected_page_override (operator and reason) on its request.`,
+        `Maintenance submitted nothing for ${slug} in '${authority.writer.sourceId}'. Binder pages are edited by hand only. An operator who must repair one reruns the repair with --protected-page-override "<reason>" (gbrain repair ghost-pages); the operator is the authenticated writer.`,
         { detail: PROTECTED_BINDER_SKIP });
     }
-    console.error(`[binder-guard] operator override admitted maintenance request ${requestId} on protected page ${slug} in '${authority.writer.sourceId}' (operator=${override.operator}, reason=${override.reason})`);
+    console.error(`[binder-guard] operator override admitted maintenance request ${requestId} on protected page ${slug} in '${authority.writer.sourceId}' (operator=${sanitizeOverrideText(override.operator)}, reason=${sanitizeOverrideText(override.reason)})`);
   }
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: authority.writer.sourceId, includeDeleted: true });
   // A deleted-page intent (extract_facts expiring a soft-deleted page's facts) admits only a page that is still soft-deleted.

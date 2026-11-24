@@ -51,6 +51,7 @@ import { clearDeletionHold, readSyncImportProvenance } from '../persistence/sync
 import { readRevisionAttestations } from '../persistence/sync-pass.ts';
 import { readDeletionProvenance } from '../persistence/sync-origin-evidence.ts';
 import { maintenancePreflight, submitMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
+import { principalOperator, withProtectedPageOverride } from '../persistence/protected-binder-pages.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { MASS_RECONCILE_MIN_PAGES, MASS_RECONCILE_RATIO, massReconcileAllowed } from '../sync-reconcile.ts';
 import { ghostPageNow, scanGhostSource, UNRESOLVABLE_PATH_CODE, type GhostOwner, type GhostPage, type GhostSourceScan, type UnresolvablePage } from '../ghost-pages.ts';
@@ -208,11 +209,11 @@ export const ghostPagesRepair: RepairHandler = {
     const items = approved.items.map(({ selection: _selection, owner, ...ghost }, index) => item(ghost, owner, opts.expect!, index === approved.items.length - 1));
     return { items: items.filter(entry => afterCursor(entry.cursor, after)), preview_hash: opts.expect, residuals: {} };
   },
-  async apply(ctx, entry): Promise<RepairItemOutcome> {
+  async apply(ctx, entry, opts): Promise<RepairItemOutcome> {
     const { ghost, owner, hash, last } = entry as GhostItem;
     let outcome: RepairItemOutcome;
     try {
-      outcome = await retireGhost(ctx, ghost, owner, () => repairRequestId(ctx, 'ghost-pages', ghost, ghost.revision));
+      outcome = await retireGhost(ctx, ghost, owner, () => repairRequestId(ctx, 'ghost-pages', ghost, ghost.revision), opts?.protectedPageOverride);
     } catch (error) {
       if (!(error instanceof OperationError) || !GHOST_ITEM_REFUSALS.has(error.code)) throw error;
       outcome = { applied: false, outcome: 'refused', reason: error.code, detail: { message: error.message } };
@@ -226,7 +227,7 @@ export const ghostPagesRepair: RepairHandler = {
 };
 
 /** Refusals about one ghost only; a run-wide refusal (migrations_pending, worktree_dirty, writer transfer) stops the run and keeps the approval. */
-const GHOST_ITEM_REFUSALS: ReadonlySet<string> = new Set([...REPAIR_ITEM_FAILURE_CODES, 'skill_bundle_required']);
+const GHOST_ITEM_REFUSALS: ReadonlySet<string> = new Set([...REPAIR_ITEM_FAILURE_CODES, 'skill_bundle_required', 'permission_denied']);
 
 const restored = (ghost: GhostPage): RepairItemOutcome => ({ applied: false, outcome: 'file_restored', detail: { path: ghost.path },
   reason: `The canonical file ${ghost.path} exists again, so ${ghost.slug} was kept; run ${ghostPreviewCommand(ghost.source_id)} again for a new preview.` });
@@ -270,14 +271,18 @@ async function stillApproved(engine: BrainEngine, ghost: GhostPage, owner: Ghost
 }
 
 /** Soft-deletes one approved ghost; a managed brain submits it under `requestId()` (also `gbrain repair file-drift --prefer file` on a page whose file is gone, #6712 wave). */
-export async function retireGhost(ctx: OperationContext, ghost: GhostPage, owner: GhostOwner, requestId: () => Promise<string>): Promise<RepairItemOutcome> {
+export async function retireGhost(ctx: OperationContext, ghost: GhostPage, owner: GhostOwner, requestId: () => Promise<string>,
+  /** `--protected-page-override <reason>`: admit a retirement on a protected Binder page; the operator is the authenticated writer. */
+  protectedPageOverrideReason?: string): Promise<RepairItemOutcome> {
   const engine = ctx.engine;
   const skip = await stillApproved(engine, ghost, owner);
   if (skip) return skip;
   if (await managedPersistenceEnabled(engine)) {
     const authority = (await maintenancePreflight(engine, ghost.source_id))!;
     try {
-      await submitMaintenanceIntent(engine, authority, ghost.slug, { kind: GHOST_PAGES_INTENT, expected_revision: ghost.revision, ghost, owner }, await requestId());
+      const intent = { kind: GHOST_PAGES_INTENT, expected_revision: ghost.revision, ghost, owner };
+      await submitMaintenanceIntent(engine, authority, ghost.slug, protectedPageOverrideReason
+        ? withProtectedPageOverride(intent, { operator: principalOperator(authority.writer.principal), reason: protectedPageOverrideReason }) : intent, await requestId());
     } catch (error) {
       if (error instanceof OperationError && ['revision_conflict', 'page_not_found', 'page_identity_changed'].includes(error.code)) return changed(error.message);
       if (error instanceof OperationError && error.code === 'source_changed') return restored(ghost);

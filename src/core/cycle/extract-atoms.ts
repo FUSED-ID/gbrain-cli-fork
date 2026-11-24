@@ -61,7 +61,7 @@
 import { observationDateLine, observationDateRule } from '../ai/date-grounding.ts';
 import { isConsumerDateGroundingOn } from '../facts/extract.ts';
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
-import { isProtectedBinderPage, PROTECTED_BINDER_SKIP, protectedSlugExclusionSql, protectedSlugLikePatterns } from '../persistence/protected-binder-pages.ts';
+import { isProtectedBinderPage, PROTECTED_BINDER_SKIP, protectedSlugExclusionSql, protectedSlugSqlPatterns } from '../persistence/protected-binder-pages.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
@@ -448,7 +448,7 @@ export async function discoverExtractablePages(
     limit,
   ];
   if (hasFilter) params.push(affectedSlugs);
-  params.push(protectedSlugLikePatterns()); // LGV ruling 2026-11-24: protected Binder pages are not extractable
+  params.push(protectedSlugSqlPatterns()); // LGV ruling 2026-11-24: protected Binder pages are not extractable
 
   try {
     const rows = await engine.executeRaw<{
@@ -547,8 +547,8 @@ export async function countExtractAtomsBacklog(
     const extractableTypes = await resolveExtractableTypes();
     const maxInputChars = await resolveExtractAtomsInputCap(engine);
     const params = scoped
-      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, protectedSlugLikePatterns()]
-      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, protectedSlugLikePatterns()];
+      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, protectedSlugSqlPatterns()]
+      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, protectedSlugSqlPatterns()];
     const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params, { signal: opts.signal });
     return Number(rows[0]?.cnt ?? 0);
   } catch (err) {

@@ -68,7 +68,7 @@ describe('MUST 1: patterns add, one explicit off switch, startup log', () => {
 
 describe('LOW 6: the <source>:<slug> form', () => {
   test('predicate and SQL patterns both match a source-qualified Binder slug', async () => {
-    const { isProtectedBinderPage, protectedSlugLikePatterns } = await mod();
+    const { isProtectedBinderPage, protectedSlugSqlPatterns } = await mod();
     await withEnv({ [GUARD]: undefined, [PATTERNS]: undefined }, async () => {
       expect(isProtectedBinderPage(`lg-private:${BINDER}`)).toBe(true);
       expect(isProtectedBinderPage('default:binder-gbrain-conops-doc-family-2026-11-23')).toBe(true);
@@ -76,8 +76,8 @@ describe('LOW 6: the <source>:<slug> form', () => {
       const engine = new PGLiteEngine(); await engine.connect({});
       try {
         const [row] = await engine.executeRaw<{ a: boolean; b: boolean; c: boolean }>(
-          'SELECT $2 ILIKE ANY($1::text[]) AS a, $3 ILIKE ANY($1::text[]) AS b, $4 ILIKE ANY($1::text[]) AS c',
-          [protectedSlugLikePatterns(), `lg-private:${BINDER}`, 'default:binder-gbrain-conops-doc-family-x', `lg-private:${PLAIN}`]);
+          'SELECT $2 ~* ANY($1::text[]) AS a, $3 ~* ANY($1::text[]) AS b, $4 ~* ANY($1::text[]) AS c',
+          [protectedSlugSqlPatterns(), `lg-private:${BINDER}`, 'default:binder-gbrain-conops-doc-family-x', `lg-private:${PLAIN}`]);
         expect(row).toEqual({ a: true, b: true, c: false });
       } finally { await engine.disconnect(); }
     });
