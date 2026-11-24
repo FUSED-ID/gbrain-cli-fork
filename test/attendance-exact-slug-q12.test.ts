@@ -1,47 +1,53 @@
-// Q12 (2026-11-24): an exact dir-hint slug is the canonical attendance target.
-// v0.58 (#5458) made strict attendance resolution require ONE row across slug,
-// title and alias evidence, so `Michael Anthony` stopped resolving to
-// `people/michael-anthony` once `wiki/michael-anthony/_author` (same title, also
-// type person) existed. The meeting then counted as attendance-incomplete and
-// published no links at all. These tests pin the precedence and the P7 source
-// partition (a private-source person never answers a default-source meeting).
+// An exact dir-hint slug is the canonical attendance target when its only
+// rivals are `/_author` title twins outside the hint. Strict attendance
+// resolution requires ONE row across slug, title and alias evidence, so
+// `Alice Example` stopped resolving to `people/alice-example` once
+// `wiki/alice-example/_author` (same title, also type person) existed, and
+// the meeting published no links. Any other rival keeps the old result (null).
+// P7: a private-source person never answers a default-source meeting.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { extractPageLinks, makeResolver, pickAttendanceMatch } from '../src/core/link-extraction.ts';
+import type { PageType } from '../src/core/types.ts';
+import { extractPageLinks, makeResolver } from '../src/core/link-extraction.ts';
 import { resolveCandidateSources } from '../src/core/link-reconciliation.ts';
 
 const canonical = 'people/alice-example';
 const authorTwin = 'wiki/alice-example/_author';
 
-describe('pickAttendanceMatch', () => {
-  const exactRow = { slug: canonical, exact: true, in_hint: true };
-  test('a unique exact dir-hint slug outranks same-titled pages outside the hint', () => {
-    expect(pickAttendanceMatch([exactRow, { slug: authorTwin, exact: false, in_hint: false }])).toBe(canonical);
-  });
-  test('a rival under the dir hint keeps the name ambiguous (A1)', () => {
-    expect(pickAttendanceMatch([exactRow, { slug: 'people/alice-twin', exact: false, in_hint: true }])).toBeNull();
-  });
-  test('two exact slugs stay ambiguous', () => {
-    expect(pickAttendanceMatch([exactRow, { slug: 'people/alice-éxample', exact: true, in_hint: true }])).toBeNull();
-  });
-  test('a path-shaped value never uses the tie-break (A1 pin in attendance-repair.test.ts)', () => {
-    expect(pickAttendanceMatch([exactRow, { slug: authorTwin, exact: false, in_hint: false }], { pathShaped: true })).toBeNull();
-    expect(pickAttendanceMatch([exactRow], { pathShaped: true })).toBe(canonical);
-  });
-  test('without an exact slug, title or alias evidence must still be unique', () => {
-    expect(pickAttendanceMatch([{ slug: canonical, exact: false, in_hint: true }, { slug: authorTwin, exact: false, in_hint: false }])).toBeNull();
-    expect(pickAttendanceMatch([{ slug: authorTwin, exact: false, in_hint: false }])).toBe(authorTwin);
-    expect(pickAttendanceMatch([{ slug: canonical }])).toBe(canonical);
-    expect(pickAttendanceMatch([{ slug: canonical }, { slug: authorTwin }])).toBeNull();
-    expect(pickAttendanceMatch([])).toBeNull();
-  });
-});
+type Row = { slug: string; exact: boolean; in_hint: boolean };
 
-test('strict attendance resolves the exact slug when a title twin exists (mocked rows)', async () => {
-  const engine = { async executeRaw() { return [{ slug: canonical, exact: true, in_hint: true }, { slug: authorTwin, exact: false, in_hint: false }]; } };
-  const resolver = makeResolver(engine as never, { mode: 'batch', sourceId: 'default' });
-  expect(await resolver.resolveAttendance!('Alice Example', 'people')).toBe(canonical);
+function resolveWith(rows: Row[], value = 'Alice Example'): Promise<string | null> {
+  const fake: Pick<BrainEngine, 'executeRaw'> = { executeRaw: async <T>() => rows as T[] };
+  const resolver = makeResolver(fake as BrainEngine, { mode: 'batch', sourceId: 'default' });
+  return resolver.resolveAttendance!(value, 'people');
+}
+
+describe('resolveAttendance tie-break (fake engine rows)', () => {
+  const exactRow: Row = { slug: canonical, exact: true, in_hint: true };
+  test('a unique exact dir-hint slug outranks `/_author` twins outside the hint', async () => {
+    expect(await resolveWith([exactRow, { slug: authorTwin, exact: false, in_hint: false }])).toBe(canonical);
+  });
+  test('a real person outside the hint (contacts/) keeps the name ambiguous', async () => {
+    expect(await resolveWith([exactRow, { slug: 'contacts/alice-example', exact: false, in_hint: false }])).toBeNull();
+    expect(await resolveWith([exactRow, { slug: authorTwin, exact: false, in_hint: false },
+      { slug: 'companies/acme/alice-example', exact: false, in_hint: false }])).toBeNull();
+  });
+  test('a rival under the dir hint keeps the name ambiguous (A1)', async () => {
+    expect(await resolveWith([exactRow, { slug: 'people/alice-twin', exact: false, in_hint: true }])).toBeNull();
+  });
+  test('two exact slugs stay ambiguous', async () => {
+    expect(await resolveWith([exactRow, { slug: 'people/alice-éxample', exact: true, in_hint: true }])).toBeNull();
+  });
+  test('a slug-path value never uses the tie-break (A1 pin in attendance-repair.test.ts)', async () => {
+    expect(await resolveWith([exactRow, { slug: authorTwin, exact: false, in_hint: false }], canonical)).toBeNull();
+    expect(await resolveWith([exactRow], canonical)).toBe(canonical);
+  });
+  test('without an exact slug, title or alias evidence must still be unique', async () => {
+    expect(await resolveWith([{ slug: canonical, exact: false, in_hint: true }, { slug: authorTwin, exact: false, in_hint: false }])).toBeNull();
+    expect(await resolveWith([{ slug: authorTwin, exact: false, in_hint: false }])).toBe(authorTwin);
+    expect(await resolveWith([])).toBeNull();
+  });
 });
 
 describe('attendance against a real engine (PGLite)', () => {
@@ -52,8 +58,8 @@ describe('attendance against a real engine (PGLite)', () => {
     for (const id of ['default', 'lg-private']) {
       await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1) ON CONFLICT DO NOTHING', [id]);
     }
-    const put = (slug: string, type: string, title: string, sourceId: string) =>
-      engine.putPage(slug, { type, title, compiled_truth: `${title} page`, frontmatter: {} } as never, { sourceId, allowEmptyOverwrite: true } as never);
+    const put = (slug: string, type: PageType, title: string, sourceId: string) =>
+      engine.putPage(slug, { type, title, compiled_truth: `${title} page`, frontmatter: {} }, { sourceId, allowEmptyOverwrite: true });
     await put(canonical, 'person', 'Alice Example', 'default');
     await put(authorTwin, 'person', 'Alice Example', 'default');
     await put('alice-example/_author', 'person', 'Alice Example', 'default');
@@ -63,6 +69,16 @@ describe('attendance against a real engine (PGLite)', () => {
     // A second person under people/ with the same title: genuine ambiguity.
     await put('people/erin-example', 'person', 'Erin Example', 'default');
     await put('people/erin-example-2', 'person', 'Erin Example', 'default');
+    // A real person under contacts/ with the same title: stays ambiguous.
+    await put('people/frank-example', 'person', 'Frank Example', 'default');
+    await put('contacts/frank-example', 'person', 'Frank Example', 'default');
+    // Five rows: three `/_author` twins that sort before a contacts/ rival by slug.
+    await put('people/grace-example', 'person', 'Grace Example', 'default');
+    for (const dir of ['a', 'b', 'c']) await put(`${dir}/grace-example/_author`, 'person', 'Grace Example', 'default');
+    await put('contacts/grace-example', 'person', 'Grace Example', 'default');
+    // Five rows, all rivals are `/_author` twins outside the hint: resolves.
+    await put('people/hank-example', 'person', 'Hank Example', 'default');
+    for (const dir of ['a', 'b', 'c', 'd']) await put(`${dir}/hank-example/_author`, 'person', 'Hank Example', 'default');
     // P7: exists ONLY in the private source.
     await put('people/bob-private', 'person', 'Bob Private', 'lg-private');
     // P7: canonical slug in default, a same-slug private twin must not interfere either way.
@@ -85,6 +101,17 @@ describe('attendance against a real engine (PGLite)', () => {
     const resolver = makeResolver(engine, { mode: 'batch', sourceId: 'default' });
     expect(await resolver.resolveAttendance!('Carol Sample', 'people')).toBeNull();
     expect(await resolver.resolveAttendance!('Erin Example', 'people')).toBeNull();
+  });
+
+  test('a same-titled real person under contacts/ keeps the old result (null)', async () => {
+    const resolver = makeResolver(engine, { mode: 'batch', sourceId: 'default' });
+    expect(await resolver.resolveAttendance!('Frank Example', 'people')).toBeNull();
+  });
+
+  test('with 4 or more rivals, a contacts/ rival behind `/_author` twins still surfaces', async () => {
+    const resolver = makeResolver(engine, { mode: 'batch', sourceId: 'default' });
+    expect(await resolver.resolveAttendance!('Grace Example', 'people')).toBeNull();
+    expect(await resolver.resolveAttendance!('Hank Example', 'people')).toBe('people/hank-example');
   });
 
   test('P7: a private-source person never resolves from a default-source page', async () => {
