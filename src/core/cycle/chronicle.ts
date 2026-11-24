@@ -21,6 +21,7 @@
  * explicit `chronicle.job_budget_usd` with an unpriced model refuses with the
  * no_pricing guidance; a default cap on an unpriced model warns and runs.
  */
+import { protectedSlugExclusionSql, protectedSlugLikePatterns } from '../persistence/protected-binder-pages.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseStatus } from '../cycle.ts';
 import { getChatModel, isAvailable } from '../ai/gateway.ts';
@@ -73,12 +74,13 @@ async function discover(engine: BrainEngine, sourceId: string, ctx: {
        FROM pages p
       WHERE p.source_id=$1 AND p.deleted_at IS NULL AND p.content_hash IS NOT NULL AND p.updated_at >= $2::timestamptz
         AND p.type <> 'event' AND p.slug NOT LIKE 'life/%'
+        ${protectedSlugExclusionSql('p.slug', 7)}
         AND (p.type = ANY($3::text[]) OR p.slug LIKE ANY($4::text[]) OR EXISTS (SELECT 1 FROM chronicle_page_state e
           WHERE e.page_id=p.id AND e.state='extracted' AND cardinality(e.event_hashes) > 0))
         AND NOT EXISTS (SELECT 1 FROM chronicle_page_state c
           WHERE c.page_id=p.id AND c.content_hash=p.content_hash AND c.extractor_version=$5)
       ORDER BY p.updated_at, p.id LIMIT $6`,
-    [sourceId, ctx.activatedAt.toISOString(), [...CHRONICLE_TYPES], prefixes, CHRONICLE_EXTRACTOR_VERSION, DISCOVERY_PER_SOURCE]);
+    [sourceId, ctx.activatedAt.toISOString(), [...CHRONICLE_TYPES], prefixes, CHRONICLE_EXTRACTOR_VERSION, DISCOVERY_PER_SOURCE, protectedSlugLikePatterns()]);
   if (ctx.dryRun) return pages.length;
   for (const page of pages) {
     const base = { sourceId, pageId: Number(page.id), contentHash: page.content_hash, slug: page.slug, trigger: 'auto' as const };

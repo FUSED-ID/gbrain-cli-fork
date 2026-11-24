@@ -1,3 +1,4 @@
+import { isProtectedBinderPage, PROTECTED_BINDER_SKIP } from './protected-binder-pages.ts';
 import { readFileSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
@@ -62,6 +63,8 @@ export async function retryManagedAtomBatch(engine: BrainEngine, sourceId: strin
         { fix: drainFix(sourceId) });
       const retry = session.retry;
       const origin = retry.origin;
+      // LGV ruling 2026-11-24: a retained batch from a protected Binder page is not retried into atoms.
+      if (origin.kind === 'page' && isProtectedBinderPage(origin.locator)) return { status: 'skipped', skipped: PROTECTED_BINDER_SKIP, slug: origin.locator };
       if (origin.kind === 'transcript') {
         const cfg = await (await import('../config.ts')).loadConfigWithEngine(engine) as unknown as { dream?: { synthesize?: { session_corpus_dir?: string } } } | null;
         const { transcriptSourceHold } = await import('../cycle/synthesize-source-routing.ts');

@@ -34,6 +34,7 @@
  * sees the constraint.
  */
 
+import { isProtectedBinderPage } from '../persistence/protected-binder-pages.ts';
 import { execFileSync } from '../spawn.ts';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendFileSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, relative } from 'node:path';
@@ -144,6 +145,8 @@ export interface FenceWriteResult {
    * `jared.md` stub.
    */
   stubGuardBlocked?: true;
+  /** LGV ruling 2026-11-24: the target is a protected Binder page; nothing was written and the caller must not fall back. */
+  protectedSkipped?: true;
   /**
    * Input facts dropped because their claim is withdrawn for this page's
    * entity (write-path audit B-10): a withdrawn claim is never appended to
@@ -328,6 +331,7 @@ export async function writeFactsToFence(
   /** #5575 I2: a deriver's taint; the new rows get its tier and input edges. Unmanaged path only. */
   derivation?: { trust: WriteTrust; inputs: readonly TaintInput[] },
 ): Promise<FenceWriteResult> {
+  if (isProtectedBinderPage(target.slug)) return { inserted: 0, ids: [], protectedSkipped: true };
   if (await managedPersistenceEnabled(engine)) {
     // The coordinator owns the canonical file on a managed brain: publish the
     // fence rows through its fact intent instead of editing the file here.

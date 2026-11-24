@@ -17,6 +17,7 @@
  * and its last message time comes from a block-by-block parse
  * (segmentedJudgePage).
  */
+import { isProtectedBinderPage, PROTECTED_BINDER_SKIP } from '../persistence/protected-binder-pages.ts';
 import type { BrainEngine } from '../engine.ts';
 import { BudgetTracker, type PricingOverrides } from '../budget/budget-tracker.ts';
 import { recordOnTracker } from '../ai/budget-record.ts';
@@ -166,6 +167,11 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   const done = (state: ChronicleLedgerRow['state'], reason: string | null, extra: Partial<Extract<ChronicleRowOutcome, { kind: 'done' }>> = {}): ChronicleRowOutcome =>
     ({ kind: 'done', state, reason, judged: false, written: 0, retired: 0, costUsd: 0, unpriced: false, dropped: {}, ...extra });
 
+  // LGV ruling 2026-11-24: a row queued for a protected Binder page before the guard settles as skipped; no judge call, no events, no retirement.
+  if (isProtectedBinderPage(row.slug)) {
+    await finish(engine, row, row.attempts, { state: 'skipped', reason: PROTECTED_BINDER_SKIP, nextAttemptAt: null });
+    return done('skipped', PROTECTED_BINDER_SKIP);
+  }
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
   if (!snapshot || Number(snapshot.page.id) !== Number(row.page_id)) {
     await finish(engine, row, row.attempts, { state: 'skipped', reason: 'page_missing', nextAttemptAt: null });

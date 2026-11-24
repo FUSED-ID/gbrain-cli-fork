@@ -37,6 +37,7 @@
  * FactsBackstopCtx (whose `source` union is pipeline-internal).
  */
 
+import { isProtectedBinderPage, PROTECTED_BINDER_SKIP } from '../persistence/protected-binder-pages.ts';
 import type { BrainEngine, FactInsertStatus, NewFact } from '../engine.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { recordTaintEdges } from '../trust/taint.ts';
@@ -134,6 +135,10 @@ export async function writeSingleFact(
   // #4108: provenance for the fence writer's stub guard. Null when the
   // resolver returned nothing (fail-closed — no live page was verified).
   const resolutionSource = resolved?.source ?? null;
+  // LGV ruling 2026-11-24: no fact rows for a protected Binder page, fenced or DB-only.
+  if (resolvedSlug !== null && isProtectedBinderPage(resolvedSlug)) {
+    throw Object.assign(new Error(`${resolvedSlug} is a protected Binder page; the fact was not written.`), { code: PROTECTED_BINDER_SKIP });
+  }
 
   const { isFactWithdrawn } = await import('./withdrawal.ts');
   if (await isFactWithdrawn(engine, sourceId, visibility, factText, resolvedSlug)) {

@@ -3,6 +3,7 @@
  * `chronicle_extract` job). Records the page in the ledger as trusted local
  * work and runs the shared executor.
  */
+import { isProtectedBinderPage, PROTECTED_BINDER_SKIP } from '../persistence/protected-binder-pages.ts';
 import type { BrainEngine } from '../engine.ts';
 import { getChatModel, isAvailable } from '../ai/gateway.ts';
 import { loadPricingOverrides } from '../budget/budget-tracker.ts';
@@ -32,6 +33,7 @@ export async function runChronicleJob(engine: BrainEngine, opts: {
   judge?: ChronicleJudge; signal?: AbortSignal;
 }): Promise<ChronicleJobResult> {
   const { slug, sourceId } = opts;
+  if (isProtectedBinderPage(slug)) return { slug, status: 'skipped', reason: PROTECTED_BINDER_SKIP }; // LGV ruling 2026-11-24
   const snapshot = await engine.readPageSnapshot(slug, { sourceId });
   if (!snapshot) return { slug, status: 'skipped', reason: 'page_missing' };
   const contentHash = String(snapshot.page.content_hash ?? '');

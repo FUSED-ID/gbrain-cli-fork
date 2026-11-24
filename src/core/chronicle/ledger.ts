@@ -3,6 +3,7 @@
  * durable record of each page content's extraction. See contract.ts for the
  * columns and reason codes.
  */
+import { isProtectedBinderPage } from '../persistence/protected-binder-pages.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import type { WriteAuthority, WriteRequest } from '../persistence/model.ts';
@@ -132,6 +133,8 @@ export interface ChronicleRowWrite {
  * (#6199): its stamp is cleared, and only campaign.ts writes one.
  */
 export async function upsertChronicleRow(engine: BrainEngine, w: ChronicleRowWrite): Promise<boolean> {
+  // LGV ruling 2026-11-24: a protected Binder page gets no chronicle ledger row, so nothing ever claims it.
+  if (isProtectedBinderPage(w.slug)) return false;
   const written = await engine.executeRaw(
     `INSERT INTO chronicle_page_state AS c (source_id, page_id, content_hash, extractor_version, slug, state, reason, trigger,
        principal_kind, principal_id, request_id, no_extract, next_attempt_at)

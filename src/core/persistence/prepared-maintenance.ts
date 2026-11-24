@@ -1,3 +1,4 @@
+import { isProtectedBinderPage, PROTECTED_BINDER_SKIP } from './protected-binder-pages.ts';
 import { realpathSync } from 'node:fs';
 import { enterClaimStep, type ClaimPhaseClock } from './claim-phase.ts';
 import { boundedReads } from './bounded-reads.ts';
@@ -157,6 +158,12 @@ function awaitMaintenance(engine: BrainEngine, authority: MaintenanceAuthority, 
 /** Every check a maintenance request passes before it is journaled: the authorized prior request with its id (a replay), or the admission to submit. */
 async function prepareMaintenanceAdmission(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
   intent: Record<string, unknown>, requestId: string, file: boolean): Promise<{ prior: WriteRequest } | { admission: WriteAdmission }> {
+  // LGV ruling 2026-11-24: maintenance (worker) writes never touch a protected Binder page.
+  if (isProtectedBinderPage(slug)) {
+    throw opError('permission_denied', `Page ${slug} is a protected Binder page; maintenance writes to it are refused.`,
+      `Maintenance submitted nothing for ${slug} in '${authority.writer.sourceId}'. Binder pages are edited by hand only. An operator who must repair one sets GBRAIN_PROTECTED_SLUG_PATTERNS for that single command.`,
+      { detail: PROTECTED_BINDER_SKIP });
+  }
   await validateMaintenance(engine, authority, slug);
   const prior = await getWriteRequest(engine, authority.writer.principal, requestId);
   if (prior) {

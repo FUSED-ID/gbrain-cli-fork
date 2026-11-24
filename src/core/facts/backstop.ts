@@ -37,6 +37,7 @@
  * commit 13 wires it.
  */
 
+import { isProtectedBinderPage, PROTECTED_BINDER_SKIP } from '../persistence/protected-binder-pages.ts';
 import { observationDateFrom, resolveObservationDate, type ObservationDate } from '../ai/date-grounding.ts';
 import { factEventTime } from './event-time.ts';
 import type { BrainEngine, FactAttribution, FactInsertStatus, NewFact } from '../engine.ts';
@@ -177,7 +178,7 @@ export type FactsBackstopResult =
       mode: 'queue';
       enqueued: boolean;
       queueDepth: number;
-      skipped?: 'extraction_disabled' | 'extraction_unavailable' | 'queue_overflow' | 'queue_shutdown' | `eligibility_failed:${string}`;
+      skipped?: 'extraction_disabled' | 'extraction_unavailable' | 'queue_overflow' | 'queue_shutdown' | 'protected_binder_page' | `eligibility_failed:${string}`;
     }
   | {
       mode: 'inline';
@@ -186,7 +187,7 @@ export type FactsBackstopResult =
       superseded: number;
       fact_ids: number[];
       write_requests?: WriteReceipt[];
-      skipped?: 'extraction_disabled' | 'extraction_unavailable' | `eligibility_failed:${string}`;
+      skipped?: 'extraction_disabled' | 'extraction_unavailable' | 'protected_binder_page' | `eligibility_failed:${string}`;
       /** Set when the LLM extraction step failed non-transport-fatally (see runPipelineWithBody). */
       skipped_reason?: import('./extract.ts').ExtractFailureReason;
       /** #5575 B3: rows the write gate flagged, held or rejected (unmanaged path). */
@@ -362,6 +363,13 @@ export async function runFactsBackstop(
   ctx: FactsBackstopCtx,
 ): Promise<FactsBackstopResult> {
   const mode = ctx.mode ?? 'queue';
+
+  // LGV ruling 2026-11-24: no facts are extracted from a protected Binder page.
+  if (isProtectedBinderPage(parsedPage.slug)) {
+    return mode === 'queue'
+      ? { mode: 'queue', enqueued: false, queueDepth: 0, skipped: PROTECTED_BINDER_SKIP }
+      : { mode: 'inline', inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], skipped: PROTECTED_BINDER_SKIP };
+  }
 
   // --- Eligibility + kill-switch gates (run before any LLM cost) ---
   const { isFactsExtractionEnabled } = await import('./extract.ts');
@@ -1029,6 +1037,8 @@ async function runPipelineBodyInner(
       derivation,
     );
 
+    // LGV ruling 2026-11-24: facts about a protected Binder page are dropped, never routed to a DB-only fallback.
+    if (result.protectedSkipped) continue;
     if (result.fenceWriteFailed) {
       // Fence parse-validate rejected the .tmp; .tmp stays as
       // quarantine. The JSONL log is the operator surface. Treat

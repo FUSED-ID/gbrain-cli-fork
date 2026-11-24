@@ -52,6 +52,7 @@
  *   durability-hardened checkout commits the file.
  * A page that fails is reported in `failed_pages`; the others still fence.
  */
+import { isProtectedBinderPage } from '../persistence/protected-binder-pages.ts';
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 
 import type { BrainEngine } from '../engine.ts';
@@ -127,6 +128,8 @@ export interface UnfencedFactsOutcome {
   unbound_refused: Array<{ source_id: string; slug: string; rows: number }>;
   /** Legacy rows this run left as they are because the fence codec would change them or the page already carries the claim (#6278). */
   unadoptable_rows: UnadoptableFactRecord[];
+  /** LGV ruling 2026-11-24: rows whose entity is a protected Binder page; never appended to its fence. */
+  skipped_protected?: number;
 }
 
 /**
@@ -309,6 +312,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
   const groups = new Map<string, UnfencedFactRow[]>();
   for (const row of rows) {
     if (row.entity_slug === null) { outcome.skipped_no_entity += 1; continue; }
+    if (isProtectedBinderPage(row.entity_slug)) { outcome.skipped_protected = (outcome.skipped_protected ?? 0) + 1; continue; }
     // A managed brain publishes through the source's maintenance authority,
     // which an archived source does not grant; it never blocks the others.
     if (managed && archived.has(row.source_id)) { outcome.skipped_archived += 1; continue; }
