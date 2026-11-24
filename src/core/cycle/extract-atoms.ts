@@ -61,6 +61,7 @@
 import { observationDateLine, observationDateRule } from '../ai/date-grounding.ts';
 import { isConsumerDateGroundingOn } from '../facts/extract.ts';
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
+import { isProtectedBinderPage, PROTECTED_BINDER_SKIP, protectedSlugExclusionSql, protectedSlugLikePatterns } from '../persistence/protected-binder-pages.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
@@ -427,6 +428,7 @@ export async function discoverExtractablePages(
       ${PAGE_SCAN_STATE_EXCLUSION_SQL}
       ${connectorExclusion}
       ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
+      ${protectedSlugExclusionSql('p.slug', hasFilter ? 6 : 5)}
       AND NOT EXISTS (
         SELECT 1
         FROM pages atom
@@ -446,6 +448,7 @@ export async function discoverExtractablePages(
     limit,
   ];
   if (hasFilter) params.push(affectedSlugs);
+  params.push(protectedSlugLikePatterns()); // LGV ruling 2026-11-24: protected Binder pages are not extractable
 
   try {
     const rows = await engine.executeRaw<{
@@ -514,6 +517,7 @@ export async function countExtractAtomsBacklog(
            ${managedAtomDiscoverySql('$4::integer')}
            ${pageScanStateExclusionSql('$4::integer')}
            ${connectorExclusion}
+           ${protectedSlugExclusionSql('p.slug', 5)}
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = $1
@@ -532,6 +536,7 @@ export async function countExtractAtomsBacklog(
            ${managedAtomDiscoverySql('$3::integer')}
            ${pageScanStateExclusionSql('$3::integer')}
            ${connectorExclusion}
+           ${protectedSlugExclusionSql('p.slug', 4)}
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = p.source_id
@@ -542,8 +547,8 @@ export async function countExtractAtomsBacklog(
     const extractableTypes = await resolveExtractableTypes();
     const maxInputChars = await resolveExtractAtomsInputCap(engine);
     const params = scoped
-      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars]
-      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars];
+      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, protectedSlugLikePatterns()]
+      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, protectedSlugLikePatterns()];
     const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params, { signal: opts.signal });
     return Number(rows[0]?.cnt ?? 0);
   } catch (err) {
@@ -843,7 +848,10 @@ export async function runPhaseExtractAtoms(
     transcriptItems.push({ kind: 'transcript', filePath: t.filePath, content: t.content, contentHash: t.contentHash, transcriptKey: transcriptKeys.get(t.filePath) });
   }
   const pageItems: WorkItem[] = [];
+  // LGV ruling 2026-11-24: a protected Binder page gets no atom writes and no scan stamp.
+  const protectedSkipped: Array<{ slug: string; skipped: typeof PROTECTED_BINDER_SKIP }> = [];
   for (const p of pages) {
+    if (isProtectedBinderPage(p.slug)) { protectedSkipped.push({ slug: p.slug, skipped: PROTECTED_BINDER_SKIP }); continue; }
     if (seenHashes.has(p.contentHash)) { duplicatesSkipped++; continue; }
     seenHashes.add(p.contentHash);
     pageItems.push({ kind: 'page', ...p });
@@ -1459,6 +1467,7 @@ export async function runPhaseExtractAtoms(
       write_pending: writesPending,
       held_failed: heldFailed,
       input_truncated: inputTruncated,
+      protected_skipped: protectedSkipped,
       failures,
       ...(managed ? { write_requests: writeRequests } : {}),
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),

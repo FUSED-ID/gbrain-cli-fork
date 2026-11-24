@@ -24,6 +24,9 @@ export function makeChronicleExtractHandler(engine: BrainEngine): MinionHandler 
     const slug = typeof job.data.slug === 'string' ? job.data.slug : undefined;
     if (!slug) throw new Error('chronicle_extract job requires data.slug');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : 'default';
+    // LGV ruling 2026-11-24: no ledger row and no event writes for a protected Binder page.
+    const { isProtectedBinderPage, PROTECTED_BINDER_SKIP } = await import('../../persistence/protected-binder-pages.ts');
+    if (isProtectedBinderPage(slug)) return { slug, status: 'skipped', reason: PROTECTED_BINDER_SKIP, skipped: PROTECTED_BINDER_SKIP };
     const { runChronicleJob } = await import('../../chronicle/job.ts');
     const result = await runChronicleJob(engine, {
       slug, sourceId,

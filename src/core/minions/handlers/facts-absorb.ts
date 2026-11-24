@@ -53,6 +53,9 @@ export function makeFactsAbsorbHandler(engine: BrainEngine): MinionHandler {
     const slug = typeof job.data.slug === 'string' ? job.data.slug : '';
     if (!slug) throw new Error('facts-absorb job requires data.slug');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : 'default';
+    // LGV ruling 2026-11-24: no fence write and no facts insert for a protected Binder page.
+    const { isProtectedBinderPage, PROTECTED_BINDER_SKIP } = await import('../../persistence/protected-binder-pages.ts');
+    if (isProtectedBinderPage(slug)) return { skipped: PROTECTED_BINDER_SKIP, slug, sourceId };
     const { readFactsBackstopJobPage } = await import('../../persistence/effect-facts.ts');
     const input = await readFactsBackstopJobPage(engine, job.data);
     if ('skipped' in input) return { skipped: input.skipped, slug, sourceId };
