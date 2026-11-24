@@ -1722,20 +1722,32 @@ export function queryBasenameIndex(idx: Map<string, string[]>, name: string): st
 }
 
 /**
- * Create a resolver scoped to a single extract run or single put_page call.
+ * Q12 (2026-11-24): choose the attendance target from the strict lookup rows.
  *
- * mode: 'batch' (migration / gbrain extract) — pg_trgm only, NO search
- * fallback. On a 46K-page brain this avoids N-thousand OpenAI embedding
- * calls + Anthropic Haiku expansion calls (see operations-query-hidden-haiku
- * learning) and keeps the backfill deterministic + under a wall-clock budget.
- *
- * mode: 'live' (put_page auto-link) — can afford the (rare, bounded) search
- * fallback for names that don't fuzzy-match. Still passes expand=false to
- * dodge Haiku.
- *
- * cache: per-resolver instance. Same name → same slug lookup every call.
- * Callers never need to dedupe names themselves.
+ * v0.58 (#5458) required ONE row across slug, title and alias evidence. That
+ * also counted same-titled person pages OUTSIDE the field's dir hint (for
+ * example `wiki/michael-anthony/_author` next to `people/michael-anthony`) as
+ * conflicts, so the canonical person stopped resolving and every meeting naming
+ * them was skipped as attendance-incomplete. The tie-break below is narrow:
+ *  - a display name (no `/`) whose dir-hint slug exists exactly once wins over
+ *    title/alias rows that lie outside every dir hint;
+ *  - any other conflict stays ambiguous (A1 uniqueness): a second person under
+ *    the hint, two exact slugs, or a path-shaped value (`people/x`) that another
+ *    page claims as its title or alias.
+ * Rows without flags (older callers, mocks) are treated as plain evidence, the
+ * pre-fix rule.
  */
+export function pickAttendanceMatch(rows: ReadonlyArray<{ slug: string; exact?: boolean | null; in_hint?: boolean | null }>,
+  opts: { pathShaped?: boolean } = {}): string | null {
+  const distinct = [...new Map(rows.map(row => [row.slug, row])).values()];
+  if (distinct.length === 1) return distinct[0].slug;
+  if (opts.pathShaped) return null;
+  const exact = distinct.filter(row => row.exact === true);
+  if (exact.length !== 1) return null;
+  const rivals = distinct.filter(row => row.slug !== exact[0].slug);
+  return rivals.every(row => row.exact !== true && row.in_hint === false) ? exact[0].slug : null;
+}
+
 export function makeResolver(
   engine: BrainEngine,
   opts: { mode: 'batch' | 'live'; sourceId?: string; basenameIndex?: () => Promise<Map<string, string[]>> } = { mode: 'live' },
@@ -1795,13 +1807,21 @@ export function makeResolver(
       if (attendanceCache.has(cacheKey)) return attendanceCache.get(cacheKey)!;
       const slugs = value.includes('/') ? [value] : [...new Set(hints.flatMap(hint =>
         [normalizeBasename(value), slugifySegment(value)].map(form => `${hint}/${form}`)))];
-      const matches = await engine.executeRaw<{ slug: string }>(`SELECT slug FROM pages
+      // Q12 (2026-11-24): rows carry exact-slug and in-hint flags so
+      // pickAttendanceMatch can let the canonical dir-hint slug outrank
+      // same-titled person pages outside the hint. Scope is unchanged:
+      // source_id=$1, so no other source can answer (P7).
+      const matches = await engine.executeRaw<{ slug: string; exact?: boolean; in_hint?: boolean }>(`SELECT slug,
+          slug=ANY($2::text[]) AS exact,
+          EXISTS (SELECT 1 FROM unnest($4::text[]) hint WHERE starts_with(slug, hint || '/')) AS in_hint
+        FROM pages
         WHERE source_id=$1 AND deleted_at IS NULL AND type='person'
           AND (slug=ANY($2::text[]) OR lower(title)=lower($3)
             OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(frontmatter->'aliases')='array'
-              THEN frontmatter->'aliases' ELSE '[]'::jsonb END) alias WHERE lower(alias)=lower($3))) LIMIT 2`,
-      [opts.sourceId ?? 'default', slugs, value]);
-      const resolved = matches.length === 1 ? matches[0].slug : null;
+              THEN frontmatter->'aliases' ELSE '[]'::jsonb END) alias WHERE lower(alias)=lower($3)))
+        ORDER BY exact DESC, in_hint DESC, slug LIMIT 3`,
+      [opts.sourceId ?? 'default', slugs, value, hints]);
+      const resolved = pickAttendanceMatch(matches, { pathShaped: value.includes('/') });
       if (attendanceCache.size >= attendanceCacheLimit) attendanceCache.clear();
       attendanceCache.set(cacheKey, resolved);
       return resolved;
